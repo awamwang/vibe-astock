@@ -2948,7 +2948,7 @@ class TestLiveQuotesCannotFakeClose:
     """盘中不能拿实时行情冒充昨天的收盘表现"""
 
     def test_needs_both_conditions(self, monkeypatch):
-        """2026-07-29 起判据从两个变三个：还要问 `quote_trade_day()`"""
+        """判据是三个，`quote_trade_day()` 也要问"""
         from duanxian import trade_calendar as tc
 
         monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-24")
@@ -3073,13 +3073,44 @@ class TestReflectionRefreshedOnRead:
         assert "if date is None:" in src[max(0, j - 200):j], "只在读 latest 时刷新"
 
 
+@pytest.mark.unit
+class TestPerStockPromptsStayAtSectorLevel:
+    """行内「深入分析」的 prompt 不许对**个股**做前瞻判断。
+
+    README 对外承诺的是「个股一律只作客观陈述，方向与情绪判断做到板块层面为止」。
+    这个功能走用户自己的模型、落在个股行上，最容易漂过界 —— 一旦 prompt 里
+    问的是"这只票接下来怎么样"，对外那句承诺就不成立了。
+    所以：强弱/阶段判断必须显式限定在**题材板块**层面，并显式禁止外推到个股。
+    """
+
+    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/DailyReview.tsx")
+
+    def _src(self, rel):
+        import pathlib
+
+        return pathlib.Path(f"frontend/src/{rel}").read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("rel", PROMPT_FILES)
+    def test_prompt_scopes_judgement_to_sector(self, rel):
+        s = self._src(rel)
+        assert "这个题材板块整体" in s, f"{rel}：强弱判断必须显式限定在题材板块层面"
+        assert "不要由此推断这只个股接下来会怎样" in s, f"{rel}：必须显式禁止外推到个股"
+
+    @pytest.mark.parametrize("rel", PROMPT_FILES)
+    def test_prompt_keeps_the_public_promise_verbatim(self, rel):
+        s = self._src(rel)
+        for clause in ("个股层面只陈述已经发生的客观数据与事实",
+                       "方向与强弱判断做到题材板块层面为止",
+                       "不预测个股涨跌", "不给个股参与倾向",
+                       "不推荐任何标的", "不构成投资建议"):
+            assert clause in s, f"{rel}：少了合规约束「{clause}」"
+
+
 class TestUpDownColorIsOneSource:
     """涨跌配色全站只能有**一份**口径：红涨绿跌。
 
-    2026-07-27 发现全站混用两套：盘面数据/盯盘/个股是红涨绿跌（对），
-    而复盘看板（EmotionMetricsPanel / MarketFactsPanel）和策略回测是**反的** ——
-    同一个 +3.50% 在两个页面颜色相反。根因是**六个文件各自写了一遍**
-    `v > 0 ? ... : ...`，改一处不会带动其它。（与后端那些坑同一形态）
+    别在各自的组件里另写一遍 `v > 0 ? ... : ...` —— 那样改一处不会带动其它，
+    同一个 +3.50% 会在两个页面显示成相反的颜色。一律走 `lib/colors.ts`。
     """
 
     def _src(self, rel):
