@@ -1,0 +1,686 @@
+"""短线复盘 Web 后端 —— FastAPI 包住复盘图 + 缓存 + 静态前端"""
+
+from __future__ import annotations
+
+import html
+import json
+import os
+import re
+import sys
+import threading
+import time
+import uuid
+from typing import Optional
+from urllib.parse import urlparse
+
+from fastapi import Body, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from duanxian import reflection, review_store, trade_calendar
+from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
+from duanxian.config import make_llm
+from duanxian.review_graph import build_review_graph
+from duanxian.roles import ROLES
+from main import initial_state
+from duanxian.util import (
+    china_now, china_today, is_degraded_report, is_weekend, safe_join,
+    strip_model_noise, validate_trade_date,
+)
+from duanxian.prompts import PACK
+
+SCHEMA_VERSION = 1
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# React 构建产物：存在就优先服务它，单端口即可访问全部界面，不必另起 vite dev。
+# 构建：cd frontend && npm run build
+_DIST = os.path.join(_HERE, "frontend", "dist")
+_REVIEW_DIR = os.path.expanduser("~/.duanxian-agents/reviews")
+_WK_DIR = os.path.expanduser("~/.duanxian-agents/weekly")
+os.makedirs(_REVIEW_DIR, exist_ok=True)
+os.makedirs(_WK_DIR, exist_ok=True)
+# 允许写操作（POST/DELETE）的 Host。默认只认本机；挂到域名下访问时，用
+# `VIBE_ALLOW_HOSTS="myhost,www.myhost"`（逗号分隔）把域名加进来，否则写操作会 403。
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost"} | {
+    h.strip() for h in os.environ.get("VIBE_ALLOW_HOSTS", "").split(",") if h.strip()
+}
+
+app = FastAPI(title="短线每日复盘")
+
+# ---------------------------------------------------------------- 并入 VR 后端
+# 盘面数据 / 首板分析 / 盯盘 / 持仓股 / 自选股 / 个股数据 / 资讯雷达 这几个分栏的
+# 后端放在 `vr/`，它的路由在这里并到本 app 上，一个进程一个端口即可访问全部界面。
+# `vr/` 原样来自开源的 Vibe-Research，日后拉更新就是一次纯拷贝。改成包内相对
+# import 会让每次同步都变成手工 merge。
+
+
+def _alert(msg: str) -> None:
+    """必达的告警输出"""
+    import sys
+
+    print(msg, file=sys.stderr, flush=True)
+
+
+_VR_PATH_RES: list[re.Pattern] = []
+
+
+def _merge_vr_routes() -> int:
+    """把 `vr/` 的路由并进本 app。返回并入条数；失败不影响本仓库自有功能。"""
+    import sys
+
+    vr_dir = os.path.join(_HERE, "vr")
+    if not os.path.isdir(vr_dir):
+        return 0
+    if vr_dir not in sys.path:
+        sys.path.insert(0, vr_dir)   # 放最前，确保 `import astock` 等解析到 vr/ 内
+    try:
+        import app as vr_app  # noqa: PLC0415  vr/app.py（不是本仓库的模块）
+
+        before = len(app.router.routes)
+        # 只拿 /api/* 的；VR 没有非 /api 路由，这层过滤是为了防它日后加了根路由
+        # 把我们的 SPA fallback 顶掉
+        for r in vr_app.app.router.routes:
+            path = getattr(r, "path", "")
+            if not path.startswith("/api/"):
+                continue
+            app.router.routes.append(r)
+            # 记下路径模板 → 正则（`{rid}` 这类参数换成"一段非斜杠"），
+            # 供下面那道补偿闸判断"这个请求是不是打在 VR 路由上"
+            _VR_PATH_RES.append(re.compile(
+                "^" + re.sub(r"\{[^}]+\}", r"[^/]+", re.escape(path)
+                             .replace(r"\{", "{").replace(r"\}", "}")) + "$"))
+        return len(app.router.routes) - before
+    except Exception as exc:  # noqa: BLE001  VR 挂了不该让复盘/交易日志也用不了
+        _alert(f"⚠️ VR 后端并入失败（那 7 个分栏会不可用）：{type(exc).__name__}: {exc}")
+        return 0
+
+
+def _guard_vr_userdata() -> None:
+    """启动时给 VR 的**不可再生用户数据**留一份备份"""
+    import shutil
+
+    vr_home = os.path.expanduser("~/.vibe-research")
+    pf = os.path.join(vr_home, "portfolio.json")
+    if not os.path.isfile(pf):
+        return
+    try:
+        with open(pf, encoding="utf-8") as fh:
+            json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        # 损坏：把原始字节另存（带时间戳，不覆盖之前的），并大声说出来
+        stamp = china_now().strftime("%Y%m%d-%H%M%S")
+        dst = os.path.join(vr_home, f"portfolio.corrupt-{stamp}.json")
+        try:
+            shutil.copy2(pf, dst)
+        except Exception:  # noqa: BLE001
+            dst = "（另存也失败了）"
+        _alert(f"🔴 VR 持仓文件无法解析（{type(exc).__name__}）！"
+               "vr/portfolio.py 会把它当成空持仓，并在 30 分钟内写回覆盖掉。")
+        _alert(f"   原始字节已另存：{dst}")
+        _alert(f"   历史可解析备份：{vr_home}/portfolio.good-*.json（挑最近的非空那份恢复）")
+        return
+    try:
+        with open(pf, encoding="utf-8") as fh:
+            cur = json.load(fh)
+        holdings = (cur or {}).get("holdings") or []
+        stamp = china_now().strftime("%Y%m%d")
+        dst = os.path.join(vr_home, f"portfolio.good-{stamp}.json")
+        if not holdings:
+            # 空持仓 + 已经存在任何非空备份 → 这大概率是"损坏后被写成空"的产物，别覆盖
+            import glob
+
+            for old_bak in glob.glob(os.path.join(vr_home, "portfolio.good-*.json")):
+                try:
+                    with open(old_bak, encoding="utf-8") as fh:
+                        if (json.load(fh) or {}).get("holdings"):
+                            return   # 有非空的历史备份在，什么都不做
+                except Exception:  # noqa: BLE001
+                    continue
+        shutil.copy2(pf, dst)
+    except Exception as exc:  # noqa: BLE001  备份失败要出声，但不阻断启动
+        _alert(f"⚠️ VR 持仓备份失败（{type(exc).__name__}）：{vr_home}/portfolio.good-*.json")
+
+
+_SAFE_CLI_KINDS = frozenset({"claude"})
+
+
+def _opted_in_clis() -> frozenset[str]:
+    """`VIBE_ALLOW_UNSAFE_CLI=qwen,deepseek` —— 运行服务的人**显式**放开的"""
+    raw = os.environ.get("VIBE_ALLOW_UNSAFE_CLI", "")
+    return frozenset(k.strip() for k in raw.split(",") if k.strip())
+
+
+_ALLOWED_CLI_KINDS = _SAFE_CLI_KINDS | _opted_in_clis()
+
+# 已知并有意禁掉的。只用于区分「预期内」和「上游新来的」，**不参与放行判断**
+# —— 放行只看白名单，这个集合少写了什么也不会让谁被放进来。
+_KNOWN_UNSAFE_CLIS = frozenset({"qwen", "deepseek", "codex", "opencode", "cursor", "kimi"})
+
+# 摘除前的完整 CLI 定义快照 —— 给 `/api/cli/available` 报"这个 kind 装没装"用。
+# 摘掉之后 `detect_cli()` 一律返回 None，分不清"没装"和"被禁"，而这两件事
+# 对用户是完全不同的信息（一个去装、一个别想了）。
+_ALL_CLI_BINS: dict[str, list[str]] = {}
+
+from duanxian.cli_llm import _BINS_ATTR_NAME as _BINS_ATTR  # 单一来源，见那边注释
+
+
+def _cli_runtime_modules() -> list:
+    """所有**已加载的** cli_runtime 模块对象"""
+    mods = [m for name, m in list(sys.modules.items())
+            if m is not None and (name == "cli_runtime" or name.endswith(".cli_runtime"))
+            and hasattr(m, "_CLI_DEFS")]
+    if mods:
+        return mods
+    try:
+        import cli_runtime as _cr  # noqa: PLC0415
+    except Exception:              # noqa: BLE001  这一版可能根本没带这个文件
+        return []
+    return [_cr] if hasattr(_cr, "_CLI_DEFS") else []
+
+
+def _disable_unsafe_clis() -> list[str]:
+    """把不在白名单里的 CLI 从**每一份** CLI 运行时字典摘掉，返回实际摘掉的。"""
+    mods = _cli_runtime_modules()
+    if not mods:
+        _alert("🔴 找不到 cli_runtime 模块 ——「接入AI」的自动批准 CLI 可能仍可用，请检查")
+        return []
+
+    for mod in mods:
+        if not hasattr(mod, _BINS_ATTR):
+            setattr(mod, _BINS_ATTR,
+                    {k: list(d.get("bins") or []) for k, d in mod._CLI_DEFS.items()})
+        _ALL_CLI_BINS.update(getattr(mod, _BINS_ATTR))
+
+    removed: set[str] = set()
+    for mod in mods:
+        for k in [k for k in list(mod._CLI_DEFS) if k not in _ALLOWED_CLI_KINDS]:
+            mod._CLI_DEFS.pop(k, None)
+            removed.add(k)
+
+    live = sys.modules.get("app")
+    if live is None or not hasattr(live, "cli_runtime"):
+        _alert("⚠️ 无法校验 CLI 禁用是否生效：没找到已加载的 VR app 模块")
+    else:
+        leftover = sorted(set(live.cli_runtime._CLI_DEFS) - _ALLOWED_CLI_KINDS)
+        if leftover:
+            _alert(f"🔴 禁用没生效！/api/chat 实际用的运行时里仍有 {leftover} —— 存在第三份 cli_runtime？")
+
+    # 上游新增的（不在我们已知清单里的）要报警 —— 白名单挡住了它，但人得知道
+    unknown = sorted(removed - _KNOWN_UNSAFE_CLIS)
+    if unknown:
+        _alert(f"⚠️ vr/ 上游新增了 CLI {unknown}，已按白名单摘掉。确认安全后再加进 _ALLOWED_CLI_KINDS")
+    return sorted(removed)
+
+
+def _add_vr_to_path() -> None:
+    """只把 `vr/` 放进 sys.path，不挂它的路由"""
+    import sys
+    vr_dir = os.path.join(_HERE, "vr")
+    if os.path.isdir(vr_dir) and vr_dir not in sys.path:
+        sys.path.insert(0, vr_dir)
+
+
+_VR_ROUTES = _merge_vr_routes()
+_guard_vr_userdata()
+_DISABLED_CLIS = _disable_unsafe_clis()
+
+_VR_API_KEY = os.environ.get("VR_API_KEY", "").strip()
+
+# 需要 Origin 校验的方法。我们自有的写操作都在 handler 里手工调 `_origin_ok`，
+# 但 VR 的 handler **我们不改**（要保持上游原样）→ 只能在 middleware 层补。
+_MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _is_vr_path(path: str) -> bool:
+    return any(rx.match(path) for rx in _VR_PATH_RES)
+
+
+@app.middleware("http")
+async def _vr_guard(request: Request, call_next):
+    """给并进来的 VR 路由补两道闸"""
+    if _is_vr_path(request.url.path):
+        if (_VR_API_KEY and request.method != "OPTIONS"
+                and request.url.path != "/api/health"
+                and request.headers.get("authorization", "") != f"Bearer {_VR_API_KEY}"):
+            return JSONResponse({"error": "未授权：缺少或错误的 VR_API_KEY"}, status_code=401)
+        if request.method in _MUTATING and not _origin_ok(request):
+            return JSONResponse({"error": "非法来源"}, status_code=403)
+    return await call_next(request)
+
+_lock = threading.Lock()
+_job = {
+    "running": False, "job_id": None, "date": None, "error": None,
+    "started": None, "elapsed": 0, "finished_at": None,
+}
+
+_JOB_TIMEOUT = 15 * 60
+
+
+def _job_stuck(job: dict, limit: int) -> bool:
+    """任务是否已超时卡死 —— 卡死的任务不该再挡住新任务。"""
+    return bool(job.get("running") and job.get("started")
+                and time.time() - job["started"] > limit)
+
+
+def _atomic_write(path: str, payload: dict) -> None:
+    tmp = f"{path}.{uuid.uuid4().hex}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)  # 原子替换，读方永远看到完整文件
+
+
+def _capture_theme_reasons() -> None:
+    """囤当天的题材串（1 次问财请求）。 只能查最近交易日，过期不候"""
+    try:
+        from duanxian import theme_tree
+
+        r = theme_tree.capture()
+        if not r.get("ok"):
+            print(f"⚠️ 题材串囤积失败（{r.get('date')}）：{r.get('reason')}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 题材串囤积异常：{type(exc).__name__}: {exc}")
+def _run_review(date: str, job_id: str) -> None:
+    try:
+        graph = build_review_graph()
+        final = graph.invoke(initial_state(date), {"recursion_limit": 50})
+        reflection.auto_evaluate_prior(date)  # 先回评上期预测（其次日=今天，数据已出）
+        payload = review_store.serialize(final, date)   # 带上最新命中回看
+        res = review_store.save(payload, date)
+        if not res.written:
+            # 产物不可用 → 必须让用户看见，不能"任务成功但内容是空的"
+            raise RuntimeError(res.reason)
+        _capture_theme_reasons()     # 题材串同理（问财只给最近交易日）
+    except Exception as exc:  # noqa: BLE001
+        with _lock:
+            if _job["job_id"] == job_id:
+                _job["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        with _lock:
+            if _job["job_id"] == job_id:  # 只结束属于自己的任务（#5）
+                _job["running"] = False
+                if _job["started"]:
+                    _job["elapsed"] = int(time.time() - _job["started"])  # 收尾定格 elapsed（#17）
+                _job["finished_at"] = china_now().strftime("%Y-%m-%d %H:%M:%S") + " CST"
+
+
+def _origin_ok(request: Request) -> bool:
+    """只允许本机来源触发昂贵任务，挡掉恶意网页的跨站 POST（#22）。"""
+    ref = request.headers.get("origin") or request.headers.get("referer") or ""
+    if not ref:
+        return True  # 无 Origin（如 curl 本地调用）放行
+    return (urlparse(ref).hostname or "") in _ALLOWED_HOSTS
+
+
+@app.post("/api/review/run")
+def api_run(request: Request, date: str | None = None):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        explicit = bool(date)
+        if not explicit:
+            today = china_today()
+            date = today if not is_weekend(today) else (
+                trade_calendar.latest_session() or today)
+        date = validate_trade_date(date)  # #1
+        if is_weekend(date):
+            return JSONResponse({"error": f"{date} 为周末非交易日"}, status_code=400)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    with _lock:  # 原子 check-then-act（#5）
+        if _job["running"] and not _job_stuck(_job, _JOB_TIMEOUT):
+            return {"running": True, "date": _job["date"]}
+        if _job["running"]:   # 卡死的旧任务：让位，并把原因如实写进 error
+            _job["error"] = f"上一个任务（{_job.get('date')}）超过 {_JOB_TIMEOUT // 60} 分钟无响应，已判为卡死"
+        job_id = uuid.uuid4().hex
+        _job.update(running=True, job_id=job_id, date=date, error=None,
+                    started=time.time(), elapsed=0, finished_at=None)
+    threading.Thread(target=_run_review, args=(date, job_id), daemon=True).start()
+    return {"running": True, "date": date, "job_id": job_id}
+
+
+@app.get("/api/cli/available")
+def api_cli_available():
+    """哪些订阅 CLI 真的能用 —— **服务端是唯一权威**，UI 照这个渲染"""
+    live = sys.modules.get("app")
+    find_bin = getattr(getattr(live, "cli_runtime", None), "_find_bin", None)
+
+    out = []
+    for kind, bins in sorted(_ALL_CLI_BINS.items()):
+        allowed = kind in _ALLOWED_CLI_KINDS
+        # 被摘掉的 kind 用不了 `detect_cli`（它读的就是被摘空的那个 dict），
+        # 所以直接拿摘除前记下的可执行名去找。
+        installed = bool(find_bin and any(find_bin(b) for b in bins))
+        out.append({
+            "kind": kind,
+            "allowed": allowed,
+            "installed": installed,
+            "reason": None if allowed else "自动批准 / 无沙箱，默认禁用",
+        })
+    return {
+        "clis": out,
+        # 放开的办法，直接告诉调用方，不用去翻文档
+        "optInEnv": "VIBE_ALLOW_UNSAFE_CLI",
+        "optedIn": sorted(_opted_in_clis()),
+    }
+
+
+@app.get("/api/review/status")
+def api_status():
+    with _lock:
+        snap = dict(_job)
+    if snap["running"] and snap["started"]:
+        snap["elapsed"] = int(time.time() - snap["started"])
+    snap.pop("started", None)
+    return snap
+
+
+@app.post("/api/review/evaluate")
+def api_evaluate(request: Request, date: str):
+    """手动评估某天的『明天关注点』命中情况（次一交易日实际涨跌）"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        date = validate_trade_date(date)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    res = reflection.evaluate(date)
+    return res or {"error": "无可评估数据（缺该日预测，或次一交易日数据尚未出）"}
+
+
+@app.get("/api/review/dates")
+def api_review_dates():
+    """跑过复盘的交易日，新→旧。给看板的历史入口用。
+
+    在此之前 `reviews/` 每天存一份、但只有 `latest.json` 有接口 ——
+    对一个复盘产品来说「翻回上周三看看」是刚需，却没有入口。
+    """
+    return {"dates": review_store.dates()}
+
+
+@app.get("/api/review/latest")
+def api_latest(date: Optional[str] = None):
+    """读复盘：不带 date 读最近一份；带 date 读那天的历史存档。"""
+    if date:
+        try:
+            date = validate_trade_date(date)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    payload = review_store.load(date)   # 损坏/不存在都返回 None（不 500）
+    if payload is None or not review_store.usable(payload):
+        # 空对象 = 「这天没有」，前端据此显示"还没跑过"；带上 date 好让前端知道问的是哪天
+        return JSONResponse({"requested_date": date} if date else {}, status_code=200)
+    try:
+        if date is None:
+            payload["reflection"] = reflection.latest_reflection()
+        payload["scoreboard"] = reflection.scoreboard()
+    except Exception as exc:  # noqa: BLE001  战绩算不出来不该让整个复盘打不开
+        print(f"⚠️ 战绩统计失败：{type(exc).__name__}: {exc}")
+    return JSONResponse(payload)
+
+
+# ==================== ③ 近 5 天热度 ====================
+_wk_lock = threading.Lock()
+
+
+def _wk_load():
+    path = os.path.join(_WK_DIR, "latest.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError, FileNotFoundError):
+        return None
+
+
+def _wk_fresh(cached: dict) -> bool:
+    """缓存是否仍是最新已收盘交易日窗口（ #3）。判不了(网络失败)→按新鲜处理不硬刷"""
+    from duanxian.weekly import LINEAGE_SCHEMA
+
+    days = cached.get("days") or []
+    if not days:
+        return False
+    if cached.get("lineage_schema") != LINEAGE_SCHEMA:
+        return False
+    try:
+        from duanxian.weekly import _last_trade_dates
+
+        latest = _last_trade_dates(1)
+        expected = latest[-1] if latest else None
+    except Exception:  # noqa: BLE001
+        expected = None
+    return expected is None or days[-1].get("date") == expected
+
+
+def _wk_good(w: dict) -> bool:
+    """结果够格替换有效缓存吗（ #4：至少有一天真实取到数）"""
+    return not w.get("error") and any((d.get("limit_up") is not None) for d in (w.get("days") or []))
+
+
+@app.get("/api/weekly")
+def api_weekly(request: Request, refresh: int = 0):
+    """近 5 交易日热度 + 龙头谱系。缓存按交易日过期；单飞锁防并发重复计算（~40s）"""
+    return _weekly(force=False)
+
+
+@app.post("/api/weekly/refresh")
+def api_weekly_refresh(request: Request):
+    """强制重算近 5 天热度。写操作走 POST + Origin 校验（见 api_weekly 的说明）。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    return _weekly(force=True)
+
+
+def _weekly(force: bool):
+    """近 5 天热度的真正实现。`force` **只能由 POST 处理器传入**，不接受查询参数。"""
+    from duanxian.weekly import build_weekly
+
+    cached = _wk_load()
+    if not force and cached and _wk_fresh(cached):
+        return JSONResponse(cached)
+
+    if not _wk_lock.acquire(blocking=False):
+        if cached:
+            return JSONResponse({**cached, "busy": True})
+        return JSONResponse({"error": "正在计算中，请稍后重试", "busy": True}, status_code=409)
+    try:
+        cached2 = _wk_load()
+        if not force and cached2 and _wk_fresh(cached2):
+            return JSONResponse(cached2)
+        w = build_weekly(5)
+        w["generated_at"] = china_now().strftime("%Y-%m-%d %H:%M")
+        days = w.get("days") or []
+        w["last_trade_date"] = days[-1].get("date") if days else None
+        if _wk_good(w):
+            try:
+                _atomic_write(safe_join(_WK_DIR, "latest.json"), w)
+            except Exception:  # noqa: BLE001
+                pass
+            return JSONResponse(w)
+        if cached2 and (cached2.get("days")):
+            stale = dict(cached2)
+            stale["stale"] = True
+            stale["warnings"] = (stale.get("warnings") or []) + ["刷新失败，展示上一份有效数据"]
+            return JSONResponse(stale)
+        return JSONResponse(w)
+    finally:
+        _wk_lock.release()
+
+
+_chat_llm = None
+_ROLE_MAP = {"user": "human", "assistant": "ai"}
+
+# 对话体量上限。本机其它进程也能打这个口，不设限就能构造超长请求把 LLM 额度烧光。
+_CHAT_MAX_MESSAGES = 40       # 超出部分只保留最近的（_chat 内还会再截到 12 轮）
+_CHAT_MAX_CHARS_EACH = 4000
+_CHAT_MAX_CHARS_TOTAL = 24000
+
+
+def _sanitize_messages(msgs: object) -> tuple[list, Optional[str]]:
+    """校验并裁剪对话消息。返回 (清洗后的消息, 错误信息)。"""
+    if not isinstance(msgs, list) or not msgs:
+        return [], "空消息"
+    if len(msgs) > _CHAT_MAX_MESSAGES:
+        msgs = msgs[-_CHAT_MAX_MESSAGES:]
+    out, total = [], 0
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role", "user")
+        if role not in _ROLE_MAP:
+            return [], f"不支持的 role：{role!r}（只接受 user / assistant）"
+        content = str(m.get("content", ""))[:_CHAT_MAX_CHARS_EACH]
+        total += len(content)
+        if total > _CHAT_MAX_CHARS_TOTAL:
+            return [], "对话内容过长，请开新会话"
+        out.append({"role": role, "content": content})
+    return (out, None) if out else ([], "空消息")
+
+
+def _chat_model():
+    global _chat_llm
+    if _chat_llm is None:
+        _chat_llm = make_llm(deep=False)
+    return _chat_llm
+
+
+def _strip_html(s: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", " ", s or "")).strip()
+
+
+def _load_latest_json(dirpath: str) -> dict:
+    path = os.path.join(dirpath, "latest.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError, FileNotFoundError):
+        return {}
+
+
+def _review_context() -> str:
+    d = _load_latest_json(_REVIEW_DIR)
+    if not d:
+        return "（暂无复盘数据，请先在复盘 Agent 生成一次复盘。）"
+    parts = [f"复盘交易日 {d.get('target_date', '')}", f"【明天关注点】\n{d.get('focus_md', '')}"]
+    if d.get("macro_sector"):
+        parts.append(f"【大板块本周】\n{d['macro_sector']}")
+    for a in d.get("analysts", []):
+        parts.append(f"【{a.get('title', '')}】\n{_strip_html(a.get('html', ''))}")
+    return "\n\n".join(parts)[:8000]
+def _chat(context: str, role_desc: str, messages: list) -> dict:
+    system = (
+        f"你是{role_desc}。下面是刚才多 agent 产出的结论与数据，用户会就它追问或让你展开。\n"
+        f"{PACK.chat_guidance}\n"
+        "不要提及你自己的身份或模型名。\n\n" + context
+    )
+    try:
+        chain = [("system", system)] + [
+            (_ROLE_MAP.get(m["role"], "human"), m["content"])
+            for m in messages[-12:]
+        ]
+        ans = _chat_model().invoke(chain).content
+        return {"answer": strip_model_noise(ans)}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+@app.post("/api/review/chat")
+def api_review_chat(request: Request, body: dict = Body(...)):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    msgs, err = _sanitize_messages(body.get("messages"))
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    return _chat(_review_context(), "A 股短线复盘助手", msgs)
+
+
+def index():
+    dist_index = os.path.join(_DIST, "index.html")
+    if os.path.isfile(dist_index):
+        return FileResponse(dist_index)
+    return JSONResponse(
+        {"error": "未找到前端构建产物，请先执行：cd frontend && npm install && npm run build"},
+        status_code=503,
+    )
+
+
+@app.get("/api/verification/menu")
+def api_verify_menu():
+    """可选指标清单（前端下拉用）。"""
+    from duanxian.verification import DIRECTIONS, METRICS
+
+    return JSONResponse({
+        "directions": DIRECTIONS,
+        "metrics": [{"key": m.key, "label": m.label, "hint": m.hint,
+                     "unit": m.unit, "higher_is_hotter": m.higher_is_hotter}
+                    for m in METRICS],
+    })
+
+
+@app.get("/api/verification/items")
+def api_verify_items(date: str):
+    from duanxian import verification
+
+    try:
+        date = validate_trade_date(date)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"date": date, "items": verification.load_user_items(date)})
+
+
+@app.post("/api/verification/items")
+def api_verify_save(request: Request, date: str, body: dict = Body(...)):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    from duanxian import verification
+
+    try:
+        date = validate_trade_date(date)
+        return JSONResponse(verification.save_user_items(date, body.get("items") or []))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+def _mount_static() -> None:
+    """挂静态资源 + SPA 兜底"""
+    if not os.path.isdir(_DIST):
+        print(f"ℹ️ 未找到前端构建产物（{_DIST}）。请先执行："
+              f"cd frontend && npm install && npm run build")
+        return
+    app.mount("/assets", StaticFiles(directory=os.path.join(_DIST, "assets")),
+              name="assets")
+
+    @app.get("/{full_path:path}")
+    def _spa(full_path: str):
+        if full_path.startswith("api/"):
+            return JSONResponse({"error": f"未知接口 /{full_path}"}, status_code=404)
+        # 真实存在的静态文件（favicon / manifest / 图片…）直接给
+        candidate = safe_join(_DIST, full_path) if full_path else None
+        if candidate and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_DIST, "index.html"))
+
+    print(f"✓ React 构建产物已挂载（{_DIST}）")
+
+
+_mount_static()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # 端口可用 VIBE_PORT 覆盖，默认 8910（被占时不必改代码）
+    port = int(os.environ.get("VIBE_PORT", "8910"))
+    if _DISABLED_CLIS:
+        # 有声地说出限制：不说的话，"少了几个可选项"看起来像 bug 而不是有意为之
+        print(f"🔒 已禁用自动批准 CLI：{', '.join(_DISABLED_CLIS)}"
+              f"（保留 {', '.join(sorted(_ALLOWED_CLI_KINDS))}）")
+    if _opted_in_clis():
+        # 放开了危险 CLI 就必须说清放开了什么、代价是什么 ——
+        # 光印一句"保留 claude, codex"看不出后者是被特批进来的
+        print(f"⚠️  VIBE_ALLOW_UNSAFE_CLI 已放开：{', '.join(sorted(_opted_in_clis()))}"
+              f" —— 这些 CLI 会不经询问地读写文件、执行命令，"
+              f"而问 AI 时抓来的外部新闻原文会原样进 prompt。确认你信任数据源再用。")
+    print(f"→ 打开 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
+    uvicorn.run(app, host="127.0.0.1", port=port)

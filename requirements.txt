@@ -1,0 +1,18 @@
+# Vibe-Astock —— 需 Python 3.10+（akshare 新版语法）；实测 3.12
+# 编排引擎（借自 TradingAgents-astock）+ MiMo LLM
+langgraph>=0.6
+langchain-core>=0.3
+langchain-openai>=0.3
+pydantic>=2
+python-dotenv>=1
+
+# Web 后端（server.py）
+fastapi>=0.110
+uvicorn>=0.29
+
+# 数据层（复用项目根 _tools_daily_review 的 fetcher）
+requests
+akshare>=1.18
+
+# 开发/测试
+pytest>=8
