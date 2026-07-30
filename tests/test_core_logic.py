@@ -4293,3 +4293,111 @@ class TestThemeTreeWorksForHistoricalSessions:
 
         monkeypatch.setattr(dr, "fetch_zt_reasons", _boom)
         assert tt.reasons_of("2026-07-22")[0] == {"600000": "缓存里的"}
+
+
+@pytest.mark.unit
+class TestLimitDownIsRegimeAware:
+    """跌停要按**这只票自己的涨跌幅制度**判，不能一刀 -9.8%。
+
+    「跌停」这一档在界面上是"今天最惨的那批"。一刀 -9.8% 会把 20cm 的票跌 12%
+    也算成跌停 —— 数字看着合理（跌得确实惨），但它没跌停，算进去就夸大了退潮程度。
+    涨的那一侧本来就是制度感知的（`is_limit_up` 优先比对涨停价），跌的一侧照做。
+    """
+
+    @staticmethod
+    def _row(code, name, ret):
+        return {"code": code, "name": name, "ret": ret, "prev_boards": 1}
+
+    def test_20cm_falling_12_is_not_limit_down(self):
+        from duanxian.market_facts import _is_limit_down
+
+        assert not _is_limit_down(self._row("300001", "某创业板", -12.0)), \
+            "20cm 的票跌 12% 不是跌停"
+
+    def test_20cm_falling_20_is_limit_down(self):
+        from duanxian.market_facts import _is_limit_down
+
+        assert _is_limit_down(self._row("300001", "某创业板", -19.98))
+
+    def test_10cm_falling_10_is_limit_down(self):
+        from duanxian.market_facts import _is_limit_down
+
+        assert _is_limit_down(self._row("600000", "某主板", -10.0))
+
+    def test_10cm_falling_9_is_not(self):
+        from duanxian.market_facts import _is_limit_down
+
+        assert not _is_limit_down(self._row("600000", "某主板", -9.0))
+
+    def test_st_falling_5_is_limit_down(self):
+        """ST 主板的跌停是 5% —— 一刀 -9.8% 会把它**漏掉**（反方向的错）。"""
+        from duanxian.market_facts import _is_limit_down
+
+        assert _is_limit_down(self._row("600001", "ST某某", -5.0))
+
+    def test_missing_ret_is_not_limit_down(self):
+        from duanxian.market_facts import _is_limit_down
+
+        assert not _is_limit_down({"code": "600000", "name": "某主板", "ret": None})
+
+
+@pytest.mark.unit
+class TestVerificationItemsCarryBaseline:
+    """今晚落盘的验证条件必须带「今日基准值 + 阈值」。
+
+    只写"涨停家数预期下降"，第二天没法对账：从多少降到多少才算降？
+    阈值本来就定义在 `verification.METRICS` 里（涨停家数 ±5 家、1进2 ±5 个百分点…），
+    今日读数也在同一份复盘里 —— 不带出去，读者第二天只能凭感觉，
+    而凭感觉的结论无论怎么变都能自圆其说。
+    """
+
+    def test_known_metric_gets_base_and_eps(self):
+        from duanxian import verification as v
+
+        metrics = {"promotion": {"available": True, "limit_up_count": 81}}
+        out = v.describe_items([{"metric": "limit_up_count", "direction": "下降",
+                                 "reason": "梯队断层"}], metrics, {})
+        assert out[0]["base_value"] == 81
+        assert out[0]["eps"] == 5
+        assert out[0]["label"] == "涨停家数"
+        assert out[0]["unit"] == "家"
+        assert out[0]["reason"] == "梯队断层", "原有字段不能丢"
+
+    def test_unknown_metric_passes_through(self):
+        """裁判偶尔写出菜单外的键 —— 原样返回，不猜也不编。"""
+        from duanxian import verification as v
+
+        out = v.describe_items([{"metric": "看承接力度", "direction": "上升"}], {}, {})
+        assert out == [{"metric": "看承接力度", "direction": "上升"}]
+
+    def test_unavailable_metric_gives_none_not_zero(self):
+        from duanxian import verification as v
+
+        metrics = {"promotion": {"available": False}}
+        out = v.describe_items([{"metric": "limit_up_count", "direction": "下降"}], metrics, {})
+        assert out[0]["base_value"] is None, "取不到要给 None，不能当 0"
+
+    def test_load_backfills_baselines_for_old_reviews(self):
+        """**读取**时补，不是落盘时补 —— 否则早先存的复盘永远只有一句"预期下降"。
+
+        算基准值要用的 metrics/facts 就在同一份存档里，所以历史场次也补得上。
+        """
+        from duanxian import review_store as rs
+
+        env = {
+            "focus": {"emotion_phase": "亢奋", "verification_items": [
+                {"metric": "limit_up_count", "direction": "下降", "reason": "y"}]},
+            "emotion_metrics": {"promotion": {"available": True, "limit_up_count": 81}},
+            "market_facts": {},
+        }
+        out = rs._with_baselines(env)
+        item = out["focus"]["verification_items"][0]
+        assert item["base_value"] == 81 and item["eps"] == 5, item
+        assert item["reason"] == "y"
+
+    def test_backfill_is_safe_on_empty(self):
+        from duanxian import review_store as rs
+
+        assert rs._with_baselines(None) is None
+        assert rs._with_baselines({"focus": None}) == {"focus": None}
+        assert rs._with_baselines({}) == {}

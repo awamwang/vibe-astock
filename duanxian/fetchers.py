@@ -349,7 +349,7 @@ def fetch_zt_reasons(date):
     except Exception as e:
         return {}, f"import IwencaiClient 失败: {type(e).__name__}: {str(e)[:80]}"
     if not os.environ.get("IWENCAI_API_KEY"):
-        return {}, "缺 IWENCAI_API_KEY (未 source .env)"
+        return {}, "没配问财接口密钥 IWENCAI_API_KEY，取不到涨停原因"
 
     try:
         client = IwencaiClient()

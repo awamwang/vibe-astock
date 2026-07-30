@@ -6,7 +6,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Caliber } from "@/components/ui/Caliber";
 import { pctColor, countColor, strengthColor } from "@/lib/colors";
-import { safeArray, safeRecord } from "@/lib/agent";
+import { finite, safeArray, safeRecord } from "@/lib/agent";
 import type {
   BoardStat, ByBoard, EventLedger, FeedbackCell, FeedbackMatrix,
   DayChange, DayDiff, FeedbackDetail, LossEffect, SealQuality,
@@ -32,6 +32,13 @@ function statVal(it: { kind?: string; unit?: string }, v?: number | null): strin
   if (it.kind === "rate") return rate(v);
   if (it.kind === "pct") return signed(v);
   return `${v}${it.unit ?? ""}`;
+}
+
+/** 只数 → 占样本的比例。原来这张卡三个数只有第一个给了占比，另两个只给只数，
+ *  同一行里一半带比例一半不带，读者会以为它们不是同一个分母。 */
+function ratioOf(count?: number | null, sample?: number | null): number | null {
+  const c = finite(count), n = finite(sample);
+  return c == null || n == null || n <= 0 ? null : c / n;
 }
 
 export function Section({
@@ -203,7 +210,8 @@ export function StatsView({ c }: { c?: StatsContext }) {
     <Section
       icon={Gauge}
       title="历史统计位置"
-      hint={"「涨停 40 家」是多还是少？光看绝对值判断不了 —— 要看它在历史上排第几。两头（≥85% 或 ≤15% 分位）才标注。"
+      hint={"「涨停 40 家」是多还是少？光看绝对值判断不了 —— 要看它在历史上排第几。"
+            + "每行第二个百分数是**历史分位**（77% = 比 77% 的日子高），**不是胜率**；两头（≥85% 或 ≤15%）才额外标偏热/偏冷。"
             + "⚠️ 全部从已落盘的涨停池缓存算，用池子里的全部票；「赚钱效应中位数」因此可能与上面那张卡差个零头"
             + "（那张卡只计入实时行情取得到的票）——两个都对，分母不同。"}
       available={c?.available}
@@ -428,6 +436,9 @@ export function Ledger({ el }: { el?: EventLedger }) {
       hint="今天值得看的那十几只票自动挑出来。⚠️ 只陈述发生了什么，不排序打分、不给参与倾向。"
       caliber={"事件是按规则自动挑的：今日最高板、炸板≥2次又回封、各题材最早封板的那只、\n" +
         "昨日板位最高的断板股（最多 6 只）、跌得最狠的（最多 5 只）。\n" +
+        "「今天钱亏在哪」记的是**打板资金吃面的地方**，不是这些票都收跌 ——\n" +
+        "炸板的票当天照样可能收红（冲板又掉下来、收盘还涨 7%），埋的是打板那一下。\n" +
+        "「N 起」= 这一堆里有 N 只票。\n" +
         "⚠️ **按方向分三堆，堆内不排序。**\n" +
         "⚠️ 断板按**昨日板位**排，不按炸板次数：一只普通首板炸十次，信息量远不如「昨日 5 板断了」。"}
       available={el?.available}
@@ -453,7 +464,8 @@ export function LossEffectSection({ le }: { le?: LossEffect }) {
       title="亏钱效应 · 昨日涨停股今天吃了多少面"
       hint="⚠️ 这一栏只统计【昨日涨停的那批票】今天的表现，不是全市场。判退潮先看昨天的强势股今天有多疼——炸板率只说明板没封住，说明不了封不住之后亏多少。"
       caliber={"样本 = 昨日涨停池全部个股，收盘对收盘。\n" +
-        "「跌超5%/7%」按今日收盘涨跌幅算，不看盘中最低。\n" +
+        "「跌超5%/7%」按今日收盘涨跌幅算，不看盘中最低；**恰好跌 5.00% / 7.00% 都算进去**。\n" +
+        "跌停按每只票自己的制度判（主板 10%、创业科创 20%、ST 主板 5%、北交所 30%），不是统一 10%。\n" +
         "⚠️ 与第一屏「全市场跌超5%」不是同一个分母：这里的分母只有昨日涨停那批（见下方样本数），\n" +
         "那里的分母是全 A 五千多只。两个数不能直接比大小。"}
       available={le?.available}
@@ -466,11 +478,15 @@ export function LossEffectSection({ le }: { le?: LossEffect }) {
         </div>
         <div>
           <div className={cn("text-xl font-extrabold tabular-nums", countColor("down"))}>{le?.deep_loss_7_count ?? "—"}</div>
-          <div className="text-[11px] text-muted-foreground">昨日涨停股跌超7%</div>
+          <div className="text-[11px] text-muted-foreground">
+            昨日涨停股跌超7% ({rate(ratioOf(le?.deep_loss_7_count, le?.sample))})
+          </div>
         </div>
         <div>
           <div className={cn("text-xl font-extrabold tabular-nums", countColor("down"))}>{le?.limit_down_count ?? "—"}</div>
-          <div className="text-[11px] text-muted-foreground">昨日涨停股今日跌停</div>
+          <div className="text-[11px] text-muted-foreground">
+            昨日涨停股今日跌停 ({rate(ratioOf(le?.limit_down_count, le?.sample))})
+          </div>
         </div>
       </div>
       <div className="mt-3 space-y-0.5 border-t border-border pt-2.5 text-[11px] text-muted-foreground">

@@ -79,6 +79,11 @@ export interface FocusDirection {
 /** 明日验证条件：指标 + 预期方向。不是"明天买什么"，是"明天用哪些读数检验今晚判断" */
 export interface VerificationItem {
   metric: string; direction: string; reason: string;
+  /** 今晚这个读数是多少 —— 明天要跟它比。取不到为 null（不是 0）*/
+  base_value?: number | null;
+  /** 变了才算变的阈值。没有它，涨停 40→41 也会被当成"上升" */
+  eps?: number | null;
+  label?: string; unit?: string; higher_is_hotter?: boolean;
 }
 /** 次日核验结果。verified=null 表示数据不足以判定，**不是判错** */
 export interface VerificationResult extends VerificationItem {

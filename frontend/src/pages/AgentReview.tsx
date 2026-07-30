@@ -12,9 +12,33 @@ import {
 import { BreadthPanel } from "@/components/BreadthPanel";
 import { TrendPanel } from "@/components/TrendPanel";
 import {
-  agentFetch, agentPost, localDate, phaseTone, safeArray,
+  agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
   type FocusDirection, type ReviewData, type VerificationItem, type JobStatus,
 } from "@/lib/agent";
+
+
+/** 验证条件里的读数与阈值怎么显示。
+ *
+ *  三种单位混在一起：家 / 板 是计数，`%` 是已经是百分数的值（赚钱效应中位数 +0.42%），
+ *  空单位是 0~1 的比率（晋级率 0.13 = 13%）。混着直接印就会出现「0.13」这种读者
+ *  得自己换算的数 —— 与「历史统计位置」那一列犯过的是同一个错。
+ */
+function statText(v: VerificationItem): string {
+  const n = finite(v.base_value);
+  if (n == null) return "—";
+  if (v.unit === "%") return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+  if (!v.unit) return `${Math.round(n * 100)}%`;
+  return `${n}${v.unit}`;
+}
+
+function epsText(v: VerificationItem): string {
+  const e = finite(v.eps);
+  if (e == null) return "";
+  // 比率与百分数都按"个百分点"说，别写成「超过 0.05」
+  if (!v.unit) return `${Math.round(e * 100)} 个百分点`;
+  if (v.unit === "%") return `${e} 个百分点`;
+  return `${e}${v.unit}`;
+}
 
 const METRIC_LABEL: Record<string, string> = {
   limit_up_count: "涨停家数",
@@ -400,13 +424,21 @@ export function AgentReview() {
                   {safeArray<VerificationItem>(focus.verification_items).map((v, i) => (
                     <div key={i} className="flex-1 basis-[240px] rounded-lg border border-border bg-muted/20 px-3 py-2">
                       <div className="text-[13px] font-semibold">
-                        {METRIC_LABEL[v.metric] || v.metric}
+                        {v.label || METRIC_LABEL[v.metric] || v.metric}
                         {}
                         <span className={cn("ml-1.5 rounded px-1.5 py-0.5 text-[11px] font-bold",
                           v.direction === "上升" ? "bg-danger/15 text-danger"
                             : v.direction === "下降" ? "bg-success/15 text-success"
                             : "bg-muted text-muted-foreground")}>预期{v.direction}</span>
                       </div>
+                      {/* 今日基准 + 阈值：只写"预期下降"的话，明天从多少降到多少才算降？
+                          没有这两个数，第二天只能凭感觉，而凭感觉怎么变都能自圆其说。 */}
+                      {finite(v.base_value) != null && (
+                        <div className="mt-1 text-[11px] tabular-nums text-foreground/70">
+                          今日 <b className="text-foreground">{statText(v)}</b>
+                          {epsText(v) && <> · 明天变动超过 {epsText(v)} 才算数</>}
+                        </div>
+                      )}
                       <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{v.reason}</div>
                     </div>
                   ))}

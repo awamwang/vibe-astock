@@ -78,6 +78,27 @@ METRICS: list[Metric] = [
 _BY_KEY = {m.key: m for m in METRICS}
 
 
+
+def describe_items(items: list[dict], metrics: dict, facts: dict) -> list[dict]:
+    """给今晚落盘的验证条件补上「今日基准值 + 变了才算变的阈值」。
+
+    只写"预期上升"，第二天没法对账 —— 从多少涨到多少才算上升？
+    阈值本来就定义在上面的 METRICS 里，今日读数也在同一份复盘里，
+    不带出去的话，读者第二天只能凭感觉，而凭感觉的结论怎么变都能自圆其说。
+
+    认不出的 metric key 原样返回（裁判偶尔会写出菜单外的键），不猜、不编。
+    """
+    out = []
+    for it in items or []:
+        m = _BY_KEY.get(str(it.get("metric") or ""))
+        if m is None:
+            out.append(dict(it))
+            continue
+        base = m.getter(metrics or {}, facts or {})
+        out.append({**it, "label": m.label, "unit": m.unit, "eps": m.eps,
+                    "base_value": base, "higher_is_hotter": m.higher_is_hotter})
+    return out
+
 def metric_menu() -> str:
     """给裁判 prompt 的可选指标清单。"""
     return "\n".join(f"  - {m.key}（{m.label}）：{m.hint}" for m in METRICS)

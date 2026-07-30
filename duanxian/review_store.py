@@ -91,11 +91,31 @@ def save(payload: dict, date: str) -> SaveResult:
     return SaveResult(False, reason, rejected)
 
 
+def _with_baselines(env: dict | None) -> dict | None:
+    """给验证条件补上「今日基准值 + 阈值」。
+
+    放在**读取**这一步而不是落盘那一步：算它要用的 metrics / facts 就存在同一个
+    envelope 里，所以早先落盘的那些复盘也能一并补上 —— 落盘时补的话，
+    翻回上周三那份永远只有一句"预期下降"，明天拿什么对账。
+    重复算是幂等的（同一份数据算出同一个结果）。
+    """
+    if not isinstance(env, dict):
+        return env
+    focus = env.get("focus")
+    if not isinstance(focus, dict) or not focus.get("verification_items"):
+        return env
+    from . import verification
+
+    return {**env, "focus": {**focus, "verification_items": verification.describe_items(
+        focus["verification_items"],
+        env.get("emotion_metrics") or {}, env.get("market_facts") or {})}}
+
+
 def load(date: str | None = None) -> dict | None:
     """读某天的复盘；`date=None` 读 latest。文件损坏当不存在处理（不抛）。"""
     name = "latest.json" if date is None else f"{date}.json"
     path = safe_join(DIR, name)
-    return _read(path) if os.path.exists(path) else None
+    return _with_baselines(_read(path)) if os.path.exists(path) else None
 
 
 def dates() -> list[str]:

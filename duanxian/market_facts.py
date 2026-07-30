@@ -219,8 +219,8 @@ def loss_effect(date: str, prev: Optional[str] = None) -> dict:
                 "deep_loss_5_rate": round(len(deep5) / n, 3),
                 "deep_loss_7_count": sum(1 for r in got if r["ret"] <= -7),
                 # 定稿记录带涨停价，跌停判据用「收在跌停价」比比对今日跌停池更直接；
-                # 但它没有跌停价字段，所以用 -9.8% 兜（10cm 与 20cm 混算会偏，故只当下界）
-                "limit_down_count": sum(1 for r in got if r["ret"] <= -9.8),
+                # 定稿记录没有跌停价字段，所以按**各自制度**的跌幅上限判
+                "limit_down_count": sum(1 for r in got if _is_limit_down(r)),
                 "worst": round(min(r["ret"] for r in got), 2),
                 "market_limit_down": None,      # 需要今日跌停池，定稿路径给不了
                 "prev_broken_recovery": None,   # 需要昨日炸板股，定稿记录不含
@@ -297,6 +297,19 @@ def _classify(ret: float, code: str, name: str, in_today_zt: bool, in_today_dt: 
     return "小跌"
 
 
+
+def _is_limit_down(row: dict) -> bool:
+    """这一行今天跌停了吗 —— 按**它自己的涨跌幅制度**判。
+
+    定稿记录里没有跌停价，只能用当日涨跌幅比对制度上限（留 0.3 个点余量，
+    同 `is_limit_up` 缺价时的做法）。别用统一的 -9.8%：那会把 20cm 的票
+    跌 12% 也算成跌停，而这一档在界面上是"今天最惨的那批"，算多了会夸大退潮。
+    """
+    ret = row.get("ret")
+    if ret is None:
+        return False
+    return ret <= -(limit_pct(row.get("code", ""), row.get("name", "")) - 0.3)
+
 def feedback_matrix(date: str, prev: Optional[str] = None) -> dict:
     """昨日强势股反馈矩阵：**按昨日板位分组**，看今天各落到什么结果
 
@@ -318,7 +331,10 @@ def feedback_matrix(date: str, prev: Optional[str] = None) -> dict:
                 b = int(r.get("prev_boards") or 1)
                 t = tier(b)
                 res = ("晋级涨停" if is_limit_up(r) else
-                       "跌停" if r["ret"] <= -9.8 else
+                       # 跌停按**这只票自己的制度**判（10cm / 20cm / ST 各不同）。
+                       # 一刀 -9.8% 会把 20cm 跌 12% 的票打成"跌停"；
+                       # 涨的那一侧早就是制度感知的（is_limit_up 走涨停价）。
+                       "跌停" if _is_limit_down(r) else
                        "跌超5%" if r["ret"] <= -5 else
                        "收红" if r["ret"] > 0 else "小跌")
                 matrix.setdefault(t, {k: 0 for k in _RESULT_ORDER})[res] += 1

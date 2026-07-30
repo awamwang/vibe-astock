@@ -63,6 +63,8 @@ export function MoneyEffectCard({ me }: { me: MoneyEffect }) {
       caliber={"样本 = 昨日涨停池全部个股（含一字板、含各涨跌幅制度，连板与首板同权）。\n" +
         "涨跌幅 = 今日收盘价相对昨日收盘价，不是相对今日开盘。\n" +
         "⚠️ 一字板次日多半买不进，所以这个数是「昨天那批票的整体去向」，不等于「你能拿到的收益」。\n" +
+        "翻红率 = 今天收涨的占比，**平盘不算翻红**；分母是这批票里今天算得出涨跌幅的。\n" +
+        "再度涨停 = 今天收盘仍封死在涨停价，盘中摸板后炸开的不算。\n" +
         "⚠️ 需要今日收盘价 → 只有最近一个已收盘交易日算得出，盘中会标不可用。"}
       available={me.available} reason={me.reason}
     >
@@ -88,6 +90,7 @@ export function PromotionCard({ pr }: { pr: Promotion }) {
       caliber={"分母 = 昨日收盘时处在该板位的全部个股；分子 = 其中今日收盘仍涨停的。\n" +
         "板位按**昨日收盘**的连板数算，断板后反包不计入原板位。\n" +
         "一字涨停算正常晋级（只看结果不看能否买到）。\n" +
+        "三档是同一批票按昨日板位拆开算，所以三档的分子分母加起来就是「整体晋级率」那一行。\n" +
         "⚠️「3板以上」是合并档 —— 4进5 和 6进7 难度不同，样本太少才合并，别当成同一件事。"}
       available={pr.available} reason={pr.reason}
     >
@@ -121,7 +124,8 @@ export function ConsecPremiumCard({ cp }: { cp: ConsecPremium }) {
       icon={Layers} title="连板溢价"
       hint="昨日 2 板以上个股今天的表现 = 高标承接度"
       caliber={"样本 = 昨日收盘时 2 板及以上的个股，口径同赚钱效应（收盘对收盘）。\n" +
-        "它和赚钱效应的差值就是「高位比整体更抗跌还是更惨」。"}
+        "它和赚钱效应的差值就是「高位比整体更抗跌还是更惨」。\n" +
+        "翻红率同上：今天收涨的占比，平盘不算。"}
       available={cp.available} reason={cp.reason}
     >
       <div className="flex items-end gap-6">
@@ -142,6 +146,7 @@ export function LadderCard({ lg }: { lg: LadderGap }) {
       icon={Layers} title="梯队结构"
       hint="全市场各板位有没有缺档。⚠️ 板位连续≠同题材内部有梯队（2板可能题材A、5板题材C），别据此推断断板后有人承接。"
       caliber={"统计的是**今日收盘涨停**的个股按连板数分档，全市场口径、不分题材。\n" +
+        "只统计 **2 板及以上**，首板不算梯队里的一档，所以缺档也只在 2 板到最高板之间找。\n" +
         "「缺档」= 某个板位一只都没有，而它上下都有票。"}
       available={lg.available} reason={lg.reason}
     >
