@@ -32,7 +32,13 @@ def initial_state(trade_date: str) -> dict:
     }
 
 
-def run(trade_date: str):
+def run(trade_date: str) -> tuple[dict, dict]:
+    """跑一场复盘。返回 (图的产物, 体检结果)。
+
+    ⚠️ 体检结果必须**跟着返回**：落盘要把它的 warnings 带上，而那行在 `main()` 里。
+    只在这里赋值给局部变量的话，`main()` 用它就是 NameError —— 而且是在
+    整条链跑完（约 6 分钟）之后才炸、一次也存不下来。
+    """
     pre = preflight.check(trade_date)
     if not pre["ok"]:
         print(f"\n✗ {preflight.refuse_reason(pre, trade_date)}")
@@ -41,7 +47,7 @@ def run(trade_date: str):
         print(f"⚠️ {w}")
 
     graph = build_review_graph()
-    return graph.invoke(initial_state(trade_date), {"recursion_limit": 50})
+    return graph.invoke(initial_state(trade_date), {"recursion_limit": 50}), pre
 
 
 def main() -> None:
@@ -55,7 +61,7 @@ def main() -> None:
     print(f"===== 短线每日复盘  交易日 {trade_date} =====\n")
     t0 = time.time()
     try:
-        final = run(trade_date)
+        final, pre = run(trade_date)
     except LlmConfigError as exc:
         # 配置/凭据问题给一句人话，别甩 traceback。它是**故意冒泡**上来的
         # （降级会让复盘"跑成功但内容全空"，见 duanxian/llm_errors.py）

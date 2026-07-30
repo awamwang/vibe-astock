@@ -3096,6 +3096,58 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestCliMainActuallyCompletes:
+    """`python main.py` 的成功路径必须能跑到落盘。
+
+    🔴 之前这里有个 NameError：体检结果 `pre` 在 `run()` 里赋值、却在 `main()` 里
+    用来传 warnings —— 每次成功跑完（约 6 分钟）才在落盘那行炸，**一次也存不下来**。
+    静态检查和单元测试都没抓到，因为**没有一条测试真的跑过 `main()`**。
+    所以这条把图和落盘都打桩，真的调一次 `main()`。
+    """
+
+    def test_main_reaches_save_without_nameerror(self, monkeypatch, capsys):
+        import sys
+
+        import main as cli
+        from duanxian import preflight, review_store
+
+        monkeypatch.setattr(sys, "argv", ["main.py", "2026-07-29"])
+        monkeypatch.setattr(preflight, "check", lambda d: {
+            "ok": True, "missing_core": [], "missing_optional": ["龙虎榜"],
+            "warnings": ["龙虎榜：数据缺失，本次复盘少了这一路"]})
+        monkeypatch.setattr(cli, "build_review_graph",
+                            lambda: type("G", (), {"invoke": lambda s, st, cfg: {
+                                "tomorrow_focus": "关注点正文",
+                                "sentiment_report": "情绪面正文"}})())
+        monkeypatch.setattr(cli.reflection, "auto_evaluate_prior", lambda d: None)
+
+        saved: dict = {}
+
+        def _save(payload, date):
+            saved["payload"], saved["date"] = payload, date
+            return type("R", (), {"written": True, "reason": ""})()
+
+        monkeypatch.setattr(review_store, "save", _save)
+
+        cli.main()                       # 不许抛 NameError
+
+        assert saved.get("date") == "2026-07-29", "没走到落盘"
+        assert any("龙虎榜" in w for w in saved["payload"]["warnings"]), \
+            "体检 warnings 没带到落盘"
+        assert "已写入" in capsys.readouterr().out
+
+    def test_run_returns_both_result_and_preflight(self):
+        """签名要把体检结果带出来 —— 只在 run() 里当局部变量就是上面那个 bug。"""
+        import inspect
+
+        import main as cli
+
+        src = inspect.getsource(cli.run)
+        assert "return graph.invoke" in src and ", pre" in src.split("return graph.invoke")[1], \
+            "run() 必须把体检结果一起返回"
+
+
+@pytest.mark.unit
 class TestLiveEmotionCache:
     """今日实时打板情绪的缓存语义。
 
@@ -3494,6 +3546,31 @@ class TestRealtimeQuotesAreLabeledWithTheirSession:
 
         monkeypatch.setattr(util, "china_today", lambda: "2026-07-30")
         assert overseas._market_label("港股", "2026-07-29").endswith("收盘")
+
+    @pytest.mark.parametrize("when,session,want,why", [
+        ((2026, 7, 30, 22, 0), "2026-07-30", "盘中", "工作日 22:00，行情就是今天那场"),
+        ((2026, 7, 31, 3, 0), "2026-07-30", "盘中", "北京次日 03:00，美股仍是 07-30 那场"),
+        ((2026, 7, 30, 21, 10), "2026-07-29", "收盘", "21:10 还没开盘，行情停在上一场"),
+        ((2026, 8, 1, 22, 0), "2026-07-31", "收盘", "周六 22:00，行情是周五那场"),
+        ((2026, 7, 30, 10, 0), "2026-07-29", "收盘", "北京白天，隔夜那场"),
+    ])
+    def test_us_label_needs_session_match_not_just_the_clock(
+            self, monkeypatch, when, session, want, why):
+        """🔴 光看钟点会把过期行情说成实时。
+
+        周末、美股节假日、以及 21:00-21:30 还没开盘这几段，钟点都落在"交易窗口"内，
+        但行情其实是上一场的收盘。所以再加一条：**这批行情的场次必须就是
+        "美股此刻正在进行的那一天"**。这样不需要节假日日历。
+        """
+        import datetime
+
+        from duanxian import overseas, util
+
+        now = datetime.datetime(*when)
+        monkeypatch.setattr(util, "china_now", lambda: now)
+        monkeypatch.setattr(util, "china_today", lambda: now.strftime("%Y-%m-%d"))
+        got = overseas._market_label("美股", session)
+        assert got.endswith(want), f"{why}：期望「{want}」，得到 {got}"
 
     def test_session_handles_unavailable_quote_time(self, monkeypatch):
         """取不到行情时间时不许瞎猜成今天。"""
