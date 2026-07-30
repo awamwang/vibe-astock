@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
       alias: { "@": path.resolve(__dirname, "./src") },
     },
     server: {
-      port: 5899,
+      port: 5910,
       proxy: {
         // 全部 /api → 本仓库后端（8910）。见上面注释：不再需要逐条列举。
         "/api": { target: agentTarget, changeOrigin: true },

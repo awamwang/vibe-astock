@@ -232,8 +232,7 @@ export function DailyReview() {
               {session.label}
             </span>
           )}
-          {/* 集合竞价（09:15-09:25）还没成交，指数就等于昨收、涨跌幅是 0 ——
-              不说一句会被当成"数据坏了"（实测 09:16 打开，三个指数都是 0%） */}
+          {/* 集合竞价（09:15-09:25）还没成交，指数等于昨收、涨跌幅是 0 */}
           {session?.phase === "集合竞价" && (
             <span className="text-[11px] text-muted-foreground/50">还没成交，涨跌幅为 0 是正常的</span>
           )}
