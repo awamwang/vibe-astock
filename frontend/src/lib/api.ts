@@ -265,9 +265,22 @@ export interface GlobalStock {
   quote: GlobalQuote; metrics: GlobalMetrics | null;
 }
 
+/** 此刻的「实时行情」属于哪一场 —— 盘前行情返回的是上一场收盘，UI 要如实标注 */
+export interface MarketSession {
+  now: string;
+  today: string;
+  /** 实时行情代表的交易日；取不到时为 null */
+  quotes_of: string | null;
+  is_today: boolean;
+  phase: string;
+  /** 直接可展示的一句话，如「盘前 · 显示 2026-07-29 收盘」 */
+  label: string;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
+  marketSession: () => get<MarketSession>("/market/session"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),

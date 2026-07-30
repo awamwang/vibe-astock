@@ -24,8 +24,8 @@ from duanxian.review_graph import build_review_graph
 from duanxian.roles import ROLES
 from main import initial_state
 from duanxian.util import (
-    china_now, china_today, is_degraded_report, is_weekend, safe_join,
-    strip_model_noise, validate_trade_date,
+    china_now, china_today, is_a_share_closed, is_degraded_report, is_weekend,
+    safe_join, strip_model_noise, validate_trade_date,
 )
 from duanxian.prompts import PACK
 
@@ -387,6 +387,39 @@ def api_evaluate(request: Request, date: str):
         return JSONResponse({"error": str(exc)}, status_code=400)
     res = reflection.evaluate(date)
     return res or {"error": "无可评估数据（缺该日预测，或次一交易日数据尚未出）"}
+
+
+@app.get("/api/market/session")
+def api_market_session():
+    """此刻的「实时行情」到底属于哪一场。
+
+    腾讯 / 东财的实时接口在盘前返回的是**上一场的收盘**，而且不带任何提示。
+    界面若按「今天」给它们贴日期，盘前打开就会看到「今天 上证 +0.4%」——
+    今天还没开盘，这个数是昨收。数字没错，标签错了，而这种错最容易让人
+    对整块数据失去信任。所以把「哪一场」当成一等公民返回，由 UI 如实标注。
+    """
+    today = china_today()
+    quotes_of = trade_calendar.quote_trade_day()
+    is_today = bool(quotes_of) and quotes_of == today
+    closed = is_a_share_closed()
+
+    if not quotes_of:
+        phase, label = "未知", "行情时间取不到"
+    elif is_today and not closed:
+        phase, label = "盘中", "盘中 · 实时"
+    elif is_today:
+        phase, label = "已收盘", f"{today} 收盘"
+    elif is_weekend(today):
+        phase, label = "非交易日", f"非交易日 · 显示 {quotes_of} 收盘"
+    elif not closed:
+        # 工作日、还没到收盘，而行情停在上一场 → 盘前（或今天是节假日）
+        phase, label = "盘前", f"盘前 · 显示 {quotes_of} 收盘"
+    else:
+        phase, label = "非交易日", f"今日无成交 · 显示 {quotes_of} 收盘"
+
+    return {"now": china_now().strftime("%Y-%m-%d %H:%M"), "today": today,
+            "quotes_of": quotes_of, "is_today": is_today,
+            "phase": phase, "label": label}
 
 
 @app.get("/api/review/dates")

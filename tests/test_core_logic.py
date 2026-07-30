@@ -3074,6 +3074,71 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestRealtimeQuotesAreLabeledWithTheirSession:
+    """实时行情必须标出「属于哪一场」，不许拿本机今天当数据日期。
+
+    腾讯 / 东财的实时接口在盘前返回的是**上一场收盘**且不带提示。
+    页面原来用 `new Date()`（本机今天）当副标题日期 → 08:49 打开看到
+    「2026/07/30 · 上证 +0.4%」，而今天还没开盘、这个数是 07-29 的收盘。
+    **数字没错，标签错了** —— 这种错让人对整块数据失去信任，且任何数值测试都抓不到。
+    """
+
+    def test_session_endpoint_reports_which_session_quotes_belong_to(self, monkeypatch):
+        import server
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(server, "china_today", lambda: "2026-07-30")
+        monkeypatch.setattr(server, "is_a_share_closed", lambda: False)
+        monkeypatch.setattr(server, "is_weekend", lambda d: False)
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-07-29")
+
+        r = server.api_market_session()
+        assert r["quotes_of"] == "2026-07-29"
+        assert r["is_today"] is False, "盘前行情不是今天的，必须说清"
+        assert r["phase"] == "盘前"
+        assert "2026-07-29" in r["label"], f"label 要点出是哪一场：{r['label']}"
+
+    def test_session_says_live_when_market_is_open(self, monkeypatch):
+        import server
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(server, "china_today", lambda: "2026-07-30")
+        monkeypatch.setattr(server, "is_a_share_closed", lambda: False)
+        monkeypatch.setattr(server, "is_weekend", lambda d: False)
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-07-30")
+
+        r = server.api_market_session()
+        assert r["is_today"] is True and r["phase"] == "盘中"
+
+    def test_session_handles_unavailable_quote_time(self, monkeypatch):
+        """取不到行情时间时不许瞎猜成今天。"""
+        import server
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(server, "china_today", lambda: "2026-07-30")
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: None)
+
+        r = server.api_market_session()
+        assert r["quotes_of"] is None and r["is_today"] is False
+        assert r["phase"] == "未知"
+
+    def test_page_subtitle_prefers_session_over_local_today(self):
+        """副标题要用后端给的场次标签，本机 today 只能当兜底。"""
+        import pathlib
+
+        src = pathlib.Path("frontend/src/pages/DailyReview.tsx").read_text(encoding="utf-8")
+        assert "session?.label ?? today" in src, \
+            "副标题必须优先用 session.label —— 直接用本机 today 会把昨收标成今天"
+
+    def test_turnover_timestamp_is_labeled_as_fetch_time(self):
+        """成交额榜那个时间戳是抓取时刻，不是数据日期，得写清楚。"""
+        import pathlib
+
+        src = pathlib.Path("frontend/src/pages/DailyReview.tsx").read_text(encoding="utf-8")
+        assert "更新于 {turnover.updated}" in src, "裸展示时间戳会被当成数据日期"
+
+
+@pytest.mark.unit
 class TestTrendAndStatsDontClaimSameSource:
     """趋势/分位卡不许声称与上面的指标卡「同源」。
 

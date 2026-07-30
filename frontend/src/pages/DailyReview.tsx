@@ -1,17 +1,12 @@
 import { useState, useEffect, Fragment } from "react";
 import { pctColor } from "@/lib/colors";
-import { Link } from "react-router-dom";
-import { Sparkles, Loader2, AlertCircle, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Sparkles, Loader2, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex } from "@/lib/api";
-import { hasLlm, chatStream } from "@/lib/llm";
+import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
@@ -24,14 +19,12 @@ const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); //
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
   const [idxErr, setIdxErr] = useState(false);
-  const [review, setReview] = useState("");
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewErr, setReviewErr] = useState<string | null>(null);
-  const [needConfig, setNeedConfig] = useState(false);
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
   const [turnover, setTurnover] = useState<TurnoverTop | null>(null);
   const [globalIdx, setGlobalIdx] = useState<GlobalIndex[]>([]);
+  // 实时行情属于哪一场：盘前接口返回的是上一场收盘，不标出来会被当成今天的
+  const [session, setSession] = useState<MarketSession | null>(null);
   // 关注股票（自选，存本地）
   const [watchCodes, setWatchCodes] = useState<string[]>(loadWatch);
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
@@ -45,6 +38,7 @@ export function DailyReview() {
 
   const loadIndices = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
+    api.marketSession().then(setSession).catch(() => {});
     api.globalIndices().then(setGlobalIdx).catch(() => {});
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
     api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
@@ -107,27 +101,6 @@ export function DailyReview() {
   const lianbanCtx = (s: LianbanStock) => `连板股 ${s.name}(${s.code}) ${s.boards}连板 深入分析`;
   const lianbanItem = (s: LianbanStock): DiveItem => ({ key: s.code, prompt: lianbanPrompt(s), context: lianbanCtx(s) });
 
-  const runReview = async () => {
-    setReviewErr(null);
-    setNeedConfig(false);
-    if (!hasLlm()) { setNeedConfig(true); return; }
-    setReviewLoading(true);
-    setReview("");
-    const prompt =
-      `以下是今天 A 股大盘的客观数据：\n${dataSummary}\n\n` +
-      "请用中文做一段当天大盘复盘：整体涨跌、主要指数表现、盘面值得注意的点。" +
-      "只做客观陈述与多视角分析，不预测涨跌、不推荐任何标的、不构成投资建议。";
-    try {
-      await chatStream([{ role: "user", content: prompt }], `今日大盘数据：${dataSummary}`, {
-        onDelta: (t) => setReview((r) => r + t),
-      });
-    } catch (e) {
-      setReviewErr(e instanceof ApiError ? e.message : "复盘失败");
-    } finally {
-      setReviewLoading(false);
-    }
-  };
-
   const sentiment = overview?.sentiment;
   const sectors = overview?.sectors || [];
   const sentCells = sentiment ? [
@@ -145,7 +118,7 @@ export function DailyReview() {
     <div>
       <PageHeader
         title="每日复盘"
-        subtitle={`${today} · 大盘 / 情绪 / 板块资金一屏看全，交给你的 AI 做复盘`}
+        subtitle={`${session?.label ?? today} · 大盘 / 情绪 / 板块资金一屏看全，交给你的 AI 做复盘`}
         actions={
           <AskAiButton
             context={`今日大盘数据：${dataSummary}`}
@@ -157,7 +130,14 @@ export function DailyReview() {
 
       {/* 1. 大盘指数（实时） */}
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground">大盘指数</h3>
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-muted-foreground">大盘指数</h3>
+          {session && (
+            <span className={cn("text-[11px]", session.is_today ? "text-muted-foreground/50" : "text-warning")}>
+              {session.label}
+            </span>
+          )}
+        </div>
         <button onClick={loadIndices} className="text-muted-foreground hover:text-primary" title="刷新"><RefreshCw className="h-3.5 w-3.5" /></button>
       </div>
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -254,37 +234,6 @@ export function DailyReview() {
             })}
           </div>
         )}
-      </GlassCard>
-
-      {/* 3. AI 当日复盘 */}
-      <GlassCard glow className="mb-6">
-        <div className="flex items-center justify-between">
-          <h3 className="flex items-center gap-1.5 font-semibold"><Sparkles className="h-4 w-4 text-primary" /> AI 当日复盘</h3>
-          <button onClick={runReview} disabled={reviewLoading}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25 disabled:opacity-50">
-            {reviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {review ? "重新复盘" : "让 AI 复盘今天"}
-          </button>
-        </div>
-        {needConfig && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-muted-foreground">
-            <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
-            还没接入 AI。<Link to="/settings" className="text-primary">先去接入你的 AI</Link>，之后一键出复盘。
-          </div>
-        )}
-        {reviewErr && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0" /> {reviewErr}
-          </div>
-        )}
-        {review ? (
-          <>
-            <div className="prose prose-sm prose-invert mt-4 max-w-none text-foreground"><ReactMarkdown remarkPlugins={[remarkGfm]}>{review}</ReactMarkdown></div>
-            {!reviewLoading && <div className="mt-3"><SaveNoteButton kind="复盘" title={`每日复盘 ${today}`} content={review} /></div>}
-          </>
-        ) : !needConfig && !reviewErr && !reviewLoading ? (
-          <p className="mt-3 text-sm text-muted-foreground">点上方按钮，系统把当天客观数据打包给你的 AI，由它生成复盘。<b className="text-foreground">分析是它给的，我们只负责喂数据。</b></p>
-        ) : null}
       </GlassCard>
 
       {/* 4. 市场情绪 */}
@@ -434,7 +383,7 @@ export function DailyReview() {
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><BarChart3 className="h-4 w-4" /> 全市场成交额 TOP20</h3>
         <span className="text-[11px] text-muted-foreground/50">客观公开榜单，非推荐 / 非预测 / 不构成投资建议</span>
-        {turnover?.updated && <span className="ml-auto text-[11px] text-muted-foreground/50">{turnover.updated}</span>}
+        {turnover?.updated && <span className="ml-auto text-[11px] text-muted-foreground/50">更新于 {turnover.updated}</span>}
       </div>
       <GlassCard className="mb-6">
         {!turnover || turnover.stocks.length === 0 ? (
