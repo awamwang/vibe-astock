@@ -17,7 +17,7 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from duanxian import overseas, preflight, reflection, review_store, trade_calendar
+from duanxian import live_emotion, overseas, preflight, reflection, review_store, trade_calendar
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
 from duanxian.review_graph import build_review_graph
@@ -255,6 +255,9 @@ def _pin_pool_to_settled_session() -> int:
 
     live.em_zt_topic_pool = guarded
     live._pool_pinned = True
+    # 留一个未加锁的原函数出口：盘面数据页要显示**今日实时**的打板情绪，
+    # 而这道锁是给复盘类块用的。锁是钝器，需要今天数据的地方走这个口子。
+    live._pool_unpinned = orig
     return 1
 
 
@@ -493,6 +496,16 @@ def api_market_session():
     return {"now": now.strftime("%Y-%m-%d %H:%M"), "today": today,
             "quotes_of": quotes_of, "is_today": is_today,
             "phase": phase, "label": label}
+
+
+@app.get("/api/market/live-emotion")
+def api_market_live_emotion():
+    """今日**实时**打板情绪（盘面数据页用）。
+
+    与 `vr/` 的 `/api/market/emotion` 并存：那条被锁在已收盘那一场（复盘口径），
+    这条要的就是今天、随盘变化。两个块在界面上分别标清是哪一场。
+    """
+    return live_emotion.snapshot()
 
 
 @app.get("/api/market/overseas")

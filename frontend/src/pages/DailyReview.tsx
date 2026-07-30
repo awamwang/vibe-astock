@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession, type OverseasSnapshot, type OverseasRow } from "@/lib/api";
+import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession, type OverseasSnapshot, type OverseasRow, type LiveEmotion } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,9 @@ export function DailyReview() {
   // 隔夜外围：指数 + 七姐妹。走自己的接口是为了拿到**行情所属交易日**
   // （vr 的 /api/global/indices 不回时间，界面就只能按本机今天贴日期）
   const [oversea, setOversea] = useState<OverseasSnapshot | null>(null);
+  // 今日实时打板情绪。与下面那块「昨日短线情绪」是两回事：
+  // 这块随盘变，那块是已收盘那一场的定稿。
+  const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   // 自动刷新开关：**默认关**（别替用户决定要不要一直打请求），选择记在本地
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
@@ -51,6 +54,7 @@ export function DailyReview() {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
     api.overseas().then(setOversea).catch(() => {});
     api.marketSession().then(setSession).catch(() => {});
+    api.liveEmotion().then(setLiveEmo).catch(() => {});
   };
 
   // 重量组：板块资金走 akshare + JS 引擎（90 个行业）、成交额榜走东财 clist。
@@ -375,10 +379,75 @@ export function DailyReview() {
         )}
       </GlassCard>
 
+      {/* 4a. 今日实时打板情绪 —— 这页是盘面数据，得有今天的 */}
+      {liveEmo && (
+        <>
+          <div className="mb-3 flex flex-wrap items-baseline gap-2">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+              <Flame className="h-4 w-4" /> 今日实时打板情绪
+            </h3>
+            {liveEmo.available ? (
+              <span className="text-[11px] text-warning">
+                {liveEmo.date} {liveEmo.as_of} · {liveEmo.phase}（随盘变化）
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground/50">{liveEmo.reason}</span>
+            )}
+          </div>
+          <GlassCard className="mb-6">
+            {!liveEmo.available ? (
+              <p className="py-4 text-center text-sm text-muted-foreground/60">
+                {liveEmo.reason || "今日暂无数据"}
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { k: "涨停", v: liveEmo.zt_count, unit: "", up: true },
+                  { k: "跌停", v: liveEmo.dt_count, unit: "", up: false },
+                  { k: "最高连板", v: liveEmo.max_boards, unit: " 板", up: true },
+                  { k: "连板（2板+）", v: liveEmo.lianban_count, unit: " 家", up: true },
+                ].map((c) => (
+                  <div key={c.k} className="rounded-lg bg-muted/30 p-3 text-center">
+                    <p className="text-xs text-muted-foreground">{c.k}</p>
+                    <p className={cn("mt-1 font-mono text-xl font-bold",
+                                     c.v == null ? "text-muted-foreground/40"
+                                                 : c.up ? "text-danger" : "text-success")}>
+                      {c.v ?? "—"}{c.v != null && c.unit}
+                    </p>
+                  </div>
+                ))}
+                {[
+                  { k: "封板率", v: liveEmo.seal_rate, sub: "封住 / 尝试涨停", up: true },
+                  { k: "炸板率", v: liveEmo.break_rate, sub: "炸板 / 尝试涨停", up: false },
+                  {
+                    k: "晋级率", v: liveEmo.promotion_rate, up: true,
+                    sub: liveEmo.promotion_base != null
+                      ? `昨涨停 ${liveEmo.promotion_base} 家，今又封住`
+                      : "昨涨停今又停",
+                  },
+                  { k: "炸板家数", v: null as number | null, raw: liveEmo.zb_count, sub: "炸板未回封", up: false },
+                ].map((c) => (
+                  <div key={c.k} className="rounded-lg bg-muted/30 p-3 text-center">
+                    <p className="text-xs text-muted-foreground">{c.k}</p>
+                    <p className={cn("mt-1 font-mono text-xl font-bold",
+                                     (c.raw ?? c.v) == null ? "text-muted-foreground/40"
+                                                            : c.up ? "text-danger" : "text-success")}>
+                      {c.raw != null ? c.raw
+                        : c.v != null ? `${(c.v * 100).toFixed(1)}%` : "—"}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground/50">{c.sub}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </GlassCard>
+        </>
+      )}
+
       {/* 4b. 短线情绪（连板梯队 / 打板情绪，聚合口径零个股名） */}
       <div className="mb-3 flex items-center gap-2">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Flame className="h-4 w-4" /> 短线情绪</h3>
-        <span className="text-[11px] text-muted-foreground/50">连板股 · 打板情绪 · 客观公开榜单</span>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Flame className="h-4 w-4" /> 昨日短线情绪</h3>
+        <span className="text-[11px] text-muted-foreground/50">已收盘那一场的定稿 · 连板股 · 客观公开榜单</span>
         {/* 这块锚在**已收盘那一场**（复盘口径），不跟上面的实时行情一起刷 ——
             不标出来会和上面的实时块混在一起，让人以为它也在跳 */}
         {emotion?.date && (

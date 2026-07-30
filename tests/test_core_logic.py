@@ -3096,6 +3096,69 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestLiveEmotionCache:
+    """今日实时打板情绪的缓存语义。
+
+    取一次要打四个池 + 两次交易日历，实测冷态 8.8 秒，而界面 5 秒一刷 ——
+    不缓存就会请求叠着堆（日志里能看到并发好几条），又拖页面又撞限流。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear(self):
+        from duanxian import live_emotion as le
+
+        le._cache.clear()
+        yield
+        le._cache.clear()
+
+    def test_empty_but_valid_result_is_cached(self):
+        """🔴 判据必须是 `is not None`。
+
+        写成 `if val:` 会把**合法的空结果**当失败：今天跌停 0 家时池子是 `[]`，
+        用真值判断就永不入缓存、每次重打网络（实测热态因此卡在 1.78 秒 = 没缓存）。
+        """
+        from duanxian import live_emotion as le
+
+        calls = []
+        build = lambda: calls.append(1) or []      # noqa: E731  合法的"今天没有"
+        assert le._cached("k", 60, build) == []
+        assert le._cached("k", 60, build) == []
+        assert len(calls) == 1, "空但有效的结果没进缓存，会每次重打网络"
+
+    def test_failure_is_not_cached(self):
+        """取数失败（None）不许缓存 —— 否则一次抖动锁住一整个 TTL。"""
+        from duanxian import live_emotion as le
+
+        calls = []
+        build = lambda: calls.append(1) or None    # noqa: E731
+        le._cached("k", 60, build)
+        le._cached("k", 60, build)
+        assert len(calls) == 2, "失败被缓存了"
+
+    def test_ttl_expiry_refetches(self):
+        from duanxian import live_emotion as le
+
+        calls = []
+        build = lambda: calls.append(1) or ["x"]   # noqa: E731
+        le._cached("k", 0.0, build)
+        le._cached("k", 0.0, build)
+        assert len(calls) == 2
+
+    def test_calendar_lookups_are_cached_too(self):
+        """`prev_trade_date` / `is_settled` 每次都打网络 ——
+        只缓存池子的话热态还是 3.9 秒，跟 5 秒间隔差不多，等于没修。"""
+        import inspect
+
+        from duanxian import live_emotion as le
+
+        src = inspect.getsource(le.snapshot)
+        for name in ("prev_trade_date", "is_settled"):
+            i = src.index(name)
+            # 往前找 200 字符内必须有 _cached，说明是包着调的
+            assert "_cached" in src[max(0, i - 200):i], f"{name} 没走缓存"
+
+
+@pytest.mark.unit
 class TestPreflightRefusesBadInput:
     """核心数据取不到就不跑。结论交给用户的 AI，但**喂进去的必须是真的**。
 

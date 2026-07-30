@@ -300,11 +300,32 @@ export interface OverseasSnapshot {
   hk_label?: string | null;
 }
 
+/** 今日实时打板情绪（盘面数据页）—— 与 ShortTermEmotion（已收盘那一场）分开 */
+export interface LiveEmotion {
+  available: boolean;
+  reason?: string;
+  date?: string;
+  /** 快照时刻 HH:MM */
+  as_of?: string;
+  phase?: string;
+  zt_count?: number;
+  dt_count?: number | null;
+  zb_count?: number | null;
+  max_boards?: number;
+  lianban_count?: number;
+  seal_rate?: number | null;
+  break_rate?: number | null;
+  promotion_rate?: number | null;
+  /** 晋级率的分母：昨日涨停家数 */
+  promotion_base?: number | null;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketSession: () => get<MarketSession>("/market/session"),
   overseas: () => get<OverseasSnapshot>("/market/overseas"),
+  liveEmotion: () => get<LiveEmotion>("/market/live-emotion"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),
