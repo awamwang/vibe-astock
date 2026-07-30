@@ -17,7 +17,7 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from duanxian import overseas, reflection, review_store, trade_calendar
+from duanxian import overseas, preflight, reflection, review_store, trade_calendar
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
 from duanxian.review_graph import build_review_graph
@@ -321,10 +321,17 @@ def _capture_theme_reasons() -> None:
         print(f"⚠️ 题材串囤积异常：{type(exc).__name__}: {exc}")
 def _run_review(date: str, job_id: str) -> None:
     try:
+        # 先体检输入 —— 核心数据取不到就别跑。喂空数据进去，模型会硬凑出
+        # 看着可信的结论（实测点到一只当天 -6.81% 的票当"主线代表"）。
+        pre = preflight.check(date)
+        if not pre["ok"]:
+            raise RuntimeError(preflight.refuse_reason(pre, date))
+
         graph = build_review_graph()
         final = graph.invoke(initial_state(date), {"recursion_limit": 50})
         reflection.auto_evaluate_prior(date)  # 先回评上期预测（其次日=今天，数据已出）
-        payload = review_store.serialize(final, date)   # 带上最新命中回看
+        # 体检发现的非核心缺失要如实落进 warnings，界面才会显示「⚠ 部分数据降级」
+        payload = review_store.serialize(final, date, pre["warnings"])
         res = review_store.save(payload, date)
         if not res.written:
             # 产物不可用 → 必须让用户看见，不能"任务成功但内容是空的"

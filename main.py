@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 import time
 
-from duanxian import reflection, review_store
+from duanxian import preflight, reflection, review_store
 from duanxian.llm_errors import LlmConfigError
 from duanxian.review_graph import build_review_graph
 from duanxian.util import china_today, validate_trade_date
@@ -33,6 +33,13 @@ def initial_state(trade_date: str) -> dict:
 
 
 def run(trade_date: str):
+    pre = preflight.check(trade_date)
+    if not pre["ok"]:
+        print(f"\n✗ {preflight.refuse_reason(pre, trade_date)}")
+        sys.exit(3)
+    for w in pre["warnings"]:
+        print(f"⚠️ {w}")
+
     graph = build_review_graph()
     return graph.invoke(initial_state(trade_date), {"recursion_limit": 50})
 
@@ -69,7 +76,7 @@ def main() -> None:
     print(final["tomorrow_focus"])
 
     reflection.auto_evaluate_prior(trade_date)   # 与 server 同序：先回评上期预测
-    res = review_store.save(review_store.serialize(final, trade_date), trade_date)
+    res = review_store.save(review_store.serialize(final, trade_date, pre["warnings"]), trade_date)
     if res.written:
         print(f"\n✓ 已写入 {review_store.DIR}/{trade_date}.json（看板可直接看）")
     else:

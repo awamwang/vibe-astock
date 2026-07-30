@@ -2814,8 +2814,17 @@ class TestCliEntryPersists:
         import pathlib
 
         srv = pathlib.Path("server.py").read_text(encoding="utf-8")
-        assert "review_store.serialize(final, date)" in srv
-        assert "def _serialize(final" not in srv, "server 里又长出第二份序列化了"
+        cli = pathlib.Path("main.py").read_text(encoding="utf-8")
+        # 按**意图**断言，别钉死参数列表 —— 原来写的是完整调用串
+        # `serialize(final, date)`，给 serialize 加第三个参数（体检 warnings）
+        # 就会误报"两个入口不一致"，而它俩其实都改对了。
+        for name, src in (("server.py", srv), ("main.py", cli)):
+            assert "review_store.serialize(" in src, f"{name} 没走公共序列化"
+            assert "def _serialize(final" not in src, f"{name} 里又长出第二份序列化了"
+        # 两边都得把体检 warnings 传进去，否则一个入口会静默丢掉降级提示
+        for name, src in (("server.py", srv), ("main.py", cli)):
+            i = src.index("review_store.serialize(")
+            assert "warnings" in src[i:i + 120], f"{name} 没把体检 warnings 带上"
 
 
 class TestReviewHistory:
@@ -3084,6 +3093,84 @@ class TestReflectionRefreshedOnRead:
         src = inspect.getsource(server.api_latest)
         j = src.index('payload["reflection"]')
         assert "if date is None:" in src[max(0, j - 200):j], "只在读 latest 时刷新"
+
+
+@pytest.mark.unit
+class TestPreflightRefusesBadInput:
+    """核心数据取不到就不跑。结论交给用户的 AI，但**喂进去的必须是真的**。
+
+    2026-07-30 盘前跑过一次：涨停池/龙虎榜/资金流全空，四个分析师都写了
+    "数据缺失"，裁判仍端出三个方向 + 点名个股（点到一只当天 -6.81% 的票当
+    "主线代表"，而龙头跟踪自己写了"无法识别有效最高标"），落盘 warnings 还是 []。
+    """
+
+    @staticmethod
+    def _stub(monkeypatch, **texts):
+        """把体检要调的取数口换成给定文本；没给的就返回一段正常内容。"""
+        from duanxian import data, preflight, trade_calendar as tc
+
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+        for label, name, _core in preflight._CHECKS:
+            val = texts.get(label, f"{label} 的正常内容")
+            # get_emotion_metrics / get_market_facts 返回 (文本, 结构)
+            ret = (val, {}) if name in ("get_emotion_metrics", "get_market_facts") else val
+            monkeypatch.setattr(data, name, lambda d, _r=ret: _r)
+
+    def test_all_present_passes(self, monkeypatch):
+        from duanxian import preflight
+
+        self._stub(monkeypatch)
+        r = preflight.check("2026-07-29")
+        assert r["ok"] is True and not r["missing_core"] and not r["warnings"]
+
+    def test_empty_string_counts_as_missing(self, monkeypatch):
+        """取数**成功但内容是空**的 —— 这种不带 `[⚠️` 前缀，上次就是它漏过去的。"""
+        from duanxian import preflight
+
+        self._stub(monkeypatch, 盘口统计="   ")
+        r = preflight.check("2026-07-29")
+        assert r["ok"] is False and "盘口统计" in r["missing_core"]
+        assert "不做复盘" in preflight.refuse_reason(r, "2026-07-29")
+
+    def test_degrade_envelope_counts_as_missing(self, monkeypatch):
+        from duanxian import preflight
+
+        self._stub(monkeypatch, 龙头跟踪="[⚠️ 2026-07-29 无有效连板数据，龙头跟踪不可用]")
+        r = preflight.check("2026-07-29")
+        assert r["ok"] is False and "龙头跟踪" in r["missing_core"]
+
+    def test_optional_gap_still_runs_but_is_reported(self, monkeypatch):
+        """非核心缺失照跑，但必须如实进 warnings —— 上次那份是空的，看着一切正常。"""
+        from duanxian import preflight
+
+        self._stub(monkeypatch, 龙虎榜="", 题材串="")
+        r = preflight.check("2026-07-29")
+        assert r["ok"] is True, "非核心缺失不该拦住整场复盘"
+        assert len(r["warnings"]) == 2 and any("龙虎榜" in w for w in r["warnings"])
+
+    def test_unsettled_session_is_refused_by_date_not_content(self, monkeypatch):
+        """盘中数据**是有内容的**，靠内容判断分不出来，所以这条只看日期。"""
+        from duanxian import preflight, trade_calendar as tc
+
+        monkeypatch.setattr(tc, "is_settled", lambda d: False)
+        r = preflight.check("2026-07-30")
+        assert r["ok"] is False and "还没收盘" in r["missing_core"][0]
+
+    def test_runner_refuses_before_building_the_graph(self):
+        """拒绝要发生在**建图之前** —— 否则五个分析师白跑四分钟才炸。"""
+        import inspect
+
+        import server
+
+        src = inspect.getsource(server._run_review)
+        assert src.index("preflight.check") < src.index("build_review_graph"), \
+            "体检必须在建图之前"
+
+    def test_serialize_carries_preflight_warnings(self):
+        from duanxian import review_store
+
+        out = review_store.serialize({}, "2026-07-29", ["龙虎榜：数据缺失，本次复盘少了这一路"])
+        assert any("龙虎榜" in w for w in out["warnings"])
 
 
 @pytest.mark.unit

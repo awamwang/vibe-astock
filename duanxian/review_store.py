@@ -136,10 +136,16 @@ def strip_prefix(text: str, prefix: str) -> str:
     ).strip()
 
 
-def serialize(final: dict, date: str) -> dict:
-    """#19（registry 驱动 analysts 数组）+ #20（版本化 envelope + warnings）"""
+def serialize(final: dict, date: str, extra_warnings: list[str] | None = None) -> dict:
+    """把图的产物打成落盘 envelope。
+
+    `extra_warnings` 来自入口体检（preflight）—— 下面那个 `is_degraded_report`
+    只认**报告以 `[⚠️` 开头**这一种降级；取数成功但内容是空的时候，模型会写出
+    一份看着正常的报告、里面用散文说"数据缺失"，前缀判据看不出来，
+    warnings 就会是空的。所以数据层的缺失由体检（preflight）那边告诉我们。
+    """
     analysts = []
-    warnings = []
+    warnings = list(extra_warnings or [])
     for role in ROLES:
         raw = final.get(role.report_field, "") or ""
         if is_degraded_report(raw):
