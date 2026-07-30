@@ -3955,3 +3955,334 @@ class TestUpDownColorIsOneSource:
         bad = [l.strip()[:80] for l in s.splitlines()
                if re.search(r"跌停|跌超", l) and "text-danger" in l]
         assert not bad, f"「跌」被写成红色了：{bad}"
+
+
+@pytest.mark.unit
+class TestPreflightSeesTheRealFailureStrings:
+    """体检要认的是 data.py **真正会返回的**失败串，不是测试里编出来的那种。
+
+    上面那组体检测试把 `data.get_*` 整个换成自己编的文本（`[⚠️ …]` 或空串），
+    于是只证明了"体检认得出这两种长相"，从没证明"data.py 失败时真的长这样"。
+    实际上有两路失败返回的是裸文本：`龙虎榜取数失败：…` 和
+    `（涨停原因题材串未取到：…）` —— 非空、没前缀，在体检眼里跟正常数据一模一样。
+    题材那一路对**没配 IWENCAI_API_KEY 的用户是常态**，等于这个闸对他们永远是绿的。
+
+    所以这里只 stub 最底层的取数，让 data.py 自己走失败分支。
+    """
+
+    @staticmethod
+    def _settled(monkeypatch):
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+
+    def test_theme_failure_is_visible_to_the_gate(self, monkeypatch):
+        from duanxian import data, fetchers, preflight
+
+        self._settled(monkeypatch)
+        monkeypatch.setattr(fetchers, "fetch_zt_reasons",
+                            lambda d: ({}, "缺 IWENCAI_API_KEY (未 source .env)"))
+        txt = data.get_theme_reasons("2026-07-29")
+        assert preflight._looks_degraded(txt), f"体检看不见题材取数失败：{txt!r}"
+
+    def test_dragon_tiger_failure_is_visible_to_the_gate(self, monkeypatch):
+        from duanxian import data, fetchers, preflight
+
+        self._settled(monkeypatch)
+        monkeypatch.setattr(fetchers, "fetch_lhb", lambda d, top=15: [{"error": "接口 500"}])
+        txt = data.get_dragon_tiger_data("2026-07-29")
+        assert preflight._looks_degraded(txt), f"体检看不见龙虎榜取数失败：{txt!r}"
+
+    def test_gate_turns_them_into_warnings(self, monkeypatch):
+        """两路都真失败时，闸要如实计进 warnings —— 而不是 ok 且 warnings 为空。"""
+        from duanxian import data, fetchers, preflight
+
+        self._settled(monkeypatch)
+        # 核心三路给正常内容（它们不是这条的主题）
+        for name in ("get_sentiment_data", "get_emotion_metrics", "get_leader_data", "get_capital_data"):
+            ret = ("正常内容", {}) if name == "get_emotion_metrics" else "正常内容"
+            monkeypatch.setattr(data, name, lambda d, _r=ret: _r)
+        # 这两路走真实的 data.py 分支，只让底层取数失败
+        monkeypatch.setattr(fetchers, "fetch_zt_reasons", lambda d: ({}, "缺 IWENCAI_API_KEY"))
+        monkeypatch.setattr(fetchers, "fetch_lhb", lambda d, top=15: [{"error": "接口 500"}])
+
+        r = preflight.check("2026-07-29")
+        assert set(r["missing_optional"]) == {"题材串", "龙虎榜"}, r
+        assert len(r["warnings"]) == 2, r["warnings"]
+
+
+@pytest.mark.unit
+class TestThemeReasonsAskForTheRightSession:
+    """题材串必须问**被复盘那一场**，不能问"今日"。
+
+    收盘后回看上一场是复盘的常态。问"今日"会把当天的题材当成那天的题材，
+    而题材串本身不带日期 —— 分析师和界面都看不出来，只会照着讲。
+    问财的返回列名带着日期（`涨停原因[YYYYMMDD]`），所以能拿数据自己反验，
+    不用靠"调用方记得传了 date"。
+    """
+
+    class _FakeClient:
+        def __init__(self, col_date, captured):
+            self.col_date, self.captured = col_date, captured
+
+        def query(self, q, page=1, limit=50):
+            self.captured.append(q)
+            if page > 1:
+                return None
+            import pandas as pd
+
+            return pd.DataFrame({"股票代码": ["002491.SZ"],
+                                 f"涨停原因[{self.col_date}]": ["酒店+国企改革"]})
+
+    def _patch(self, monkeypatch, col_date, captured):
+        from duanxian import fetchers
+
+        monkeypatch.setenv("IWENCAI_API_KEY", "test-key")
+        cls = TestThemeReasonsAskForTheRightSession._FakeClient
+        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
+                            lambda: (lambda: cls(col_date, captured)))
+
+    def test_query_carries_the_requested_date(self, monkeypatch):
+        from duanxian import fetchers
+
+        cap = []
+        self._patch(monkeypatch, "20260729", cap)
+        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        assert reasons and err is None, (reasons, err)
+        assert "2026-07-29" in cap[0], f"问的不是被复盘那一场：{cap[0]!r}"
+        assert "今日" not in cap[0], f"还在问「今日」：{cap[0]!r}"
+
+    def test_undated_column_is_refused(self, monkeypatch):
+        """列名不带日期 → 验不出场次 → 当失败。
+
+        「匹配不到日期就放行」等于在最该拦的时候恰好不拦：问财若回一个通用的
+        `涨停原因` 列，错场次的题材会照原样进来，而这条路径正是加这道校验要防的。
+        """
+        from duanxian import fetchers
+
+        cap = []
+        self._patch(monkeypatch, "20260729", cap)
+
+        import pandas as pd
+
+        def _undated(q, page=1, limit=50):
+            cap.append(q)
+            return None if page > 1 else pd.DataFrame(
+                {"股票代码": ["002491.SZ"], "涨停原因": ["酒店+国企改革"]})
+
+        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
+                            lambda: (lambda: type("C", (), {"query": staticmethod(_undated)})()))
+        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        assert reasons == {}, f"没带日期的列被放行了：{reasons}"
+        assert "没带日期" in (err or ""), err
+
+    def test_picks_the_column_matching_the_session(self, monkeypatch):
+        """回来多列时挑对场次那一列，不是第 0 列。"""
+        from duanxian import fetchers
+
+        import pandas as pd
+
+        def _multi(q, page=1, limit=50):
+            return None if page > 1 else pd.DataFrame({
+                "股票代码": ["002491.SZ"],
+                "涨停原因[20260730]": ["今天的题材"],
+                "涨停原因[20260729]": ["那天的题材"],
+            })
+
+        monkeypatch.setenv("IWENCAI_API_KEY", "test-key")
+        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
+                            lambda: (lambda: type("C", (), {"query": staticmethod(_multi)})()))
+        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        assert reasons == {"002491": "那天的题材"}, (reasons, err)
+
+    def test_wrong_session_in_response_is_refused(self, monkeypatch):
+        """问财回的是别的场次 → 宁可没题材串，也不能混进这一场。"""
+        from duanxian import fetchers
+
+        cap = []
+        self._patch(monkeypatch, "20260730", cap)   # 请求 0729，回来 0730
+        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        assert reasons == {}, f"把 0730 的题材当成 0729 的了：{reasons}"
+        assert "20260730" in (err or ""), err
+
+    def test_bad_date_format_refused(self, monkeypatch):
+        from duanxian import fetchers
+
+        self._patch(monkeypatch, "20260729", [])
+        assert fetchers.fetch_zt_reasons("2026-07-29")[0] == {}
+
+
+@pytest.mark.unit
+class TestMarketFetchDoesNotKillTheProcessProxy:
+    """取数模块不许替整个进程决定代理怎么走。
+
+    它在 server 启动时就被 import（server → preflight → data → fetchers），
+    所以任何进程级的环境改动都会波及别人。这两种改法都不行：
+      ① 顶层 `os.environ.pop` 掉所有代理变量 → 同进程里靠代理调 LLM 的用户
+         一 import 就静默失去代理，表现只是"模型调不通"；
+      ② 改成往 NO_PROXY 里加 `eastmoney.com` → 把 `vr/astock.py`
+         「直连优先、失败回退系统代理」的自愈逻辑静默废成"再直连一次"
+         （它的代理会话是 trust_env=True，靠环境变量拿代理），
+         而 akshare 用的四个东财域名 vr 全都在用，没法只绕自己那份。
+
+    所以默认什么都不改；要连 akshare 一起强行直连得显式开 VIBE_MARKET_DIRECT=1。
+    """
+
+    def _run(self, extra_env=None, no_proxy_env=None):
+        """子进程里 import 一次，并**直接问 requests** 这些 URL 到底绕不绕代理。
+
+        不比对环境变量的字面值 —— 那等于拿"我以为 requests 怎么读它"当尺子。
+        只比对 NO_PROXY 的字符串是看不出问题的 —— requests 读 no_proxy 时**小写优先**。
+        """
+        import json
+        import os
+        import pathlib
+        import subprocess
+        import sys
+
+        code = ("import os, json, duanxian.fetchers as f;"
+                "from requests.utils import should_bypass_proxies as byp;"
+                "print(json.dumps({"
+                "'env': {k: os.environ.get(k) for k in "
+                "  ('HTTP_PROXY','HTTPS_PROXY','http_proxy','ALL_PROXY','NO_PROXY','no_proxy')},"
+                "'trust_env': f._TRUST_ENV,"
+                "'bypass': {u: bool(byp(u, None)) for u in ("
+                "  'https://push2ex.eastmoney.com/x',"
+                "  'https://datacenter-web.eastmoney.com/x',"
+                "  'http://qt.gtimg.cn/q=',"
+                "  'https://api.openai.com/v1')}}))")
+        env = {k: v for k, v in os.environ.items()
+               if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                                    "VIBE_MARKET_PROXY", "VIBE_MARKET_DIRECT", "VR_DATA_PROXY")}
+        env.update({"HTTP_PROXY": "http://127.0.0.1:7890",
+                    "HTTPS_PROXY": "http://127.0.0.1:7890",
+                    "http_proxy": "http://127.0.0.1:7890",
+                    "ALL_PROXY": "socks5://127.0.0.1:7891",
+                    **(no_proxy_env or {"NO_PROXY": "localhost,127.0.0.1"}),
+                    **(extra_env or {})})
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             env=env, timeout=180,
+                             cwd=str(pathlib.Path(__file__).resolve().parents[1]))
+        assert out.returncode == 0, out.stderr[-800:]
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_proxy_env_survives_import(self):
+        got = self._run()["env"]
+        for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "ALL_PROXY"):
+            assert got[k], f"{k} 被 import 删掉了 —— 同进程的 LLM 调用会静默失去代理"
+
+    def test_default_leaves_no_proxy_alone(self):
+        """默认不碰 NO_PROXY —— 否则 vr 的东财代理回退会被静默关掉。"""
+        got = self._run()
+        for k in ("NO_PROXY", "no_proxy"):
+            assert "eastmoney.com" not in (got["env"][k] or ""), \
+                f"默认就改了 {k}：vr 的代理回退会被废掉"
+        assert got["bypass"]["https://push2ex.eastmoney.com/x"] is False
+        assert got["trust_env"] is False, "本模块自己的请求仍应直连（这层只影响自己）"
+
+    @pytest.mark.parametrize("no_proxy_env, label", [
+        ({"NO_PROXY": "localhost"}, "只有大写 NO_PROXY"),
+        ({"no_proxy": "localhost"}, "只有小写 no_proxy"),
+        ({"NO_PROXY": "localhost", "no_proxy": "127.0.0.1"}, "大小写都有且内容不同"),
+    ])
+    def test_explicit_direct_really_bypasses(self, no_proxy_env, label):
+        """显式开 VIBE_MARKET_DIRECT=1 时，行情域名必须**真的**绕过代理。
+
+        「只有小写」这格最容易漏：requests 读 no_proxy 时小写优先，
+        只更新大写在这种机器上等于没做，且现象与没改过一模一样。
+        """
+        got = self._run({"VIBE_MARKET_DIRECT": "1"}, no_proxy_env=no_proxy_env)
+        for u in ("https://push2ex.eastmoney.com/x", "https://datacenter-web.eastmoney.com/x",
+                  "http://qt.gtimg.cn/q="):
+            assert got["bypass"][u], f"{label}：{u} 仍然走代理 → {got['env']}"
+        assert not got["bypass"]["https://api.openai.com/v1"], f"{label}：把 LLM 也绕过了，越权"
+
+    def test_explicit_direct_keeps_user_entries(self):
+        env = self._run({"VIBE_MARKET_DIRECT": "1"},
+                        no_proxy_env={"no_proxy": "my-internal.corp"})["env"]
+        for k in ("NO_PROXY", "no_proxy"):
+            assert "my-internal.corp" in (env[k] or ""), f"{k} 把用户原有条目覆盖了：{env[k]}"
+            assert "eastmoney.com" in (env[k] or ""), f"{k} 没写进行情域名：{env[k]}"
+
+    def test_flags_in_dotenv_are_honored(self):
+        """写在仓库 `.env` 里的开关也要生效。
+
+        README 让用户把配置写进 `.env`（IWENCAI_API_KEY 就在那儿）。开关如果在
+        `_load_env()` 之前就算完，`.env` 里的 VIBE_MARKET_PROXY 这边永远看不见，
+        而 `vr/astock.py` 是后 import 的、它看得见 —— 同一台机器上两边路由不一致，
+        一声不响。
+        """
+        import pathlib as _p
+
+        env_file = _p.Path(__file__).resolve().parents[1] / ".env"
+        if env_file.exists():
+            pytest.skip("仓库已有 .env，不动它")
+        env_file.write_text("VIBE_MARKET_PROXY=1\n", encoding="utf-8")
+        try:
+            got = self._run()          # 环境变量里不给，只有 .env 里有
+        finally:
+            env_file.unlink()
+        assert got["trust_env"] is True, ".env 里的 VIBE_MARKET_PROXY 被忽略了"
+
+    @pytest.mark.parametrize("flag", ["VIBE_MARKET_PROXY", "VR_DATA_PROXY"])
+    def test_proxy_opt_in_wins(self, flag):
+        """「东财只能靠代理才连得上」的环境里，本模块自己的请求也得走代理。
+
+        VR_DATA_PROXY 是 vr/astock.py 已有的同义开关，一并认，别两处互相拆台。
+        """
+        got = self._run({flag: "1", "VIBE_MARKET_DIRECT": "1"})   # 顺带验：走代理优先级更高
+        assert got["trust_env"] is True, flag
+        for k in ("NO_PROXY", "no_proxy"):
+            assert "eastmoney.com" not in (got["env"][k] or ""), f"{flag} 下还是改了 {k}"
+
+
+@pytest.mark.unit
+class TestThemeTreeWorksForHistoricalSessions:
+    """历史场次的题材树不许被一句错信念一票判死。
+
+    `theme_tree` 原来有个硬闸：`date != latest_session()` 就直接返回
+    「问财只返回最近交易日，更早的补不回来」。**这个前提是错的** ——
+    实测按交易日问，20250730（一年前）仍返回 55 只。
+    于是任何没攒到缓存的历史场次，题材树永久 unavailable，
+    而界面只会显示"不可用"，看不出其实是代码自己不让它查。
+
+    病根是拿一个想当然的限制当闸，把本来能用的功能关掉。
+    """
+
+    def test_older_session_still_queries(self, monkeypatch, tmp_path):
+        from duanxian import theme_tree as tt, trade_calendar as tc
+
+        monkeypatch.setattr(tt, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-30")
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+        called = []
+
+        def _fake(ymd):
+            called.append(ymd)
+            return {"600000": "银行+国企改革"}, None
+
+        import duanxian.fetchers as dr
+
+        monkeypatch.setattr(dr, "fetch_zt_reasons", _fake)
+        reasons, err = tt.reasons_of("2026-07-22")   # 比最近场次早得多
+        assert reasons == {"600000": "银行+国企改革"}, (reasons, err)
+        assert called == ["20260722"], f"没按那一天去查：{called}"
+
+    def test_cache_still_short_circuits(self, monkeypatch, tmp_path):
+        """有缓存就别再打网络（省请求，也让没 key 时历史场次照样能看）。"""
+        import json as _json
+
+        from duanxian import theme_tree as tt
+
+        monkeypatch.setattr(tt, "_CACHE_DIR", str(tmp_path))
+        (tmp_path / "2026-07-22.json").write_text(
+            _json.dumps({"schema": tt._SCHEMA, "date": "2026-07-22",
+                         "reasons": {"600000": "缓存里的"}}), encoding="utf-8")
+
+        import duanxian.fetchers as dr
+
+        def _boom(ymd):
+            raise AssertionError("有缓存还去打网络")
+
+        monkeypatch.setattr(dr, "fetch_zt_reasons", _boom)
+        assert tt.reasons_of("2026-07-22")[0] == {"600000": "缓存里的"}

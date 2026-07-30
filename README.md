@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/tests-311%20passing-brightgreen.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-330%20passing-brightgreen.svg" alt="Tests">
   <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
 </p>
 
@@ -192,6 +192,8 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 | `VIBE_ALLOW_UNSAFE_CLI` | 未设 | 放开 `claude` 以外的 CLI，逗号分隔（见上面那条提醒） |
 | `VIBE_ASTOCK_PROMPTS` | `~/.vibe-astock/prompts_local.py` | 换一套分析口径（见「自定义分析口径」） |
 | `VIBE_ALLOW_HOSTS` | 未设 | 挂到域名下访问时把域名加进来，否则写操作 403 |
+| `VIBE_MARKET_PROXY` | 未设 | 东财在你这儿**只能经代理**才连得上时设 `1`。等同于 `VR_DATA_PROXY=1`，设哪个都行 |
+| `VIBE_MARKET_DIRECT` | 未设 | 相反方向：代理把东财挂掉、连取涨停池都失败时设 `1` 强行直连。⚠️ 它是**进程级**的，会一并关掉东财请求的代理回退 |
 | `VR_API_KEY` | 未设 | 给盘面数据那几个分栏的接口加一层 key 校验 |
 
 ---
@@ -226,7 +228,7 @@ IWENCAI_API_KEY=你的key
 .venv/bin/python -m pytest -q
 ```
 
-311 个用例，覆盖指标计算、口径边界与降级路径 —— 重点在那些**错了也看不出来**的地方：
+330 个用例，覆盖指标计算、口径边界与降级路径 —— 重点在那些**错了也看不出来**的地方：
 界面照常渲染、数字看着合理，但结论是错的。
 
 ---

@@ -25,8 +25,11 @@
 
 ## 数据与降级
 
-题材串来自问财（`fetchers.fetch_zt_reasons`），**只能查到当天**，
-所以每天复盘时**落盘囤起来**（同回测语料的思路：过期不候）。
+题材串来自问财（`fetchers.fetch_zt_reasons`），按交易日查，实测能回溯到一年前。
+每天复盘时仍**落盘囤起来**——省一次请求、也让没配 `IWENCAI_API_KEY` 的时候
+历史场次照样看得到。缓存没有就现查，查回来的东西由 `fetch_zt_reasons`
+用返回列名里的日期核对过场次，不会把别的交易日的题材塞进来。
+
 拿不到题材串时整棵树标 unavailable，**绝不退回行业分类冒充题材** ——
 那正是这个模块要解决的问题。
 
@@ -61,7 +64,7 @@ def _is_generic(tag: str) -> bool:
 
 
 def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
-    """某日的 代码→题材串。历史日读缓存，当天现拉并落盘"""
+    """某日的 代码→题材串。先读缓存，没有就按那一天现查并落盘。"""
     path = os.path.join(_CACHE_DIR, f"{date}.json")
     if os.path.isfile(path):
         try:
@@ -71,9 +74,6 @@ def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
                 return env.get("reasons") or {}, None
         except Exception:  # noqa: BLE001
             pass
-
-    if date != trade_calendar.latest_session():
-        return {}, f"{date} 无题材串缓存；问财只返回最近交易日，更早的补不回来"
 
     try:
         from . import fetchers as dr

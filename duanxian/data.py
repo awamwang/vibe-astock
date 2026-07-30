@@ -27,8 +27,19 @@ def _ymd(date: str) -> str:
     return date.replace("-", "")
 
 
+def _degrade_msg(label: str, date: str, msg: str) -> str:
+    """取数没成功时**唯一**的返回长相。
+
+    这里只有一种约定是要紧的：所有失败都得长成 `[⚠️ …]`。判断"这一路数据能不能用"
+    的地方不止一处（体检闸、降级计数、界面提示），它们都认这个前缀；
+    谁要是自己发明一种失败措辞（比如「XX取数失败：…」这种裸文本），
+    那几处就一起看不见它 —— 非空、没前缀，在它们眼里跟正常数据一模一样。
+    """
+    return f"[⚠️ {label}｜{date} 数据获取失败已降级：{str(msg)[:120]}]"
+
+
 def _degrade(label: str, date: str, exc: Exception) -> str:
-    return f"[⚠️ {label}｜{date} 数据获取失败已降级：{type(exc).__name__}: {str(exc)[:120]}]"
+    return _degrade_msg(label, date, f"{type(exc).__name__}: {exc}")
 
 
 def _asof_note(date: str) -> str:
@@ -259,7 +270,7 @@ def get_theme_reasons(date: str) -> str:
     try:
         reasons, err = dr.fetch_zt_reasons(_ymd(date))
         if not reasons:
-            return f"（涨停原因题材串未取到：{err}）"
+            return _degrade_msg("题材涨停原因", date, f"涨停原因题材串未取到：{err}")
         tags = Counter()
         for r in reasons.values():
             for t in r.split("+"):
@@ -267,7 +278,7 @@ def get_theme_reasons(date: str) -> str:
                 if t:
                     tags[t] += 1
         hot = tags.most_common(12)
-        return "今日涨停题材串热度 TOP：" + "、".join(f"{t}×{c}" for t, c in hot)
+        return f"{date} 涨停题材串热度 TOP：" + "、".join(f"{t}×{c}" for t, c in hot)
     except Exception as exc:  # noqa: BLE001
         return _degrade("题材涨停原因", date, exc)
 
@@ -277,9 +288,9 @@ def get_dragon_tiger_data(date: str) -> str:
     try:
         rows = dr.fetch_lhb(_ymd(date), top=15)
         if rows and isinstance(rows[0], dict) and rows[0].get("error"):
-            return f"龙虎榜取数失败：{rows[0]['error']}"
+            return _degrade_msg("龙虎榜", date, rows[0]["error"])
         if not rows:
-            return "今日无龙虎榜数据"
+            return f"{date} 无龙虎榜数据"
         lines = ["龙虎榜净买额榜（亿，负=净卖）："]
         for r in rows:
             nb = r.get("net_buy")
@@ -312,7 +323,7 @@ def get_leader_data(date: str) -> str:
         if not top:
             return f"[⚠️ {date} 无有效连板数据（可能非交易日），龙头跟踪不可用]"
 
-        lines = [f"今日连板梯队（{date}）："]
+        lines = [f"连板梯队（{date}）："]
         for x in top[:8]:
             lines.append(f"  {x['name']}({x['consec_boards']}板·{x.get('sector', '')})")
 

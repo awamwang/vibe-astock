@@ -12,21 +12,18 @@
 """
 
 import os
-
-# ---- 必须在 import requests/akshare 前清掉代理 (push2delay 走直连) ----
-for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
-           "ALL_PROXY", "all_proxy"):
-    os.environ.pop(_k, None)
-
+import re
 import json
 import time
 import datetime
 import requests
 import pandas as pd
 
-# ----------------------------------------------------------------------------
-# 常量
-# ----------------------------------------------------------------------------
+# 先把仓库根的 .env 读进来 —— 下面的代理开关要用它。
+# 🔴 顺序要紧：README 让用户把配置写在 .env 里，如果开关在 _load_env() 之前就算完，
+#    .env 里写的 VIBE_MARKET_PROXY / VR_DATA_PROXY 这边永远看不见，
+#    而 vr/astock.py 是后 import 的、它看得见 —— 两边对同一台机器给出不同的路由，
+#    没有任何报错。
 # 仓库根（本文件在 duanxian/ 里，往上一级）—— 用来找可选的 .env
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -60,6 +57,69 @@ def _load_env():
 _load_env()
 
 
+
+
+# ---- 代理：本模块自己直连，但**不替整个进程做决定** -------------------------
+# 东财 / 腾讯是国内站，开着科学上网时系统代理常把它们的路由挂掉，所以本模块自己发的
+# 请求默认直连（`trust_env=False`，见 `_direct_get`）。这一层只影响本模块，安全。
+#
+# ⛔ 这个模块在 server 启动时就被 import，所以**任何进程级的环境改动都会波及别人**：
+#   · 早先这里在模块顶层 pop 掉了 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY ——
+#     等于顺手废掉整个进程的代理，而同一进程里 LLM 调用可能正靠它出网，
+#     表现只是"模型调不通"，没人会联想到取数模块；
+#   · 改成"把 eastmoney.com 加进 NO_PROXY"也不行：`vr/astock.py` 的东财客户端
+#     本来就是**直连优先、失败自动回退系统代理**，而它的代理会话是 `trust_env=True`
+#     （靠环境变量拿代理）。往 NO_PROXY 里塞 eastmoney.com 会把那条自愈回退
+#     静默废成"再直连一次"。而且 akshare 用的四个东财域名 vr 全都在用，
+#     没法只绕自己那份。
+#
+# 所以默认**什么都不改**。代价：akshare 内部自己 new requests（塞不进本模块的会话），
+# 在"系统代理挂掉东财"的机器上它会失败 —— 但那是响亮的失败：核心数据缺 → 体检拒跑 →
+# 界面给一句能照着办的话，而不是静默给错数。要连 akshare 一起强行直连就显式开
+# VIBE_MARKET_DIRECT=1（下面会说清它是进程级的）。
+_DIRECT_HOSTS = ("eastmoney.com", "qt.gtimg.cn")
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+# 行情要走代理（东财在这台机器上只能经代理访问）。VR_DATA_PROXY 是 vr/ 那边同义的
+# 开关，一并认，别让两处互相拆台。
+_USE_PROXY_FOR_MARKET = _flag("VIBE_MARKET_PROXY") or _flag("VR_DATA_PROXY")
+# 反向：连 akshare 也强行直连。**这条是进程级的**，会一并关掉 vr 对东财的代理回退，
+# 所以必须由用户显式打开，不能当默认。
+_FORCE_DIRECT = _flag("VIBE_MARKET_DIRECT") and not _USE_PROXY_FOR_MARKET
+
+if _FORCE_DIRECT:
+    # 🔴 大小写两个变量都要写。requests 取 no_proxy 时**小写优先**
+    # （`os.environ.get(k) or os.environ.get(k.upper())`），只更新 NO_PROXY 的话，
+    # 凡是环境里已经有小写 no_proxy 的机器上这一整段就白做 —— 照样走代理、照样 403，
+    # 而且现象和"没改过"一模一样，看不出来。
+    _existing = [h.strip()
+                 for v in (os.environ.get("no_proxy", ""), os.environ.get("NO_PROXY", ""))
+                 for h in v.split(",") if h.strip()]
+    _merged = ",".join(dict.fromkeys([*_existing, *_DIRECT_HOSTS]))
+    os.environ["NO_PROXY"] = _merged
+    os.environ["no_proxy"] = _merged
+
+_TRUST_ENV = _USE_PROXY_FOR_MARKET
+
+
+def _direct_get(url, **kw):
+    """本模块自己发的 GET。
+
+    每次新建会话而不是共用一个：`Session` 的 cookie jar 是可变共享状态，而这个服务
+    是并发的（复盘在后台线程跑，页面同时在拉行情）。这两处都是一次性 GET，
+    省下的连接复用不值得拿并发正确性去换。
+    """
+    with requests.Session() as s:
+        s.trust_env = _TRUST_ENV
+        return s.get(url, **kw)
+
+# ----------------------------------------------------------------------------
+# 常量
+# ----------------------------------------------------------------------------
 def _iwencai_client_cls():
     """拿到 IwencaiClient 类。
 
@@ -111,7 +171,7 @@ def _clist(fs, fid, fields, ut=UT_FUND, pz=100, max_pages=80, retries=3):
         data = None
         for attempt in range(retries):
             try:
-                r = requests.get(DELAY_HOST, params=params,
+                r = _direct_get(DELAY_HOST, params=params,
                                  headers=HEADERS, timeout=15)
                 data = r.json().get("data")
                 break
@@ -278,6 +338,11 @@ def fetch_zt_reasons(date):
     date: 'YYYYMMDD'
     iwencai 返回 涨停原因[YYYYMMDD] 列, 代码形如 002491.SZ, 取前6位匹配.
     reason 形如 '光纤光缆+产能扩张+数据中心', 已是简洁题材串, 直接用.
+
+    ⚠️ 问的必须是 `date` 那一场，不能问"今日" —— 复盘的常态就是收盘后回看上一场，
+    问"今日"会把当天的题材当成被复盘那天的题材，而且看不出来（题材串本身没有日期）。
+    返回列名里带着问财实际给的日期（`涨停原因[YYYYMMDD]`），拿它和请求的日期对一遍：
+    不一致就当取数失败，宁可没有题材串，也不能把别的交易日的题材塞进这一场。
     """
     try:
         IwencaiClient = _iwencai_client_cls()
@@ -291,12 +356,17 @@ def fetch_zt_reasons(date):
     except Exception as e:
         return {}, f"IwencaiClient 初始化失败: {type(e).__name__}: {str(e)[:80]}"
 
+    if not (len(str(date)) == 8 and str(date).isdigit()):
+        return {}, f"日期格式应为 YYYYMMDD, 收到 {date!r}"
+    d = str(date)
+    query = f"{d[:4]}-{d[4:6]}-{d[6:8]}涨停的股票 涨停原因"
+
     reasons = {}
     err = None
     try:
         # 翻页拿全部涨停 (单页 limit=50, 一般 1~2 页够)
         for page in range(1, 4):
-            df = client.query("今日涨停的股票 涨停原因", page=page, limit=50)
+            df = client.query(query, page=page, limit=50)
             if df is None or len(df) == 0:
                 break
             code_cols = [c for c in df.columns if "代码" in c]
@@ -304,7 +374,16 @@ def fetch_zt_reasons(date):
             if not code_cols or not reason_cols:
                 err = f"返回无涨停原因列, cols={list(df.columns)[:6]}"
                 break
-            cc, rc = code_cols[0], reason_cols[0]
+            # 只认**能验出场次**的列。列名形如 涨停原因[20260729]；验不出来就当失败，
+            # 别"匹配不到就放行" —— 那等于在最需要拦的时候（返回了没日期的通用列）
+            # 恰好不拦，错场次的题材照样进来。
+            dated = {m.group(1): c for c in reason_cols
+                     if (m := re.search(r"\[(\d{8})\]", c))}
+            if not dated:
+                return {}, f"涨停原因列没带日期, 无法确认是哪一场: {reason_cols[:3]}"
+            if d not in dated:
+                return {}, f"问财返回的是 {sorted(dated)} 的涨停原因, 不是 {d}"
+            cc, rc = code_cols[0], dated[d]
             for _, r in df.iterrows():
                 code6 = str(r[cc])[:6]
                 reason = str(r[rc]).strip()
@@ -376,7 +455,7 @@ def fetch_indices():
     parsed = {}
     try:
         url = TENCENT_Q + ",".join(codes)
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = _direct_get(url, headers=HEADERS, timeout=10)
         raw = r.content.decode("gbk", "ignore")
         for line in raw.split("\n"):
             if "~" not in line:
