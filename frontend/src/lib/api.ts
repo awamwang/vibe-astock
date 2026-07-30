@@ -277,10 +277,34 @@ export interface MarketSession {
   label: string;
 }
 
+/** 隔夜外围快照：指数 + 美股七姐妹，各自带「属于哪一场」 */
+export interface OverseasRow {
+  name: string;
+  price: number;
+  change_pct: number;
+  /** 该行行情所属交易日；取不到为 null（**不拿今天顶替**） */
+  session: string | null;
+  region?: string;
+  ticker?: string;
+}
+export interface OverseasSnapshot {
+  available: boolean;
+  reason?: string;
+  indices?: OverseasRow[];
+  mag7?: OverseasRow[];
+  us_session?: string | null;
+  hk_session?: string | null;
+  /** 可直接展示的一句话，如「美股 2026-07-29 收盘」「港股 2026-07-30 盘前」。
+   *  别用 us_session 自己拼「XX 收盘」—— 港股在北京白天可能正在交易。 */
+  us_label?: string | null;
+  hk_label?: string | null;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketSession: () => get<MarketSession>("/market/session"),
+  overseas: () => get<OverseasSnapshot>("/market/overseas"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),

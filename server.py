@@ -17,7 +17,7 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from duanxian import reflection, review_store, trade_calendar
+from duanxian import overseas, reflection, review_store, trade_calendar
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
 from duanxian.review_graph import build_review_graph
@@ -312,6 +312,11 @@ def _origin_ok(request: Request) -> bool:
     return (urlparse(ref).hostname or "") in _ALLOWED_HOSTS
 
 
+def _force_flag(request: Request) -> bool:
+    """`?force=1` —— 已复盘过还要重跑。只认 POST 上的查询参数（本路由本身是 POST）。"""
+    return str(request.query_params.get("force", "")).strip().lower() in ("1", "true", "yes")
+
+
 @app.post("/api/review/run")
 def api_run(request: Request, date: str | None = None):
     if not _origin_ok(request):
@@ -319,14 +324,30 @@ def api_run(request: Request, date: str | None = None):
     try:
         explicit = bool(date)
         if not explicit:
-            today = china_today()
-            date = today if not is_weekend(today) else (
-                trade_calendar.latest_session() or today)
+            # 复盘的对象只能是**已经收盘的那一场**。原来这里在工作日直接用 today，
+            # 于是盘前点一下就为「还没开盘的今天」开跑：涨停池 / 龙虎榜 / 资金流全空，
+            # 四个分析师如实说"数据缺失"，裁判却照样端出三个方向 + 点名个股
+            # （实测点到一只当天 -6.81% 的票当"主线代表"）。
+            # 复盘系统不做当日动态分析 —— 没收盘就还是上一场那份。
+            date = trade_calendar.latest_session() or china_today()
         date = validate_trade_date(date)  # #1
         if is_weekend(date):
             return JSONResponse({"error": f"{date} 为周末非交易日"}, status_code=400)
+        if not trade_calendar.is_settled(date):
+            latest = trade_calendar.latest_session()
+            return JSONResponse(
+                {"error": f"{date} 还没收盘，复盘要用当天的收盘数据",
+                 "suggest_date": latest,
+                 "hint": f"最近已收盘的是 {latest}" if latest else None},
+                status_code=409)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+    # 那一场已经复盘过就别重跑 —— 直接告诉前端去看那天的页面。
+    # 想重跑：带 force=1（改了口径/修了 bug 时才需要）。
+    if not _force_flag(request) and review_store.usable(review_store.load(date)):
+        return {"running": False, "date": date, "already_done": True,
+                "message": f"{date} 已复盘"}
 
     with _lock:  # 原子 check-then-act（#5）
         if _job["running"] and not _job_stuck(_job, _JOB_TIMEOUT):
@@ -403,8 +424,14 @@ def api_market_session():
     is_today = bool(quotes_of) and quotes_of == today
     closed = is_a_share_closed()
 
+    now = china_now()
+    hhmm = now.hour * 60 + now.minute
     if not quotes_of:
         phase, label = "未知", "行情时间取不到"
+    elif is_today and not closed and hhmm < 9 * 60 + 25:
+        # 09:15-09:25 集合竞价：还没成交，指数等于昨收、涨跌幅是 0。
+        # 不单独成一档的话，界面标"盘中·实时"而三个指数全是 0%，看着像数据坏了。
+        phase, label = "集合竞价", "集合竞价 · 尚未成交"
     elif is_today and not closed:
         phase, label = "盘中", "盘中 · 实时"
     elif is_today:
@@ -417,9 +444,19 @@ def api_market_session():
     else:
         phase, label = "非交易日", f"今日无成交 · 显示 {quotes_of} 收盘"
 
-    return {"now": china_now().strftime("%Y-%m-%d %H:%M"), "today": today,
+    return {"now": now.strftime("%Y-%m-%d %H:%M"), "today": today,
             "quotes_of": quotes_of, "is_today": is_today,
             "phase": phase, "label": label}
+
+
+@app.get("/api/market/overseas")
+def api_market_overseas():
+    """隔夜外围：美港股指数 + 美股七姐妹，各自带交易日。
+
+    与 `vr/` 的 `/api/global/indices` 并存 —— 那条不回行情时间，界面无法说清
+    「这批数是哪一场的」（详见 duanxian/overseas.py 顶部）。
+    """
+    return overseas.overseas_snapshot()
 
 
 @app.get("/api/review/dates")

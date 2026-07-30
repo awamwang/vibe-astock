@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/tests-273%20passing-brightgreen.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-281%20passing-brightgreen.svg" alt="Tests">
   <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
 </p>
 
@@ -221,7 +221,7 @@ IWENCAI_API_KEY=你的key
 .venv/bin/python -m pytest -q
 ```
 
-273 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
+281 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
 指标不可用时如实降级（不退化成 0）、情绪周期天数的 off-by-one、梯队断层检测、
 档位方向投票（含浮点阈值边界）、交易日历与缓存定稿判据、
 **盘中实时行情不能冒充昨天的收盘**、**序列缓存不能把"当天还没落盘"锁死**、

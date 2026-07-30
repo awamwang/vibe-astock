@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession } from "@/lib/api";
+import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession, type OverseasSnapshot, type OverseasRow } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,9 @@ export function DailyReview() {
   const [globalIdx, setGlobalIdx] = useState<GlobalIndex[]>([]);
   // 实时行情属于哪一场：盘前接口返回的是上一场收盘，不标出来会被当成今天的
   const [session, setSession] = useState<MarketSession | null>(null);
+  // 隔夜外围：指数 + 七姐妹。走自己的接口是为了拿到**行情所属交易日**
+  // （vr 的 /api/global/indices 不回时间，界面就只能按本机今天贴日期）
+  const [oversea, setOversea] = useState<OverseasSnapshot | null>(null);
   // 关注股票（自选，存本地）
   const [watchCodes, setWatchCodes] = useState<string[]>(loadWatch);
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
@@ -39,6 +42,7 @@ export function DailyReview() {
   const loadIndices = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
     api.marketSession().then(setSession).catch(() => {});
+    api.overseas().then(setOversea).catch(() => {});
     api.globalIndices().then(setGlobalIdx).catch(() => {});
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
     api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
@@ -137,6 +141,11 @@ export function DailyReview() {
               {session.label}
             </span>
           )}
+          {/* 集合竞价（09:15-09:25）还没成交，指数就等于昨收、涨跌幅是 0 ——
+              不说一句会被当成"数据坏了"（实测 09:16 打开，三个指数都是 0%） */}
+          {session?.phase === "集合竞价" && (
+            <span className="text-[11px] text-muted-foreground/50">还没成交，涨跌幅为 0 是正常的</span>
+          )}
         </div>
         <button onClick={loadIndices} className="text-muted-foreground hover:text-primary" title="刷新"><RefreshCw className="h-3.5 w-3.5" /></button>
       </div>
@@ -157,26 +166,59 @@ export function DailyReview() {
             ))}
       </div>
 
-      {/* 1b. 全球市场（隔夜外围脸色：A 股常看美股 / 港股） */}
-      {globalIdx.length > 0 && (
-        <>
-          <div className="mb-3 flex items-center gap-2">
-            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Globe className="h-4 w-4" /> 全球市场</h3>
-            <span className="text-[11px] text-muted-foreground/50">隔夜外围 · A 股常看美股 / 港股脸色</span>
-          </div>
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-            {globalIdx.map((g) => (
-              <GlassCard key={g.key} className="p-3">
-                <p className="truncate text-xs text-muted-foreground">{g.name} <span className="text-muted-foreground/40">{g.region}</span></p>
-                <p className={cn("mt-1 font-mono text-lg font-bold", g.change_pct == null ? "text-foreground" : pctColor(g.change_pct))}>{g.price ?? "—"}</p>
-                <p className={cn("text-xs", g.change_pct == null ? "text-muted-foreground" : pctColor(g.change_pct))}>
-                  {g.change_pct == null ? "—" : `${g.change_pct > 0 ? "+" : ""}${g.change_pct}%`}
+      {/* 1b. 隔夜外围：美股 / 港股指数 + 美股七姐妹 */}
+      {(oversea?.available || globalIdx.length > 0) && (() => {
+        // 优先用带交易日的新接口；它挂了才退回 vr 那份（没有日期，只能不标）
+        const rows: OverseasRow[] = oversea?.available && oversea.indices?.length
+          ? oversea.indices
+          : globalIdx.map((g) => ({ name: g.name, price: g.price ?? 0, change_pct: g.change_pct ?? 0,
+                                    session: null, region: g.region }));
+        const us = rows.filter((r) => r.region === "美股");
+        const hk = rows.filter((r) => r.region !== "美股");
+        const mag7 = oversea?.available ? (oversea.mag7 ?? []) : [];
+        const cell = (r: OverseasRow, sub?: string) => (
+          <GlassCard key={r.name} className="p-3">
+            <p className="truncate text-xs text-muted-foreground">
+              {r.name}{sub && <span className="ml-1 font-mono text-[10px] text-muted-foreground/40">{sub}</span>}
+            </p>
+            <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(r.change_pct))}>{r.price}</p>
+            <p className={cn("text-xs", pctColor(r.change_pct))}>
+              {r.change_pct > 0 ? "+" : ""}{r.change_pct}%
+            </p>
+          </GlassCard>
+        );
+        return (
+          <>
+            <div className="mb-3 flex flex-wrap items-baseline gap-2">
+              <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Globe className="h-4 w-4" /> 隔夜外围</h3>
+              <span className="text-[11px] text-muted-foreground/50">A 股常看美股 / 港股脸色</span>
+              {/* 标签由后端给（含盘前/盘中/收盘）—— 前端别自己拼"收盘"，
+                  港股在北京白天可能正在交易，那时候标"收盘"就是错的 */}
+              {oversea?.us_label && <span className="text-[11px] text-warning">{oversea.us_label}</span>}
+              {oversea?.hk_label && <span className="text-[11px] text-warning">{oversea.hk_label}</span>}
+            </div>
+
+            {us.length > 0 && (
+              <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{us.map((r) => cell(r))}</div>
+            )}
+
+            {mag7.length > 0 && (
+              <>
+                <p className="mb-2 text-[11px] text-muted-foreground/60">
+                  美股七姐妹 · 权重股带指数走，看它们比看指数细
                 </p>
-              </GlassCard>
-            ))}
-          </div>
-        </>
-      )}
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {mag7.map((r) => cell(r, r.ticker))}
+                </div>
+              </>
+            )}
+
+            {hk.length > 0 && (
+              <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">{hk.map((r) => cell(r))}</div>
+            )}
+          </>
+        );
+      })()}
 
       {/* 2. 关注股票（自选） */}
       <div className="mb-3 flex items-center justify-between">

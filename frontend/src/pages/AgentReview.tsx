@@ -131,6 +131,8 @@ export function AgentReview() {
   const [dates, setDates] = useState<string[]>([]);   // 跑过复盘的交易日（历史入口）
   const [missing, setMissing] = useState<string>("");  // 选了某天但那天没跑过
   const [err, setErr] = useState("");
+  // 「已复盘/还没收盘」这类不是错误、是正常告知，跟 err 分开显示
+  const [notice, setNotice] = useState("");
   // polling: 防重入（React state 在同一轮渲染里读到的是旧值，双击能穿过去）
   // timer / alive: 卸载后停掉轮询，别再 setState
   // reqId: 只接受最后一次请求的响应，防止慢的旧响应覆盖新结果
@@ -153,7 +155,12 @@ export function AgentReview() {
     try {
       const r = await agentFetch<ReviewData>(`/api/review/latest${d ? `?date=${d}` : ""}`);
       if (!alive.current || my !== reqId.current) return;   // 已卸载 / 有更新的请求 → 丢弃
-      if (r && (r.target_date || r.trade_date)) { setData(r); setMissing(""); }
+      if (r && (r.target_date || r.trade_date)) {
+        setData(r); setMissing("");
+        // 没指定日期时（首次加载）把日期框对到真正载入的那一场 ——
+        // 默认值是本机今天，而复盘的对象是「最近已收盘那一场」，盘前会差一天
+        if (!d) setDate(r.target_date || r.trade_date || "");
+      }
       else if (d) { setData(null); setMissing(d); }         // 这天没跑过 —— 要说出来，不能默默留着上一天的
     } catch {
       if (alive.current && my === reqId.current) setErr("读取历史复盘失败，仍可尝试重新生成");
@@ -190,10 +197,30 @@ export function AgentReview() {
   async function generate() {
     if (running || polling.current) return;
     polling.current = true;
-    setRunning(true); setErr(""); setElapsed(0);
+    setRunning(true); setErr(""); setNotice(""); setElapsed(0);
+    // 这里不用 agentFetch：它只抛 `HTTP 4xx`，会把「已复盘」「还没收盘」
+    // 这些**需要原样告诉用户**的信息丢掉。
+    let resp: Response;
     try {
-      await agentFetch(`/api/review/run${date ? `?date=${date}` : ""}`, "POST");
+      resp = await fetch(`/api/review/run${date ? `?date=${date}` : ""}`, { method: "POST" });
     } catch { stopPolling(); if (alive.current) setErr("启动失败"); return; }
+    const body = await resp.json().catch(() => null);
+    if (!alive.current) return;
+    if (resp.status === 409) {
+      // 目标日还没收盘 —— 复盘只能用收盘数据，指回最近那一场
+      stopPolling();
+      const s = body?.suggest_date;
+      setNotice(body?.error || "这一天还没收盘");
+      if (s) { setDate(s); loadLatest(s); }
+      return;
+    }
+    if (!resp.ok) { stopPolling(); setErr(body?.error || "启动失败"); return; }
+    if (body?.already_done) {
+      stopPolling();
+      setNotice(`${body.date} 已复盘，下面就是那天的结果`);
+      setDate(body.date); loadLatest(body.date);
+      return;
+    }
     pollOnce();
   }
 
@@ -244,6 +271,7 @@ export function AgentReview() {
       </div>
 
       {err && <div className="glass rounded-xl border-danger/30 px-4 py-3 text-sm text-danger">出错：{err}</div>}
+      {notice && <div className="glass rounded-xl border-primary/30 px-4 py-3 text-sm text-muted-foreground">{notice}</div>}
       {data?.warnings?.length ? (
         <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-[13px] text-warning">
           ⚠ 部分数据降级：{data.warnings.join("；")}

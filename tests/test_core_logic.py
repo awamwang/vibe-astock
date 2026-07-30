@@ -1140,10 +1140,13 @@ class TestWeekendRunFallback:
 
     def test_no_date_on_weekend_falls_back(self, monkeypatch):
         import server
-        from duanxian import trade_calendar as tc
+        from duanxian import review_store, trade_calendar as tc
 
         monkeypatch.setattr(server, "china_today", lambda: "2026-07-26")   # 周六
         monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-24")
+        monkeypatch.setattr(tc, "is_settled", lambda d: d == "2026-07-24")
+        monkeypatch.setattr(review_store, "load", lambda d: None)
+        monkeypatch.setattr(review_store, "usable", lambda pl: False)
         # 只验日期解析，不真起复盘线程
         started: list[str] = []
         monkeypatch.setattr(server.threading, "Thread",
@@ -1152,6 +1155,7 @@ class TestWeekendRunFallback:
 
         class _Req:
             headers: dict = {}
+            query_params: dict = {}
 
         r = server.api_run(_Req(), date=None)  # type: ignore[arg-type]
         assert r.get("date") == "2026-07-24", f"周末应回落到上一场，得到 {r}"
@@ -1165,25 +1169,34 @@ class TestWeekendRunFallback:
 
         class _Req:
             headers: dict = {}
+            query_params: dict = {}
 
         resp = server.api_run(_Req(), date="2026-07-26")  # type: ignore[arg-type]
         assert getattr(resp, "status_code", 200) == 400
         body = _json.loads(bytes(resp.body).decode())
         assert "非交易日" in body.get("error", "")
 
-    def test_weekday_unchanged(self, monkeypatch):
-        """交易日的行为一个字不改 —— 仍然复盘"今天"，不回落到上一场。"""
+    def test_weekday_after_close_reviews_today(self, monkeypatch):
+        """交易日**收盘之后**，复盘对象就是今天。
+
+        （原来这条断言的是"交易日一律复盘今天、不问 latest_session"——
+        那让盘前点一下就为还没开盘的今天开跑，已改口径：
+        目标日一律取 `latest_session()`，见 TestReviewOnlyRunsOnSettledSessions。）
+        """
         import server
-        from duanxian import trade_calendar as tc
+        from duanxian import review_store, trade_calendar as tc
 
         monkeypatch.setattr(server, "china_today", lambda: "2026-07-24")   # 周五
-        monkeypatch.setattr(tc, "latest_session",
-                            lambda: (_ for _ in ()).throw(AssertionError("交易日不该问 latest_session")))
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-24")    # 已收盘 → 就是今天
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+        monkeypatch.setattr(review_store, "load", lambda d: None)
+        monkeypatch.setattr(review_store, "usable", lambda pl: False)
         monkeypatch.setattr(server.threading, "Thread",
                             lambda *a, **kw: type("T", (), {"start": lambda s: None})())
 
         class _Req:
             headers: dict = {}
+            query_params: dict = {}
 
         r = server.api_run(_Req(), date=None)  # type: ignore[arg-type]
         assert r.get("date") == "2026-07-24"
@@ -3074,6 +3087,119 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestReviewOnlyRunsOnSettledSessions:
+    """复盘只能跑**已经收盘**的那一场，不做当日动态分析。
+
+    原来不带日期时工作日直接用 `today`，于是盘前点一下就为「还没开盘的今天」开跑：
+    涨停池 / 龙虎榜 / 资金流全空，四个分析师如实写"数据缺失"，
+    裁判仍端出三个方向 + 点名个股 —— 实测点到一只当天 **-6.81%** 的票当"主线代表"，
+    而龙头跟踪分析师自己已经写了"今日无法识别有效最高标龙头"。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_job(self):
+        """每个用例前后复位 `server._job`。
+
+        ⚠️ 不加这个会「单独跑过、一起跑挂」：`api_run` 成功启动后会把 `_job`
+        置成 running=True，而这里的 Thread 是 mock、不会有人把它清掉 →
+        下一条用例撞上「已有任务在跑」的提前返回，拿到上一条的 date。
+        """
+        import server
+
+        snap = dict(server._job)
+        server._job.update(running=False, date=None, job_id=None, error=None,
+                           started=None, elapsed=0, finished_at=None)
+        yield
+        server._job.clear()
+        server._job.update(snap)
+
+    @staticmethod
+    def _req():
+        class _R:
+            headers: dict = {}
+            query_params: dict = {}
+        return _R()
+
+    def test_default_target_is_the_last_settled_session_not_today(self, monkeypatch):
+        import server
+        from duanxian import review_store, trade_calendar as tc
+
+        monkeypatch.setattr(server, "_origin_ok", lambda r: True)
+        monkeypatch.setattr(server, "china_today", lambda: "2026-07-30")
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-29")
+        monkeypatch.setattr(tc, "is_settled", lambda d: d == "2026-07-29")
+        monkeypatch.setattr(review_store, "load", lambda d: None)
+        monkeypatch.setattr(review_store, "usable", lambda p: False)
+        started: list = []
+        monkeypatch.setattr(server.threading, "Thread",
+                            lambda target, args, daemon: type("T", (), {"start": lambda s: started.append(args[0])})())
+
+        r = server.api_run(self._req(), date=None)   # type: ignore[arg-type]
+        assert r["date"] == "2026-07-29", f"盘前不许拿今天当复盘对象：{r}"
+        assert started == ["2026-07-29"]
+
+    def test_unsettled_date_is_refused_with_a_pointer_to_the_last_session(self, monkeypatch):
+        import json as _json
+
+        import server
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(server, "_origin_ok", lambda r: True)
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-29")
+        monkeypatch.setattr(tc, "is_settled", lambda d: False)
+
+        resp = server.api_run(self._req(), date="2026-07-30")   # type: ignore[arg-type]
+        assert resp.status_code == 409
+        body = _json.loads(bytes(resp.body).decode())
+        assert body["suggest_date"] == "2026-07-29"
+        assert "还没收盘" in body["error"]
+
+    def test_already_reviewed_session_is_not_rerun(self, monkeypatch):
+        import server
+        from duanxian import review_store, trade_calendar as tc
+
+        monkeypatch.setattr(server, "_origin_ok", lambda r: True)
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-29")
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+        monkeypatch.setattr(review_store, "load", lambda d: {"stub": True})
+        monkeypatch.setattr(review_store, "usable", lambda p: True)
+        monkeypatch.setattr(server.threading, "Thread",
+                            lambda **kw: pytest.fail("已复盘过的日子不该重跑"))
+
+        r = server.api_run(self._req(), date="2026-07-29")   # type: ignore[arg-type]
+        assert r["already_done"] is True and r["running"] is False
+        assert "已复盘" in r["message"]
+
+    def test_force_flag_allows_a_rerun(self, monkeypatch):
+        """改了口径 / 修了 bug 时要能重跑，但得显式带 force。"""
+        import server
+        from duanxian import review_store, trade_calendar as tc
+
+        monkeypatch.setattr(server, "_origin_ok", lambda r: True)
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-07-29")
+        monkeypatch.setattr(tc, "is_settled", lambda d: True)
+        monkeypatch.setattr(review_store, "load", lambda d: {"stub": True})
+        monkeypatch.setattr(review_store, "usable", lambda p: True)
+        started: list = []
+        monkeypatch.setattr(server.threading, "Thread",
+                            lambda target, args, daemon: type("T", (), {"start": lambda s: started.append(args[0])})())
+
+        req = self._req()
+        req.query_params = {"force": "1"}
+        r = server.api_run(req, date="2026-07-29")   # type: ignore[arg-type]
+        assert r.get("running") is True and started == ["2026-07-29"]
+
+    def test_frontend_shows_the_already_done_notice(self):
+        """「已复盘」不是错误，得原样告诉用户，不能被 agentFetch 吞成 HTTP 4xx。"""
+        import pathlib
+
+        src = pathlib.Path("frontend/src/pages/AgentReview.tsx").read_text(encoding="utf-8")
+        assert "already_done" in src, "前端要认这个字段"
+        assert "suggest_date" in src, "409 时要指回最近已收盘那一场"
+        assert "setNotice" in src, "这类告知要与 err 分开显示"
+
+
+@pytest.mark.unit
 class TestRealtimeQuotesAreLabeledWithTheirSession:
     """实时行情必须标出「属于哪一场」，不许拿本机今天当数据日期。
 
@@ -3098,6 +3224,16 @@ class TestRealtimeQuotesAreLabeledWithTheirSession:
         assert r["phase"] == "盘前"
         assert "2026-07-29" in r["label"], f"label 要点出是哪一场：{r['label']}"
 
+    @staticmethod
+    def _at(monkeypatch, hh, mm):
+        """把「现在几点」钉住 —— phase 依赖钟点，不钉住测试会随运行时刻变结果。"""
+        import datetime
+
+        import server
+
+        monkeypatch.setattr(server, "china_now",
+                            lambda: datetime.datetime(2026, 7, 30, hh, mm))
+
     def test_session_says_live_when_market_is_open(self, monkeypatch):
         import server
         from duanxian import trade_calendar as tc
@@ -3106,9 +3242,53 @@ class TestRealtimeQuotesAreLabeledWithTheirSession:
         monkeypatch.setattr(server, "is_a_share_closed", lambda: False)
         monkeypatch.setattr(server, "is_weekend", lambda d: False)
         monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-07-30")
+        self._at(monkeypatch, 10, 30)      # 连续竞价中
 
         r = server.api_market_session()
         assert r["is_today"] is True and r["phase"] == "盘中"
+
+    def test_call_auction_is_its_own_phase(self, monkeypatch):
+        """09:15-09:25 集合竞价：还没成交，指数等于昨收、涨跌幅是 0。
+
+        不单独成一档就会标成「盘中 · 实时」而三个指数全 0%，看着像数据坏了
+        （实测 09:16 打开就是这个样子）。
+        """
+        import server
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(server, "china_today", lambda: "2026-07-30")
+        monkeypatch.setattr(server, "is_a_share_closed", lambda: False)
+        monkeypatch.setattr(server, "is_weekend", lambda d: False)
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-07-30")
+        self._at(monkeypatch, 9, 16)
+
+        r = server.api_market_session()
+        assert r["phase"] == "集合竞价", r
+        assert "尚未成交" in r["label"]
+
+    def test_overseas_labels_dont_say_closed_while_hk_is_open(self, monkeypatch):
+        """港股在北京白天可能正在交易 —— 那时候不许标「收盘」。
+
+        前端原来拿 `hk_session` 自己拼「港股 XX 收盘」，实测 09:16 打开标成
+        「港股 2026-07-30 收盘」，而它正处在开盘前竞价。
+        """
+        import datetime
+
+        from duanxian import overseas, util
+
+        monkeypatch.setattr(util, "china_today", lambda: "2026-07-30")
+        for hh, mm, want in ((9, 16, "盘前"), (10, 30, "盘中"), (17, 0, "收盘")):
+            monkeypatch.setattr(util, "china_now",
+                                lambda hh=hh, mm=mm: datetime.datetime(2026, 7, 30, hh, mm))
+            got = overseas._market_label("港股", "2026-07-30")
+            assert got.endswith(want), f"{hh}:{mm:02d} 应标「{want}」，得到 {got}"
+
+    def test_overseas_label_for_a_past_session_is_always_closed(self, monkeypatch):
+        """不是今天那一场，一律已收盘。"""
+        from duanxian import overseas, util
+
+        monkeypatch.setattr(util, "china_today", lambda: "2026-07-30")
+        assert overseas._market_label("港股", "2026-07-29").endswith("收盘")
 
     def test_session_handles_unavailable_quote_time(self, monkeypatch):
         """取不到行情时间时不许瞎猜成今天。"""
