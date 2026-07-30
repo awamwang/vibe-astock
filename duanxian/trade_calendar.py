@@ -160,7 +160,13 @@ def is_latest_closed_session(date: str) -> bool:
 
 
 def live_quotes_are_close_of(date: str) -> tuple[bool, str]:
-    """现在去拉实时行情，拿到的值能不能当作 `date` 的**收盘**涨跌幅？"""
+    """现在去拉实时行情，拿到的值能不能当作 `date` 的**收盘**涨跌幅？
+
+    ⚠️ 这个判据只回答「**实时行情**这条路通不通」。它为 False **不等于**
+    那一天算不出来 —— 已收盘的场次走定稿记录（`data.fetch_prev_pool`）照样能算，
+    那才是复盘类指标的首选路径。把它当成"整块不可用"的闸，
+    会让历史场次永远看不到（复盘系统的基本功能就没了）。
+    """
     if date != latest_session():
         return False, f"{date} 非最近已收盘交易日；实时行情只有当前值，不能冒充历史收盘"
 
@@ -171,9 +177,10 @@ def live_quotes_are_close_of(date: str) -> tuple[bool, str]:
     if qd != date:
         # 盘中问昨天，就会走到这里：行情已经跳到今天这一场了
         return False, (f"实时行情当前属于 {qd} 这一场，不能当作 {date} 的收盘表现"
-                       f"（{date} 那一场的价已经过去了）")
+                       f"（{date} 那一场的价已经过去了）"
+                       "—— 这只说明**实时行情**这条路不通；已收盘场次改用定稿记录")
     if date == china_today() and not is_a_share_closed():
         # 同一场、但这场还没结束 → 手里是**今天盘中**的价
         return False, (f"当前是交易时段，实时行情是**今天盘中**的价，"
-                       f"不能当作 {date} 的收盘表现（收盘后再跑这份复盘即可）")
+                       f"不能当作 {date} 的收盘表现 —— 今天这一场要等收盘才有定稿数据")
     return True, ""

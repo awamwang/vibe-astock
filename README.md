@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/tests-309%20passing-brightgreen.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-311%20passing-brightgreen.svg" alt="Tests">
   <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
 </p>
 
@@ -174,8 +174,13 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 .venv/bin/python main.py            # 或者 CLI 直接跑今天的复盘
 ```
 
-⚠️ **正经复盘请收盘后再跑**：赚钱效应 / 连板溢价这类指标要用当天的收盘价，
-盘中跑的话它们会正确地标成「当前是交易时段，算不了」——是缺一块，不是坏了。
+⚠️ **复盘的对象只能是已经收盘的那一场。** 不带日期时自动取最近已收盘交易日；
+指定一个还没收盘的日子会被拒绝并指回那一场（涨停池 / 龙虎榜盘中都还没定稿，
+喂进去只会让 AI 硬凑）。那一场已经跑过就直接看，不重跑；要重跑加 `?force=1`。
+
+**历史场次随时能看**：赚钱效应 / 亏钱效应 / 连板溢价 / 昨日强势股反馈都优先走
+**定稿记录**（已收盘的日子落盘缓存，否则走东财昨日涨停池），不依赖实时行情 ——
+所以盘中也能翻上周三那份复盘。
 
 数据落在 `~/.duanxian-agents/`（复盘 / 热度 / 缓存），盘面数据那几个分栏落 `~/.vibe-research/`。
 
@@ -198,7 +203,8 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 |---|---|---|
 | akshare（东财涨停池 / 龙虎榜） | 涨停 · 炸板 · 跌停 · 连板梯队 · 龙虎榜席位 | 不要 |
 | 东财 `push2delay` clist | 板块 / 个股资金流、成交额榜 | 不要 |
-| 腾讯财经 `qt.gtimg.cn` | 实时行情批量（算赚钱效应 / 连板溢价） | 不要 |
+| akshare 昨日涨停池 | **定稿记录**：昨日涨停股在目标日的表现（赚钱效应 / 亏钱效应 / 连板溢价 / 反馈矩阵的主来源）| 不要 |
+| 腾讯财经 `qt.gtimg.cn` | 实时行情批量（自选股、今日实时打板情绪；也作上面那几项的兜底）| 不要 |
 | 腾讯 hist `stock_zh_a_hist_tx` | K 线与交易日历（部分网络下东财 push2his 被封，故走腾讯） | 不要 |
 | 同花顺问财 | 涨停原因题材串（→ 题材事件树） | **要** |
 
@@ -221,7 +227,7 @@ IWENCAI_API_KEY=你的key
 .venv/bin/python -m pytest -q
 ```
 
-309 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
+311 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
 指标不可用时如实降级（不退化成 0）、情绪周期天数的 off-by-one、梯队断层检测、
 档位方向投票（含浮点阈值边界）、交易日历与缓存定稿判据、
 **盘中实时行情不能冒充昨天的收盘**、**序列缓存不能把"当天还没落盘"锁死**、

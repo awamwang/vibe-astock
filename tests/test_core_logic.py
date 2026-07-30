@@ -3220,6 +3220,27 @@ class TestPastSessionsStayViewable:
         assert r["matrix"]["2板"]["跌超5%"] == 1
         assert "炸板" in r["note"], "缺的那一档要说出来"
 
+    def test_docs_dont_claim_intraday_cannot_compute(self):
+        """README 不许再说「盘中算不了、等收盘再跑」——那是改之前的行为。
+
+        文档漂移只体现在一句话里，任何计算测试都抓不到；而看文档的人会照着
+        错的说明放弃翻历史复盘。
+        """
+        import pathlib
+
+        readme = pathlib.Path("README.md").read_text(encoding="utf-8")
+        for stale in ("收盘后再跑", "要用当天的收盘价"):
+            assert stale not in readme, f"README 还留着过时说法「{stale}」"
+        assert "历史场次随时能看" in readme and "定稿记录" in readme, \
+            "要写清历史场次能看、以及靠的是定稿记录"
+
+    def test_live_gate_message_scopes_itself_to_live_quotes(self):
+        """那个判据的拒绝理由不能读成「整块不可用」。"""
+        from duanxian import trade_calendar as tc
+
+        doc = tc.live_quotes_are_close_of.__doc__ or ""
+        assert "定稿记录" in doc, "docstring 要点明还有定稿这条路，别被当成总闸"
+
     def test_no_settled_record_falls_back_to_the_live_gate(self, monkeypatch):
         """定稿记录取不到时仍走原来的实时路径（含它的拒绝理由），不静默出错。"""
         from duanxian import data, emotion_metrics as em, trade_calendar as tc
