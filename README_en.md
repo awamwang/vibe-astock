@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="#what-it-is">What it is</a> ·
+  <a href="#screenshots">Screenshots</a> ·
   <a href="#whats-in-this-version">This version</a> ·
   <a href="#the-core-derived-sentiment-metrics">Derived metrics</a> ·
   <a href="#architecture">Architecture</a> ·
@@ -71,6 +72,31 @@ so here is the whole set up front. Chinese terms are given so you can match them
 | **loss effect** | 亏钱效应 | The same batch, measured by damage: how many fell more than 5% / 7%, how many hit limit down |
 | **leader** | 龙头 | In this dashboard: the stock with the highest board count that day (ties are broken by source order, not by judgement). Traders use 龙头 more loosely than that. Shown as a sentiment gauge, not a buy list |
 | **settled record** | 定稿记录 | End-of-day data for a session that has already closed, cached to disk. Facts that will not change again, so past sessions never depend on live quotes |
+
+---
+
+
+## Screenshots
+
+**Review dashboard** — the hard-metric layer, there the moment you open it. Market breadth as the
+denominator, where yesterday's strong names landed today, money effect and loss effect side by side.
+
+<img src="assets/screenshots/01-review-metrics.png" alt="Review dashboard: market breadth, yesterday's strong-stock feedback, money effect, loss effect">
+
+**Tomorrow's verification conditions** — turns tonight's read into something you can actually check
+tomorrow: every line carries today's baseline and the threshold a move has to clear to count.
+
+<img src="assets/screenshots/02-verification.png" alt="Tomorrow's verification conditions, each with today's baseline and its threshold">
+
+**Market data** — indices, overnight markets (including the Magnificent Seven), sector money flow,
+turnover ranking, and today's live limit-up sentiment. Auto-refresh optional.
+
+<img src="assets/screenshots/03-market-data.png" alt="Market data: indices and overnight markets">
+
+**5-day heat + leader lineage** — how sentiment moved over five sessions, and how far the leaders
+from a few days ago have fallen since.
+
+<img src="assets/screenshots/04-heat.png" alt="5-day sentiment heat and leader lineage">
 
 ---
 
