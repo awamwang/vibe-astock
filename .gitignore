@@ -29,3 +29,4 @@ vr/.cache/
 
 # ---- macOS ----
 .DS_Store
+dist-astock/

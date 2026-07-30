@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/base";
 import { useEffect, useRef, useState } from "react";
 import { Swords, Loader2, AlertTriangle, Target, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -226,7 +227,7 @@ export function AgentReview() {
     // 这些**需要原样告诉用户**的信息丢掉。
     let resp: Response;
     try {
-      resp = await fetch(`/api/review/run${date ? `?date=${date}` : ""}`, { method: "POST" });
+      resp = await fetch(apiUrl(`/api/review/run${date ? `?date=${date}` : ""}`), { method: "POST" });
     } catch { stopPolling(); if (alive.current) setErr("启动失败"); return; }
     const body = await resp.json().catch(() => null);
     if (!alive.current) return;

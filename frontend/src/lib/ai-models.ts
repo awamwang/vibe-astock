@@ -1,3 +1,4 @@
+import { apiUrl } from "./base";
 // 接入 AI 的模型清单（移植自 SDesign-opensource / open-design，按本项目适配）。
 // 两类：
 //   订阅版（provider "cli-*"）= 调本机已登录的 CLI，用订阅额度、免 API key（仅本地自托管可用）。
@@ -110,7 +111,7 @@ export async function fetchCliAvailability(
   headers: Record<string, string> = {},
 ): Promise<CliAvailability | null> {
   try {
-    const r = await fetch("/api/cli/available", { headers });
+    const r = await fetch(apiUrl("/api/cli/available"), { headers });
     if (!r.ok) return null;
     return (await r.json()) as CliAvailability;
   } catch {

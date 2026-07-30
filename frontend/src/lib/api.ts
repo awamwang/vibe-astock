@@ -1,3 +1,4 @@
+import { apiUrl } from "./base";
 // 后端 API 客户端。/api → vite 代理到本仓库的 FastAPI（server.py，默认 8910）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 
@@ -38,7 +39,7 @@ export interface MyReport {
 
 // 下载/预览研报：带鉴权头 fetch → blob → 触发浏览器下载（<a download> 无法带 Authorization，故走 blob）。
 export async function downloadReport(id: string, name: string): Promise<void> {
-  const resp = await fetch(`/api/myreports/file/${id}`, { headers: authHeaders() });
+  const resp = await fetch(apiUrl(`/api/myreports/file/${id}`), { headers: authHeaders() });
   if (!resp.ok) throw new ApiError(`下载失败 HTTP ${resp.status}`, resp.status);
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
@@ -61,7 +62,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
   }
   if (Object.keys(headers).length > 0) opts.headers = headers;
   try {
-    resp = await fetch(`/api${path}`, opts);
+    resp = await fetch(apiUrl(`/api${path}`), opts);
   } catch {
     throw new ApiError("连接不到后端，请先在项目根目录启动：.venv/bin/python server.py（默认 8910）", 0);
   }

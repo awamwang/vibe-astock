@@ -6,6 +6,7 @@ import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { Settings } from "@/pages/Settings";
 
+// basename 跟着构建时的 --base 走，这样挂在子路径下内部跳转才不会掉回站点根目录
 export const router = createBrowserRouter([
   {
     element: <Layout />,
@@ -19,4 +20,4 @@ export const router = createBrowserRouter([
       { path: "*", element: <Navigate to="/agent/review" replace /> },
     ],
   },
-]);
+], { basename: import.meta.env.BASE_URL });

@@ -1,13 +1,14 @@
+import { apiUrl } from "./base";
 // 复盘 agent 的前端类型 + 助手（后端默认 8910，vite 把全部 /api 代理过去）。
 
 export async function agentFetch<T>(path: string, method: "GET" | "POST" = "GET"): Promise<T> {
-  const r = await fetch(path, { method });
+  const r = await fetch(apiUrl(path), { method });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return (await r.json()) as T;
 }
 
 export async function agentPost<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(path, {
+  const r = await fetch(apiUrl(path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

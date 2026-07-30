@@ -1,3 +1,4 @@
+import { apiUrl } from "./base";
 // 用户 LLM 配置（只存本地 localStorage，不上传、不进仓库）+ 系统 AI 对话调用。
 
 import { ApiError, authHeaders } from "./api";
@@ -79,7 +80,7 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
 
   let resp: Response;
   try {
-    resp = await fetch("/api/chat", {
+    resp = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ messages, context, llm }),
