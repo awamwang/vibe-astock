@@ -24,6 +24,16 @@ function hhmm(t?: string | null): string {
   return `${t.slice(0, 2)}:${t.slice(2, 4)}`;
 }
 
+/** 统计读数按 kind 格式化。裸值直接印会让同一列里"家数=61"和"炸板率=0.23"并排，
+ *  读者分不清哪个是百分比 —— 后端喂 AI 的文本一直是格式化过的，界面也该一致。
+ *  kind/unit 每份复盘快照里都有，所以历史复盘也能一并显示对。 */
+function statVal(it: { kind?: string; unit?: string }, v?: number | null): string {
+  if (v == null) return "—";
+  if (it.kind === "rate") return rate(v);
+  if (it.kind === "pct") return signed(v);
+  return `${v}${it.unit ?? ""}`;
+}
+
 export function Section({
   icon: Icon, title, hint, caliber, available, reason, children,
 }: {
@@ -220,7 +230,7 @@ export function StatsView({ c }: { c?: StatsContext }) {
                   </span>
                 )}
                 {it.hist_median != null && (
-                  <span className="text-[10px] text-muted-foreground/60">中位 {it.hist_median}</span>
+                  <span className="text-[10px] text-muted-foreground/60">历史中位 {statVal(it, it.hist_median)}</span>
                 )}
               </>
             ) : (
@@ -262,11 +272,11 @@ export function DiffView({ d }: { d?: DayDiff }) {
           {changes.map((c) => (
             <div key={c.key} className="flex flex-wrap items-center gap-2 text-[12px] tabular-nums">
               <span className="w-24 shrink-0 text-muted-foreground">{c.label}</span>
-              <span className="text-muted-foreground/70">{c.prev_text}</span>
+              <span className="text-muted-foreground/70">{d?.prev_date || "昨日"} {c.prev_text}</span>
               <span className={cn("font-bold", c.hotter ? "text-danger" : "text-info")}>
                 {c.delta > 0 ? "↑" : "↓"}
               </span>
-              <span className="font-bold">{c.cur_text}</span>
+              <span className="font-bold">{d?.date || "今日"} {c.cur_text}</span>
               <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
                 c.hotter ? "bg-danger/15 text-danger" : "bg-info/15 text-info")}>
                 {c.hotter ? "转热" : "转冷"}
@@ -444,7 +454,7 @@ export function LossEffectSection({ le }: { le?: LossEffect }) {
       hint="⚠️ 这一栏只统计【昨日涨停的那批票】今天的表现，不是全市场。判退潮先看昨天的强势股今天有多疼——炸板率只说明板没封住，说明不了封不住之后亏多少。"
       caliber={"样本 = 昨日涨停池全部个股，收盘对收盘。\n" +
         "「跌超5%/7%」按今日收盘涨跌幅算，不看盘中最低。\n" +
-        "⚠️ 与第一屏「全市场跌超5%」不是同一个分母：这里的分母是昨日涨停那 100 来只，\n" +
+        "⚠️ 与第一屏「全市场跌超5%」不是同一个分母：这里的分母只有昨日涨停那批（见下方样本数），\n" +
         "那里的分母是全 A 五千多只。两个数不能直接比大小。"}
       available={le?.available}
       reason={le?.reason}
@@ -520,7 +530,7 @@ export function SealQualitySection({ sq }: { sq?: SealQuality }) {
         <span className="ml-1 text-muted-foreground/60">（首封时间口径，与上面两半交叉）</span>
         <div className="mt-0.5">
           <b className="text-foreground">炸板率 {rate(sq?.broken_rate)}</b>
-          （炸板未回封 {sq?.broken_pool ?? "—"} 家 ÷ 该家数 + 涨停 {tot ?? "—"} 家）·
+          （炸板未回封 {sq?.broken_pool ?? "—"} 家 ÷（炸板未回封 {sq?.broken_pool ?? "—"} + 涨停 {tot ?? "—"}）家）·
           平均炸板 <b className="text-foreground">{sq?.avg_broken_times ?? "—"}</b> 次
         </div>
       </div>
@@ -544,11 +554,11 @@ export function BoardSystemSection({ bb }: { bb?: ByBoard }) {
         {open ? <ChevronDown className="h-4 w-4 text-primary" /> : <ChevronRight className="h-4 w-4 text-primary" />}
         <span className="text-sm font-bold">分涨跌幅制度</span>
         <span className="text-[11px] text-muted-foreground">
-          {keys.length} 类 · 10cm / 20cm / 北交所 / ST 的晋级生态不同，混算对不上任何一种打法
+          今日有涨停的 {keys.length} 类 · 10cm / 20cm / 北交所 / ST 的晋级生态不同，混算对不上任何一种打法
         </span>
         {extinct.length > 0 && (
           <span className="ml-auto rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-bold text-danger">
-            {extinct.length} 类今日零涨停
+            {extinct.join("、")} 今日零涨停
           </span>
         )}
       </button>

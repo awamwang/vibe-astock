@@ -248,12 +248,19 @@ class TestLadderGap:
         assert r["gaps"] == [] and r["highest"] == 4
 
     def test_gap_detected(self, monkeypatch):
-        """有 5 板和 2 板、缺 3-4 板 = 最高标悬空。"""
+        """有 5 板和 2 板、缺 3-4 板 = 最高标**下方**断层。
+
+        方向不能反：缺的 3、4 板在 5 板**下面**，所以危险是"断板后没有下一梯队接"。
+        写成"最高标上方悬空"是句空话 —— 5 板已经是最高，上面本来就没有东西，
+        而且它把这张卡最有用的那个信号说反了。
+        """
         monkeypatch.setattr(em, "_zt_pool", lambda d: self._pool([5, 2, 2, 2]))
         r = em.ladder_gap("2026-07-24")
         assert r["continuous"] is False
         assert r["gaps"] == [3, 4]
-        assert "悬空" in r["note"]
+        assert "下方" in r["note"], r["note"]
+        assert "上方" not in r["note"], f"方向说反了：{r['note']}"
+        assert "承接" in r["note"], f"没说清危险是什么：{r['note']}"
 
     def test_no_multi_board(self, monkeypatch):
         monkeypatch.setattr(em, "_zt_pool", lambda d: self._pool([1, 1, 1]))

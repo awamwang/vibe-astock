@@ -323,7 +323,7 @@ def ladder_gap(date: str) -> dict:
         "gaps": gaps,
         "continuous": not gaps,
         "note": ("全市场板位结构连续（注：跨题材，不代表同一题材内部有梯队）" if not gaps
-                 else f"板位缺档 {'、'.join(f'{g}板' for g in gaps)} → 最高标上方悬空"),
+                 else f"板位缺档 {'、'.join(f'{g}板' for g in gaps)} → 最高标下方断层，断板后没有下一梯队承接"),
     }
 
 
@@ -418,6 +418,8 @@ def cycle_position(date: str, lookback: int = 10) -> dict:
     if len(series) < 3:
         return {"available": False, "reason": f"涨停池可用天数不足（{len(series)}/3）"}
 
+    # 炸板率是"越高越冷"，所以取反后再平均 —— 三项加起来才都指向同一个方向。
+    # 界面口径里必须说这件事，否则读者会以为炸板率高情绪分也高。
     n_zt = _minmax([float(s["limit_up"]) for s in series])
     n_hc = _minmax([float(s["highest_consec"]) for s in series])
     brs = [s["broken_rate"] for s in series]

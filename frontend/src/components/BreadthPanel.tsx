@@ -111,7 +111,7 @@ export function BreadthPanel({ b, limitDown }: { b?: Breadth; limitDown?: number
         </div>
         {dist ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            对照 {b.dist_scope} 共 {b.universe} 只
+            上面两项（跌超 5% / 涨幅 ≥5%）取自 {b.dist_scope} 共 {b.universe} 只
             {b.dist_partial && (
               <span className="ml-1 text-muted-foreground/70">
                 ⚠️ 有项目本次取数失败，<b>未取到 ≠ 为 0</b>

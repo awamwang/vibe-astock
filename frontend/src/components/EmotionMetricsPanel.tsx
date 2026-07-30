@@ -161,10 +161,24 @@ export function LadderCard({ lg }: { lg: LadderGap }) {
       {}
       <p className={cn("mt-3 border-t border-dashed border-border pt-2 text-[12px]",
         lg.continuous === false ? "text-danger" : "text-muted-foreground")}>
-        {plain(lg.note)}
+        {ladderNote(lg)}
       </p>
     </Card>
   );
+}
+
+/** 断层那句在前端按结构化字段组，而不是直接印后端存下来的 `note`。
+ *
+ *  原因：这句话曾把方向写反（写成"最高标上方悬空" —— 而缺的档在最高标**下面**，
+ *  危险是断板后没有下一梯队接），而 `note` 是算完即落盘的字符串，
+ *  历史复盘里那句错话会一直留在页面上。`gaps` / `highest` 是结构化的，
+ *  用它们现场组句，翻回上周的复盘也说得对。
+ *  后端那份 note 继续留着喂分析师，两者说的是同一件事。 */
+function ladderNote(lg: LadderGap): string {
+  const gaps = safeArray<number>(lg.gaps);
+  if (!gaps.length) return plain(lg.note);
+  const hi = lg.highest != null ? `（${lg.highest}板）` : "";
+  return `板位缺档 ${gaps.map((g) => `${g}板`).join("、")} → 最高标${hi}下方断层，断板后没有下一梯队承接`;
 }
 
 export function CycleCard({ cy }: { cy: EmotionCycle }) {
@@ -173,6 +187,7 @@ export function CycleCard({ cy }: { cy: EmotionCycle }) {
       icon={CalendarClock} title="情绪周期"
       hint="窗口内情绪分最低的那天视为本轮起点"
       caliber={"情绪分 = 涨停家数、最高连板、炸板率三项在窗口内归一化后的平均，只用涨停池算。\n" +
+        "炸板率是「越高越冷」，所以取反后再平均 —— 三项都指向同一个方向，分越高越热。\n" +
         "「第 N 天」= 今天距窗口最低点第几个交易日，不是自然日。\n" +
         "🔴 这是**可解释的启发式，不是精确的周期划分**：全市场压成一个数，而不同题材\n" +
         "完全可能同时处在启动、高潮和退潮。窗口内一路走低时，起点会落在最后一天\n" +
