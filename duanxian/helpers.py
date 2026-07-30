@@ -12,8 +12,8 @@ def collect_reports(state: DuanxianReviewState) -> str:
     return _collect(state, pairs)
 
 
-def collect_reports(state: dict, pairs) -> str:
-    """把已产出的分析师报告拼成一段。pairs = [(state字段名, 展示标题), ...]，空的跳过。"""
+def _collect(state: dict, pairs) -> str:
+    """按 pairs = [(state字段名, 展示标题), ...] 拼报告，空的跳过。"""
     parts = []
     for field, label in pairs:
         v = (state.get(field) or "").strip()

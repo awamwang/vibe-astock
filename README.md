@@ -2,14 +2,14 @@
 
 <p align="center">
   <b>A 股短线复盘看板 —— 打开就看清今天的短线情绪</b><br>
-  派生情绪指标 · 五面分析师 · 全本地运行 · 可用本机 CLI 订阅免 key
+  派生情绪指标 · 全本地运行 · 可用本机 CLI 订阅免 key
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/tests-256%20passing-brightgreen.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-268%20passing-brightgreen.svg" alt="Tests">
   <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
 </p>
 
@@ -194,14 +194,21 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 
 ## 数据源
 
-全部免费直连，无需 API Key：
+| 来源 | 提供 | 要 key 吗 |
+|---|---|---|
+| akshare（东财涨停池 / 龙虎榜） | 涨停 · 炸板 · 跌停 · 连板梯队 · 龙虎榜席位 | 不要 |
+| 东财 `push2delay` clist | 板块 / 个股资金流、成交额榜 | 不要 |
+| 腾讯财经 `qt.gtimg.cn` | 实时行情批量（算赚钱效应 / 连板溢价） | 不要 |
+| 腾讯 hist `stock_zh_a_hist_tx` | K 线与交易日历（部分网络下东财 push2his 被封，故走腾讯） | 不要 |
+| 同花顺问财 | 涨停原因题材串（→ 题材事件树） | **要** |
 
-| 来源 | 提供 |
-|---|---|
-| akshare（东财涨停池 / 龙虎榜） | 涨停 · 炸板 · 跌停 · 连板梯队 · 龙虎榜席位 |
-| 腾讯财经 `qt.gtimg.cn` | 实时行情批量（算赚钱效应 / 连板溢价） |
-| 腾讯 hist `stock_zh_a_hist_tx` | K 线与交易日历（本机东财 push2his 被封，故走腾讯） |
-| 同花顺问财 | 涨停原因题材串 |
+**除了题材串，其余全部免费直连、不用任何 key。** 题材串走同花顺问财，需要
+`IWENCAI_API_KEY`；不配也能跑，只是「题材事件树」那一块会如实标成不可用
+（复盘的其余部分不受影响）。配法：在仓库根建 `.env` 写一行
+
+```
+IWENCAI_API_KEY=你的key
+```
 
 历史交易日的涨停池摘要会落盘缓存（`~/.duanxian-agents/cache/`）——它们是不会再变的事实，
 第二次起几乎零成本。
@@ -214,7 +221,7 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 .venv/bin/python -m pytest -q
 ```
 
-256 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
+268 个用例，只测那些**错了也看不出来**的地方——界面照常渲染、数字看着合理，但结论是错的：
 指标不可用时如实降级（不退化成 0）、情绪周期天数的 off-by-one、梯队断层检测、
 档位方向投票（含浮点阈值边界）、交易日历与缓存定稿判据、
 **盘中实时行情不能冒充昨天的收盘**、**序列缓存不能把"当天还没落盘"锁死**、

@@ -1,4 +1,4 @@
-"""短线复盘数据层 —— 复用项目根 `_tools_daily_review.py` 的成熟 fetcher"""
+"""短线复盘数据层 —— 在 `fetchers` 的取数函数之上做缓存、降级与文本化。"""
 
 from __future__ import annotations
 
@@ -7,22 +7,10 @@ from typing import Optional
 import json
 import os
 import socket
-import sys
 from collections import Counter
-from pathlib import Path
 
+from . import fetchers as dr
 from .util import is_today, safe_join
-
-# 从本文件位置推导仓库根，不写死绝对路径
-_PROJ_ROOT = str(Path(__file__).resolve().parents[2])
-if _PROJ_ROOT not in sys.path:
-    sys.path.append(_PROJ_ROOT)  # append 而非 insert(0)，避免遮蔽同名模块
-try:
-    import _tools_daily_review as dr  # noqa: E402
-except ImportError as exc:  # fail-fast，给清晰诊断
-    raise RuntimeError(
-        f"无法导入数据层依赖 _tools_daily_review（应位于项目根 {_PROJ_ROOT}）：{exc}"
-    ) from exc
 
 socket.setdefaulttimeout(45)
 

@@ -25,7 +25,7 @@
 
 ## 数据与降级
 
-题材串来自问财（`_tools_daily_review.fetch_zt_reasons`），**只能查到当天**，
+题材串来自问财（`fetchers.fetch_zt_reasons`），**只能查到当天**，
 所以每天复盘时**落盘囤起来**（同回测语料的思路：过期不候）。
 拿不到题材串时整棵树标 unavailable，**绝不退回行业分类冒充题材** ——
 那正是这个模块要解决的问题。
@@ -42,7 +42,6 @@ import json
 import os
 from typing import Optional
 
-from . import data as _data  # noqa: F401  仅为副作用：注入项目根 sys.path
 from . import trade_calendar
 from .util import atomic_write_json
 
@@ -77,7 +76,7 @@ def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
         return {}, f"{date} 无题材串缓存；问财只返回最近交易日，更早的补不回来"
 
     try:
-        import _tools_daily_review as dr
+        from . import fetchers as dr
 
         reasons, err = dr.fetch_zt_reasons(date.replace("-", ""))
     except Exception as exc:  # noqa: BLE001

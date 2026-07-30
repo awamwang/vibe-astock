@@ -89,7 +89,7 @@ export function Layout() {
             {!collapsed && <span className="text-lg font-extrabold tracking-tight">Vibe-<span className="text-primary">Astock</span></span>}
           </Link>
           {}
-          {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线复盘 · 五面分析师</p>}
+          {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线复盘</p>}
         </div>
 
         {/* Nav */}

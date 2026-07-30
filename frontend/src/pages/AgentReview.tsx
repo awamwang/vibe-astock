@@ -211,7 +211,7 @@ export function AgentReview() {
             <Swords className="h-6 w-6 text-primary" /> 短线复盘看板
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            情绪温度 · 五面分析师 · 明日验证条件
+            情绪温度 · 明日验证条件
             {data && ` · 交易日 ${data.target_date || data.trade_date} · 生成于 ${data.generated_at}`}
           </p>
         </div>

@@ -3074,6 +3074,171 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestTrendAndStatsDontClaimSameSource:
+    """趋势/分位卡不许声称与上面的指标卡「同源」。
+
+    「赚钱效应中位数」在页面上出现两次，值会差个零头：
+      · 赚钱效应卡  → 实时批量行情，**取不到的票被排除**（实测 60/61，中位 0.38）
+      · 趋势 / 分位 → 已落盘的涨停池缓存，用**全部**票（61/61，中位 0.42）
+    两个都对，但同一屏上同一个标签给两个数，不说清就像哪个算错了。
+    TrendPanel 原来的口径写着"数据与上面各卡片同源（不额外取数）"——**后半句对、
+    前半句错**，而这种错只体现在一句说明文案里，任何计算测试都抓不到。
+    """
+
+    def _src(self, rel):
+        import pathlib
+
+        return pathlib.Path(f"frontend/src/components/{rel}").read_text(encoding="utf-8")
+
+    def test_trend_caliber_does_not_say_same_source(self):
+        s = self._src("TrendPanel.tsx")
+        assert "与上面各卡片同源" not in s, "这句话是错的：赚钱效应那一项来自缓存池，不是上面卡片的实时样本"
+
+    def test_trend_caliber_discloses_the_sample_difference(self):
+        s = self._src("TrendPanel.tsx")
+        assert "缓存" in s and "分母不同" in s, "要说清两处数值为什么会差一点"
+
+    def test_stats_caliber_discloses_the_sample_difference(self):
+        s = self._src("MarketFactsPanel.tsx")
+        i = s.index('title="历史统计位置"')
+        block = s[i:i + 600]
+        assert "缓存" in block and "分母不同" in block, "历史统计位置也要说清口径"
+
+
+@pytest.mark.unit
+class TestRepoIsSelfContained:
+    """仓库不许 import 仓库外的模块。
+
+    这条是**致命级**的：原先 `duanxian/data.py` 用
+    `sys.path.append(Path(__file__).parents[2])` 去上一级目录 import
+    `_tools_daily_review`。在作者本机那一级恰好有这个文件，一切正常；
+    换任何人 clone 下来，`import server` 直接 RuntimeError —— **开箱起不来**，
+    而作者本机永远测不出来。取数层现已内联为 `duanxian/fetchers.py`。
+    """
+
+    def test_no_sys_path_escape_to_parent_dirs(self):
+        """往上跳目录再塞进 sys.path = 依赖仓库外的东西。
+
+        ⚠️ 按**整行**看，别用 `\\([^)]*` 去截参数 —— 那会在第一个右括号处停下，
+        `sys.path.append(str(Path(__file__).resolve().parents[2]))` 里的
+        `parents[2]` 恰好落在截断之外，这条守卫就会静默失效（写这条时踩到过）。
+        """
+        import pathlib
+
+        bad = []
+        for f in list(pathlib.Path("duanxian").glob("*.py")) + [
+                pathlib.Path("server.py"), pathlib.Path("main.py")]:
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                if "sys.path.append" not in line and "sys.path.insert" not in line:
+                    continue
+                if "parents[" in line or ".." in line:
+                    bad.append(f"{f}:{i}: {line.strip()[:80]}")
+        assert not bad, "有模块把仓库外的目录塞进了 sys.path：\n" + "\n".join(bad)
+
+    def test_no_import_of_the_old_external_module(self):
+        import pathlib
+
+        for f in list(pathlib.Path("duanxian").glob("*.py")) + [
+                pathlib.Path("server.py"), pathlib.Path("main.py")]:
+            src = f.read_text(encoding="utf-8")
+            assert "_tools_daily_review" not in src, \
+                f"{f} 还在引用仓库外的 _tools_daily_review"
+
+    def test_fetchers_is_vendored_and_exposes_what_callers_need(self):
+        from duanxian import fetchers
+
+        for fn in ("fetch_zt_pool", "fetch_zt_reasons", "fetch_lhb",
+                   "fetch_sector_flow", "enrich_trend", "fetch_turnover_top20"):
+            assert callable(getattr(fetchers, fn, None)), f"fetchers 缺 {fn}"
+
+    def test_vendored_fetchers_carries_no_foreign_paths(self):
+        """内联进来的取数层不能带作者本机路径或别的项目名。"""
+        import pathlib
+
+        src = pathlib.Path("duanxian/fetchers.py").read_text(encoding="utf-8")
+        for bad in ("/Users/", "OUT_DIR", "HOME_POOL", "HISTORY_DIR"):
+            assert bad not in src, f"fetchers.py 里残留 {bad}"
+
+
+@pytest.mark.unit
+class TestJsEngineForSectorFundFlow:
+    """行业资金流依赖的 JS 引擎必须是可用的那一个。
+
+    akshare 的 `stock_fund_flow_industry` 要跑 JS 解同花顺的混淆脚本。
+    装成旧的 `py_mini_racer` 时，它的 Python 代码会配上新包的二进制
+    → `dlsym(mr_eval_context): symbol not found`，而 `vr/market.py` 的
+    `_sectors()` 用 `except Exception: return []` 兜住 → 接口照样 200、
+    `sectors` 是空列表、页面上「板块资金 / 资金轮动」两块**静默空着**。
+    这种失败长得和「今天没数据」一模一样，所以要在测试里直接把引擎点一下。
+    """
+
+    def test_js_engine_is_importable_and_can_eval(self):
+        py_mini_racer = pytest.importorskip("py_mini_racer")
+        assert py_mini_racer.MiniRacer().eval("1+1") == 2, \
+            "JS 引擎跑不了 —— 板块资金/资金轮动会静默空着"
+
+    def test_requirements_asks_for_the_renamed_package(self):
+        """requirements 要写 mini-racer，别写回旧名 py_mini_racer。"""
+        import pathlib
+
+        req = pathlib.Path("requirements.txt").read_text(encoding="utf-8")
+        body = "\n".join(l for l in req.splitlines() if not l.strip().startswith("#"))
+        assert "mini-racer" in body, "requirements.txt 少了 mini-racer"
+        assert "py_mini_racer" not in body and "py-mini-racer" not in body, \
+            "别把旧包写进 requirements —— 它会和 mini-racer 互相覆盖"
+
+
+@pytest.mark.unit
+class TestCollectReportsIsCallableWithJustState:
+    """`collect_reports(state)` 必须只要一个参数就能调。
+
+    这条是**真的调一次**，不是查签名 —— 曾经 helpers.py 里出现过两个同名
+    `collect_reports`（一个 (state)、一个 (state, pairs)），后定义的把前面那个
+    整个覆盖掉。Python 对重定义不报错、import 也不报错，
+    结果是五个分析师全跑完、**到裁判那一步才 TypeError**（一次跑 4 分钟才炸）。
+    所以：必须实际调用，且必须断言产出里真有内容。
+    """
+
+    def _state(self) -> dict:
+        from duanxian.roles import MACRO_FIELD, ROLES
+
+        st = {r.report_field: f"{r.title} 的报告正文" for r in ROLES}
+        st[MACRO_FIELD] = "大板块本周正文"
+        return st
+
+    def test_one_arg_call_works_and_includes_every_role(self):
+        from duanxian.helpers import collect_reports
+        from duanxian.roles import MACRO_TITLE, ROLES
+
+        out = collect_reports(self._state())      # 只给 state，不给 pairs
+        for r in ROLES:
+            assert f"【{r.title}】" in out, f"少了 {r.title}"
+        assert f"【{MACRO_TITLE}】" in out
+        assert "的报告正文" in out
+
+    def test_module_defines_the_name_exactly_once(self):
+        """同名重定义在 import 层面完全静默，只能扫 AST。"""
+        import ast
+        import inspect
+
+        from duanxian import helpers
+
+        tree = ast.parse(inspect.getsource(helpers))
+        names = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+        dupes = {n for n in names if names.count(n) > 1}
+        assert not dupes, f"helpers.py 有同名函数（后者会静默覆盖前者）：{sorted(dupes)}"
+
+    def test_empty_fields_are_skipped_not_rendered_as_blank(self):
+        from duanxian.helpers import collect_reports
+
+        st = self._state()
+        first = next(iter(st))
+        st[first] = "   "                          # 空白 = 该角色本次没产出
+        out = collect_reports(st)
+        assert "【】" not in out and "\n\n\n" not in out
+
+
+@pytest.mark.unit
 class TestPerStockPromptsStayAtSectorLevel:
     """行内「深入分析」的 prompt 不许对**个股**做前瞻判断。
 

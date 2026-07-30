@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import data as _dd_data  # noqa: F401  仅为副作用：注入项目根 sys.path + 导入 _tools_daily_review
 from . import reflection
 from . import trade_calendar
 
-import _tools_daily_review as dr  # noqa: E402
+from . import fetchers as dr
 
 
 def _last_trade_dates(n: int = 5) -> list[str]:

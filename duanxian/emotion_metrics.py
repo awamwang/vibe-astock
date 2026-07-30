@@ -8,11 +8,10 @@ import urllib.request
 from statistics import mean, median
 from typing import Optional
 
-from . import data as _data  # noqa: F401  仅为副作用：注入项目根 sys.path + 导入 _tools_daily_review
 from . import trade_calendar
 from .util import atomic_write_json
 
-import _tools_daily_review as dr  # noqa: E402
+from . import fetchers as dr
 
 _TENCENT = "http://qt.gtimg.cn/q="
 _BATCH = 50          # 腾讯批量行情单次上限，取保守值
