@@ -181,13 +181,55 @@ def seal_quality(date: str) -> dict:
     }
 
 
+def _settled_rows(date: str) -> Optional[list[dict]]:
+    """`date` 那一场的定稿记录（昨日涨停股在 `date` 的表现）。
+
+    🔴 这条路必须优先于实时行情：实时行情只在"目标日就是最近已收盘那一场"的
+       那一小段时间内可用，一旦今天开盘就变成今天的价、算不了昨天那一场 ——
+       于是"想看 07-29 的复盘"永远看不到，而这是复盘系统的基本功能。
+       详见 emotion_metrics._settled_pool。
+
+    ⚠️ 定稿记录只覆盖**昨日涨停**那批，不含昨日炸板股 ——
+       用它算的块要如实说明少了炸板那一档，别默默当成 0。
+    """
+    from .data import fetch_prev_pool
+
+    try:
+        return fetch_prev_pool(date)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------------------------------------------------------- 亏钱效应 / 大面
 def loss_effect(date: str, prev: Optional[str] = None) -> dict:
-    """亏钱效应 —— 昨日强势股今天**死在哪**"""
+    """亏钱效应 —— 昨日强势股今天**死在哪**（定稿记录优先，实时行情兜底）"""
+    from .data import is_limit_up
+
+    prev = prev or trade_calendar.prev_trade_date(date)
+    rows = _settled_rows(date)
+    if rows:
+        got = [r for r in rows if r.get("ret") is not None]
+        if got:
+            n = len(got)
+            deep5 = [r for r in got if r["ret"] <= -5]
+            return {
+                "available": True, "prev_date": prev, "source": "settled",
+                "sample": n, "coverage": n, "coverage_rate": 1.0, "partial": False,
+                "deep_loss_5_count": len(deep5),
+                "deep_loss_5_rate": round(len(deep5) / n, 3),
+                "deep_loss_7_count": sum(1 for r in got if r["ret"] <= -7),
+                # 定稿记录带涨停价，跌停判据用「收在跌停价」比比对今日跌停池更直接；
+                # 但它没有跌停价字段，所以用 -9.8% 兜（10cm 与 20cm 混算会偏，故只当下界）
+                "limit_down_count": sum(1 for r in got if r["ret"] <= -9.8),
+                "worst": round(min(r["ret"] for r in got), 2),
+                "market_limit_down": None,      # 需要今日跌停池，定稿路径给不了
+                "prev_broken_recovery": None,   # 需要昨日炸板股，定稿记录不含
+                "note": "由定稿记录算；「昨日炸板股修复」与「全市场跌停家数」需当日实时池，本次未计",
+            }
+
     ok, why = trade_calendar.live_quotes_are_close_of(date)
     if not ok:
         return {"available": False, "reason": why}
-    prev = prev or trade_calendar.prev_trade_date(date)
     if not prev:
         return {"available": False, "reason": "取不到前一交易日"}
     pp, tp = pools(prev), pools(date)
@@ -256,11 +298,49 @@ def _classify(ret: float, code: str, name: str, in_today_zt: bool, in_today_dt: 
 
 
 def feedback_matrix(date: str, prev: Optional[str] = None) -> dict:
-    """昨日强势股反馈矩阵：**按昨日板位分组**，看今天各落到什么结果"""
+    """昨日强势股反馈矩阵：**按昨日板位分组**，看今天各落到什么结果
+
+    定稿记录优先。⚠️ 定稿记录不含昨日炸板股，所以那一档会缺 —— 如实写进 note。
+    """
+    from .data import is_limit_up
+
+    prev = prev or trade_calendar.prev_trade_date(date)
+    srows = _settled_rows(date)
+    if srows:
+        got = [r for r in srows if r.get("ret") is not None]
+        if got:
+            def tier(b: int) -> str:
+                return "首板" if b <= 1 else ("2板" if b == 2 else "3板及以上")
+
+            matrix: dict[str, dict] = {}
+            details: list[dict] = []
+            for r in got:
+                b = int(r.get("prev_boards") or 1)
+                t = tier(b)
+                res = ("晋级涨停" if is_limit_up(r) else
+                       "跌停" if r["ret"] <= -9.8 else
+                       "跌超5%" if r["ret"] <= -5 else
+                       "收红" if r["ret"] > 0 else "小跌")
+                matrix.setdefault(t, {k: 0 for k in _RESULT_ORDER})[res] += 1
+                details.append({"code": r["code"], "name": r["name"], "board": b,
+                                "prev_tier": t, "ret": round(r["ret"], 2),
+                                "result": res, "sector": r.get("sector") or ""})
+            for t, cell in matrix.items():
+                base = sum(cell.values())
+                cell["合计"] = base
+                cell["晋级率"] = round(cell["晋级涨停"] / base, 3) if base else None
+            details.sort(key=lambda d: d["ret"])
+            return {
+                "available": True, "prev_date": prev, "source": "settled",
+                "sample": len(details), "coverage": len(details),
+                "coverage_rate": 1.0, "partial": False,
+                "order": _RESULT_ORDER, "matrix": matrix, "details": details,
+                "note": "由定稿记录算；定稿记录不含昨日炸板股，故缺「昨日炸板」这一档",
+            }
+
     ok, why = trade_calendar.live_quotes_are_close_of(date)
     if not ok:
         return {"available": False, "reason": why}
-    prev = prev or trade_calendar.prev_trade_date(date)
     if not prev:
         return {"available": False, "reason": "取不到前一交易日"}
     pp, tp = pools(prev), pools(date)

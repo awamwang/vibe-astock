@@ -3148,6 +3148,91 @@ class TestCliMainActuallyCompletes:
 
 
 @pytest.mark.unit
+class TestPastSessionsStayViewable:
+    """复盘系统必须能看**任何历史场次** —— 这是它的基本功能。
+
+    🔴 原来「昨天进去的人赚不赚钱」那一整段（赚钱效应 / 亏钱效应 / 连板溢价 /
+    昨日强势股反馈）都以实时行情为唯一来源，并用
+    `live_quotes_are_close_of(date)` 当闸。那个条件只在"目标日恰好是最近已收盘
+    那一场"的一小段时间内成立 —— **今天一开盘，昨天那一场就永远看不到了**，
+    页面显示「实时行情当前属于 2026-07-30 这一场，不能当作 2026-07-29 的收盘表现」。
+
+    定稿记录（`fetch_prev_pool`：已收盘读落盘缓存、否则走东财昨日涨停池）
+    对任何历史日期都取得到，且每行自带 `ret`，所以这一段本来就不需要实时行情。
+    """
+
+    @staticmethod
+    def _pool():
+        """3 只：首板涨、2 板跌、3 板封板。够覆盖分档与四种结果。"""
+        return [
+            {"code": "000001", "name": "甲", "ret": 3.2, "prev_boards": 1,
+             "close": 10.3, "limit_price": 11.0, "sector": "甲行业"},
+            {"code": "000002", "name": "乙", "ret": -6.5, "prev_boards": 2,
+             "close": 9.35, "limit_price": 11.0, "sector": "乙行业"},
+            {"code": "000003", "name": "丙", "ret": 10.0, "prev_boards": 3,
+             "close": 11.0, "limit_price": 11.0, "sector": "丙行业"},
+        ]
+
+    @pytest.fixture
+    def _settled(self, monkeypatch):
+        """定稿记录可取；同时把实时那条路彻底堵死 —— 证明结果真来自定稿。"""
+        from duanxian import data, trade_calendar as tc
+
+        monkeypatch.setattr(data, "fetch_prev_pool", lambda d: self._pool())
+        monkeypatch.setattr(tc, "live_quotes_are_close_of",
+                            lambda d: (False, "实时行情属于别的场次"))
+        monkeypatch.setattr(tc, "prev_trade_date", lambda d: "2026-07-28")
+
+    def test_money_effect_works_for_a_past_session(self, _settled):
+        from duanxian import emotion_metrics as em
+
+        r = em.money_effect("2026-07-29")
+        assert r["available"] is True and r["source"] == "settled"
+        assert r["sample"] == 3
+        assert r["median"] == 3.2
+        # 丙收在涨停价 → 又封住了
+        assert r["limit_up_again_rate"] == round(1 / 3, 3)
+
+    def test_consec_premium_only_counts_two_boards_and_up(self, _settled):
+        from duanxian import emotion_metrics as em
+
+        r = em.consec_premium("2026-07-29")
+        assert r["available"] is True and r["source"] == "settled"
+        assert r["sample"] == 2, "只该算 2 板以上那两只"
+
+    def test_loss_effect_works_and_says_what_it_cannot_cover(self, _settled):
+        from duanxian import market_facts as mf
+
+        r = mf.loss_effect("2026-07-29")
+        assert r["available"] is True and r["source"] == "settled"
+        assert r["deep_loss_5_count"] == 1 and r["worst"] == -6.5
+        # 覆盖不到的两项要给 None 并说明，不能默默当成 0
+        assert r["prev_broken_recovery"] is None and r["market_limit_down"] is None
+        assert "未计" in r["note"]
+
+    def test_feedback_matrix_buckets_by_prev_boards(self, _settled):
+        from duanxian import market_facts as mf
+
+        r = mf.feedback_matrix("2026-07-29")
+        assert r["available"] is True and r["source"] == "settled"
+        assert set(r["matrix"]) == {"首板", "2板", "3板及以上"}
+        assert r["matrix"]["3板及以上"]["晋级涨停"] == 1
+        assert r["matrix"]["2板"]["跌超5%"] == 1
+        assert "炸板" in r["note"], "缺的那一档要说出来"
+
+    def test_no_settled_record_falls_back_to_the_live_gate(self, monkeypatch):
+        """定稿记录取不到时仍走原来的实时路径（含它的拒绝理由），不静默出错。"""
+        from duanxian import data, emotion_metrics as em, trade_calendar as tc
+
+        monkeypatch.setattr(data, "fetch_prev_pool", lambda d: None)
+        monkeypatch.setattr(tc, "live_quotes_are_close_of", lambda d: (False, "轮到实时那条路了"))
+        monkeypatch.setattr(tc, "prev_trade_date", lambda d: "2026-07-28")
+
+        r = em.money_effect("2026-07-29")
+        assert r["available"] is False and r["reason"] == "轮到实时那条路了"
+
+
+@pytest.mark.unit
 class TestLiveEmotionCache:
     """今日实时打板情绪的缓存语义。
 

@@ -151,12 +151,63 @@ def _coverage(vals: list[float], expected: int) -> dict:
     }
 
 
+def _settled_pool(date: str) -> Optional[list[dict]]:
+    """`date` 那一场的**定稿记录**：昨日涨停股在 `date` 当天的表现。
+
+    每行自带 `ret`（该股在 `date` 的涨跌幅）、`prev_boards`、`close`、`limit_price`
+    —— 也就是说"昨天进去的人赚不赚钱"这一整段**不需要实时行情**也算得出。
+
+    🔴 这条路必须**优先于实时行情**：实时行情只在"目标日就是最近已收盘那一场"
+       那一小段时间内可用，一旦今天开盘，它就变成今天的价、算不了昨天那一场 ——
+       于是"想看 07-29 的复盘"就永远看不到了（而这是复盘系统的基本功能）。
+       定稿记录对任何历史日期都取得到（已收盘的读落盘缓存，否则走东财昨日涨停池）。
+    """
+    from .data import fetch_prev_pool
+
+    try:
+        return fetch_prev_pool(date)
+    except Exception:  # noqa: BLE001  取不到就退回实时那条路
+        return None
+
+
+def _stats_from_pool(rows: list[dict], today_codes: Optional[set]) -> dict:
+    """从定稿记录算赚钱效应。样本就是记录本身，无所谓"覆盖率"。"""
+    from .data import is_limit_up
+
+    vals = [r["ret"] for r in rows if r.get("ret") is not None]
+    if not vals:
+        return {}
+    again = [r for r in rows if r.get("ret") is not None and is_limit_up(r)]
+    return {
+        "available": True,
+        "sample": len(vals),
+        "coverage": len(vals),
+        "coverage_rate": 1.0,
+        "partial": False,
+        "avg": round(mean(vals), 2),
+        "median": round(median(vals), 2),
+        "positive_rate": round(sum(1 for v in vals if v > 0) / len(vals), 3),
+        # 定稿记录里有涨停价，直接判"今天又封住了没"，比比对今日池子更可靠
+        "limit_up_again_rate": round(len(again) / len(vals), 3),
+        "source": "settled",
+    }
+
+
 def money_effect(date: str, prev: Optional[str] = None) -> dict:
-    """赚钱效应：昨日涨停股在目标日的表现。需实时行情 → 仅最近已收盘交易日可算。"""
+    """赚钱效应：昨日涨停股在目标日的表现。
+
+    先用**定稿记录**（任何历史日期都算得出），拿不到才退回实时行情。
+    """
+    prev = prev or trade_calendar.prev_trade_date(date)
+    rows = _settled_pool(date)
+    if rows:
+        stats = _stats_from_pool(rows, None)
+        if stats:
+            return {**stats, "prev_date": prev}
+
     ok, why = trade_calendar.live_quotes_are_close_of(date)
     if not ok:
         return {"available": False, "reason": why}
-    prev = prev or trade_calendar.prev_trade_date(date)
     if not prev:
         return {"available": False, "reason": "取不到前一交易日"}
     prev_zt = _zt_pool(prev)
@@ -194,11 +245,26 @@ def money_effect(date: str, prev: Optional[str] = None) -> dict:
 
 
 def consec_premium(date: str, prev: Optional[str] = None) -> dict:
-    """连板溢价：昨日 2 板以上个股在目标日的平均涨幅 = 高标承接度。"""
+    """连板溢价：昨日 2 板以上个股在目标日的平均涨幅 = 高标承接度。
+
+    同 `money_effect`：定稿记录优先，实时行情兜底。
+    """
+    prev = prev or trade_calendar.prev_trade_date(date)
+    rows = _settled_pool(date)
+    if rows:
+        hi = [r for r in rows
+              if (r.get("prev_boards") or 0) >= 2 and r.get("ret") is not None]
+        if hi:
+            vals = [r["ret"] for r in hi]
+            return {"available": True, "prev_date": prev, "source": "settled",
+                    "sample": len(vals), "coverage": len(vals),
+                    "coverage_rate": 1.0, "partial": False,
+                    "avg": round(mean(vals), 2), "median": round(median(vals), 2),
+                    "positive_rate": round(sum(1 for v in vals if v > 0) / len(vals), 3)}
+
     ok, why = trade_calendar.live_quotes_are_close_of(date)
     if not ok:
         return {"available": False, "reason": why}
-    prev = prev or trade_calendar.prev_trade_date(date)
     if not prev:
         return {"available": False, "reason": "取不到前一交易日"}
     prev_zt = _zt_pool(prev)
