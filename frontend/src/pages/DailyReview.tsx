@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
+import { finite } from "@/lib/agent";
 import { api, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type LianbanStock, type TurnoverTop, type GlobalIndex, type MarketSession, type OverseasSnapshot, type OverseasRow, type LiveEmotion } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
@@ -35,6 +36,9 @@ export function DailyReview() {
   // 今日实时打板情绪。与下面那块「昨日短线情绪」是两回事：
   // 这块随盘变，那块是已收盘那一场的定稿。
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
+  // 昨日连板股的**今日**实时行情。昨日那份的「涨停%」全是 +10%（都涨停了，
+  // 没信息量），换成今天的实时涨跌才回答「昨天的高标今天怎么样」。
+  const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
   // 自动刷新开关：**默认关**（别替用户决定要不要一直打请求），选择记在本地
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
@@ -49,12 +53,22 @@ export function DailyReview() {
   const [emoDone, setEmoDone] = useState(false);
   const [toDone, setToDone] = useState(false);
 
+  /** 拉这批代码的实时行情（昨日连板股用）。空名单直接返回，别打空请求。
+   *  ⚠️ 必须定义在 `loadLive` **之前**：`const` 箭头函数没有提升，
+   *  写在后面 `loadLive()` 首次调用就会 ReferenceError（TDZ）。 */
+  const refreshLianban = (codes: string[]) => {
+    if (!codes.length) return;
+    api.quote(codes.join(",")).then(setLianbanQuotes).catch(() => {});
+  };
+
   // 轻量实时组：全是腾讯批量行情，一次一个请求，5 秒一刷不吃力
   const loadLive = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
     api.overseas().then(setOversea).catch(() => {});
     api.marketSession().then(setSession).catch(() => {});
     api.liveEmotion().then(setLiveEmo).catch(() => {});
+    // 连板股名单来自「昨日」那份，这里只刷它们的实时价
+    refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code));
   };
 
   // 重量组：板块资金走 akshare + JS 引擎（90 个行业）、成交额榜走东财 clist。
@@ -89,6 +103,11 @@ export function DailyReview() {
     loadIndices();
     refreshWatch(loadWatch());
   }, []);
+
+  // 连板股名单是异步来的，首次 loadLive 时它还没回来 —— 名单一到补拉一次
+  useEffect(() => {
+    refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code));
+  }, [emotion?.date, emotion?.lianban_stocks?.length]);
 
   // ⭐ 自动刷新。三条不能写错的地方：
   //  ① **交易时段用后端给的 `session.phase` 判断**，不要用 `new Date().getHours()`
@@ -138,8 +157,13 @@ export function DailyReview() {
   // 连板股「AI 深入分析」（与首板分析页共用 DeepDive 单元；结果本地存档，跨加载复用）
   const dd = useDeepDive("lianban", emotion?.date || "");
   const lianbanPrompt = (s: LianbanStock) =>
-    `今天（${emotion?.date || ""}）A 股连板股「${s.name}（${s.code}）」的客观数据：\n` +
-    `现价 ${s.price} 元，今日涨停 +${s.pct}%，已连续涨停 ${s.boards} 天（${s.boards} 连板），` +
+    `${emotion?.date || ""}（已收盘）A 股连板股「${s.name}（${s.code}）」的客观数据：\n` +
+    `该日收盘 ${s.price} 元、涨停 +${s.pct}%，已连续涨停 ${s.boards} 天（${s.boards} 连板），` +
+    // 表格里那两列是**今日实时**，prompt 也得给，否则模型只看到昨收、
+    // 会把"昨天的价"当成"现在的价"来讲
+    (finite(lianbanQuotes[s.code]?.change_pct) !== null
+      ? `今日最新 ${lianbanQuotes[s.code].price} 元（${lianbanQuotes[s.code].change_pct > 0 ? "+" : ""}${lianbanQuotes[s.code].change_pct}%，实时、非收盘），`
+      : "") +
     `成交额 ${yi(s.amount)}，流通市值 ${yi(s.float_cap)}，所属概念/行业 ${s.industry || "未知"}，` +
     `涨停原因题材：${s.reason || "（暂缺，需要自查）"}。\n\n` +
     "请深入分析这只股票本轮连板的驱动：\n" +
@@ -510,7 +534,7 @@ export function DailyReview() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                        {["名称", "连板", "现价", "涨停%", "成交额", "流通市值", "涨停原因", "概念", ""].map((h) => (
+                        {["名称", "连板", "现价（实时）", "今日涨跌（实时）", "昨日成交额", "流通市值", "涨停原因", "概念", ""].map((h) => (
                           <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                         ))}
                       </tr>
@@ -521,8 +545,19 @@ export function DailyReview() {
                           <tr className="border-b border-border/30">
                             <td className="px-2 py-2"><span className="font-medium">{s.name}</span> <span className="text-xs text-muted-foreground/50">{s.code}</span></td>
                             <td className="whitespace-nowrap px-2 py-2 font-mono font-bold text-primary">{s.boards} 板</td>
-                            <td className="px-2 py-2 font-mono">{s.price}</td>
-                            <td className="px-2 py-2 font-mono text-danger">+{s.pct}%</td>
+                            <td className="px-2 py-2 font-mono">
+                              {lianbanQuotes[s.code]?.price ?? (
+                                <span className="text-muted-foreground/50" title="实时行情未取到，显示昨收">
+                                  {s.price}
+                                </span>
+                              )}
+                            </td>
+                            <td className={cn("px-2 py-2 font-mono",
+                                              pctColor(finite(lianbanQuotes[s.code]?.change_pct)))}>
+                              {finite(lianbanQuotes[s.code]?.change_pct) !== null
+                                ? `${lianbanQuotes[s.code].change_pct > 0 ? "+" : ""}${lianbanQuotes[s.code].change_pct}%`
+                                : <span className="text-muted-foreground/50" title="实时行情未取到">—</span>}
+                            </td>
                             <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.amount)}</td>
                             <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.float_cap)}</td>
                             <td className="max-w-56 px-2 py-2 text-xs">
