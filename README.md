@@ -1,3 +1,5 @@
+<p align="center"><b>简体中文</b> | <a href="README_en.md">English</a></p>
+
 <h1 align="center">Vibe-Astock</h1>
 
 <p align="center">
@@ -9,7 +11,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/tests-330%20passing-brightgreen.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-341%20passing-brightgreen.svg" alt="Tests">
   <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
 </p>
 
@@ -228,7 +230,7 @@ IWENCAI_API_KEY=你的key
 .venv/bin/python -m pytest -q
 ```
 
-330 个用例，覆盖指标计算、口径边界与降级路径 —— 重点在那些**错了也看不出来**的地方：
+341 个用例，覆盖指标计算、口径边界与降级路径 —— 重点在那些**错了也看不出来**的地方：
 界面照常渲染、数字看着合理，但结论是错的。
 
 ---
