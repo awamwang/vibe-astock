@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Flame, Loader2, Sparkles, AlertCircle, X } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { Caliber } from "@/components/ui/Caliber";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { api, type FirstBoardData, type FirstBoardStock } from "@/lib/api";
@@ -72,6 +73,13 @@ export function FirstBoard() {
       <GlassCard>
         <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold">
           <Flame className="h-4 w-4 text-primary" /> 首板名单
+          <Caliber text={
+            "「炸板」是当天开板过几次，0 就是全天没开过板 —— 这张表里的票**最终都封住了涨停**，\n" +
+            "所以炸板次数说的是过程有多难看，不是最后有没有封住。\n" +
+            "名单按首次封板时间从早到晚排。\n" +
+            "「行业」经常只有四个字（像「互联网电」「自动化设」）——是上游把名字截到四字，\n" +
+            "不是这里显示不全；怕猜错所以不替它补全称。"
+          } />
           <span className="text-xs font-normal text-muted-foreground">
             按首次封板时间排序（早封在前）· 客观公开榜单，非推荐 / 非预测
           </span>

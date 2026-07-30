@@ -3,6 +3,7 @@ import { pctColor } from "@/lib/colors";
 import { Sparkles, Loader2, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { Caliber } from "@/components/ui/Caliber";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { finite } from "@/lib/agent";
@@ -227,6 +228,10 @@ export function DailyReview() {
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h3 className="text-sm font-semibold text-muted-foreground">大盘指数</h3>
+          <Caliber text={
+            "涨跌幅对比前一交易日收盘。\n" +
+        "「实时」是延时行情，页面上没标截至几点。"
+          } />
           {session && (
             <span className={cn("text-[11px]", session.is_today ? "text-muted-foreground/50" : "text-warning")}>
               {session.label}
@@ -281,6 +286,10 @@ export function DailyReview() {
           <>
             <div className="mb-3 flex flex-wrap items-baseline gap-2">
               <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Globe className="h-4 w-4" /> 隔夜外围</h3>
+              <Caliber text={
+                "美股港股的涨跌幅都是对比它们各自的前一交易日收盘。\n" +
+            "港股在北京时间白天可能正在交易，所以会标「盘中」——那是抓取那一刻的延时行情，没标具体几点。"
+              } />
               <span className="text-[11px] text-muted-foreground/50">A 股常看美股 / 港股脸色</span>
               {/* 标签由后端给（含盘前/盘中/收盘）—— 前端别自己拼"收盘"，
                   港股在北京白天可能正在交易，那时候标"收盘"就是错的 */}
@@ -371,6 +380,14 @@ export function DailyReview() {
       {/* 4. 市场情绪 */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Gauge className="h-4 w-4" /> 市场情绪</h3>
+        <Caliber text={
+          "涨停 / 真实涨停 / 跌停 / 真实跌停 / 活跃度这几个数取自乐咕乐股，不是我们算的。\n" +
+          "「真实」与普通涨跌停的差额由它自己的口径决定，具体算法未公开。\n" +
+          "活跃度同样是它的算法，**不能按上涨家数占比来理解**（今天 1786/5197 = 34.4%，它给的是 34.33%）。\n" +
+          "大盘宽度按涨跌家数机械分档：上涨不足 600 家为冰点，其余看 上涨÷下跌 的比值\n" +
+          "（<0.7 偏弱 / 0.7-1.2 中性 / 1.2-2.5 偏强 / ≥2.5 普涨）。\n" +
+          "题材投机只按真实涨停家数分档：<30 冰点 / 30-59 普通 / 60-99 活跃 / ≥100 亢奋。"
+        } />
         {sentiment?.date && <span className="text-[11px] text-muted-foreground/50">{sentiment.date}</span>}
       </div>
       <GlassCard className="mb-6">
@@ -408,6 +425,11 @@ export function DailyReview() {
           <div className="mb-3 flex flex-wrap items-baseline gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
               <Flame className="h-4 w-4" /> 今日实时打板情绪
+              <Caliber text={
+                "封板率 = 最终封住家数 ÷ 摸板家数；炸板率 = 炸板未回封家数 ÷ 摸板家数。\n" +
+                "摸板家数 = 涨停 + 炸板，**按家数算，不按炸板次数算**。\n" +
+                "最高连板只给板数，具体是哪只票看下面那张连板股表。"
+              } />
             </h3>
             {liveEmo.available ? (
               <span className="text-[11px] text-warning">
@@ -470,6 +492,11 @@ export function DailyReview() {
       {/* 4b. 短线情绪（连板梯队 / 打板情绪，聚合口径零个股名） */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Flame className="h-4 w-4" /> 昨日短线情绪</h3>
+        <Caliber text={
+          "封板率 / 炸板率与上面那张实时卡同一个算法：分母是摸板家数（涨停 + 炸板），按家数不按次数。\n" +
+          "表里的「行业 / 概念」经常只有四个字（像「互联网电」「汽车零部」）——是上游把名字截到四字，\n" +
+          "不是这里显示不全；怕猜错所以不替它补全称。"
+        } />
         <span className="text-[11px] text-muted-foreground/50">已收盘那一场的定稿 · 连板股 · 客观公开榜单</span>
         {/* 这块锚在**已收盘那一场**（复盘口径），不跟上面的实时行情一起刷 ——
             不标出来会和上面的实时块混在一起，让人以为它也在跳 */}
@@ -597,6 +624,11 @@ export function DailyReview() {
       {}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><BarChart3 className="h-4 w-4" /> 全市场成交额 TOP20</h3>
+        <Caliber text={
+          "沪深京 A 股按当日累计成交额从大到小排。\n" +
+          "盘中看到的成交额是「到刷新那一刻为止」的累计值，不是收盘值；总市值按当前价算。\n" +
+          "名字前面带 C 的是上市不满一年的次新股标记，不是名字的一部分。"
+        } />
         <span className="text-[11px] text-muted-foreground/50">客观公开榜单，非推荐 / 非预测 / 不构成投资建议</span>
         {turnover?.updated && <span className="ml-auto text-[11px] text-muted-foreground/50">更新于 {turnover.updated}</span>}
       </div>
@@ -636,6 +668,11 @@ export function DailyReview() {
       {/* 5. 板块资金趋势榜（行业） */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><TrendingUp className="h-4 w-4" /> 板块资金趋势榜</h3>
+        <Caliber text={
+          "净流入 / 流入 / 流出取自同花顺行业资金流的**盘中即时值**，单位亿元，净流入 = 流入 − 流出。\n" +
+          "⚠️ 那边没说明这是主力资金还是全部成交资金，所以**不能当作主力净流入**来读。\n" +
+          "涨跌% 是行业整体涨幅；成分股数是这个行业的公司总数，不是上涨家数、也不是涨停家数。"
+        } />
         <span className="text-[11px] text-muted-foreground/50">行业 · 按今日净流入排序</span>
       </div>
       <GlassCard className="mb-6">
@@ -671,6 +708,11 @@ export function DailyReview() {
       {/* 6. 资金轮动 */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><ArrowDownUp className="h-4 w-4" /> 资金轮动</h3>
+        <Caliber text={
+          "就是上面那张榜的两头：流入榜只放净流入为正的、流出榜只放为负的，各取前六。\n" +
+          "某一边不足六个就只列够格的那几个 —— 普跌日往往只有两三个行业真净流入。\n" +
+          "口径同上：同花顺行业资金流盘中即时值，不能当主力净流入读。"
+        } />
         <span className="text-[11px] text-muted-foreground/50">板块级净流入 / 流出</span>
       </div>
       <div className="mb-2 grid gap-4 md:grid-cols-2">
