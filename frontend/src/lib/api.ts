@@ -316,8 +316,10 @@ export interface LiveEmotion {
   seal_rate?: number | null;
   break_rate?: number | null;
   promotion_rate?: number | null;
-  /** 晋级率的分母：昨日涨停家数 */
+  /** 晋级率的分母：上一场的涨停家数 */
   promotion_base?: number | null;
+  /** 分母是哪一场。两张卡都叫「晋级率」，而各自的「昨」不是同一天，所以把日期给出来写死 */
+  promotion_base_date?: string | null;
 }
 
 export const api = {

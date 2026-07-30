@@ -90,7 +90,7 @@ export function FirstBoard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "首封", "炸板", "现价", "涨停%", "成交额", "流通市值", "涨停原因", "行业", ""].map((h) => (
+                  {["名称", "首封", "炸板", "现价", "当日涨幅", "成交额", "流通市值", "涨停原因", "行业", ""].map((h) => (
                     <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                   ))}
                 </tr>

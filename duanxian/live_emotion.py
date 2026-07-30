@@ -132,4 +132,8 @@ def snapshot() -> dict:
         "break_rate": _rate(zb_n, tried) if (tried and zb_n is not None) else None,
         "promotion_rate": promo,
         "promotion_base": promo_base,
+        # 分母是哪一场 —— 界面上两张卡都叫「晋级率」，如果只写"昨"，
+        # 实时那张的"昨"是最近已收盘那场、定稿那张的"昨"是它的前一天，
+        # 同一个字指两个不同的日子。把日期给出去，让界面直接写死。
+        "promotion_base_date": prev_day,
     }

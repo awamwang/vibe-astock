@@ -445,8 +445,8 @@ export function DailyReview() {
                   {
                     k: "晋级率", v: liveEmo.promotion_rate, up: true,
                     sub: liveEmo.promotion_base != null
-                      ? `昨涨停 ${liveEmo.promotion_base} 家，今又封住`
-                      : "昨涨停今又停",
+                      ? `${liveEmo.promotion_base_date || "上一场"} 涨停 ${liveEmo.promotion_base} 家，今天又封住`
+                      : "上一场涨停的票，今天又封住",
                   },
                   { k: "炸板家数", v: null as number | null, raw: liveEmo.zb_count, sub: "炸板未回封", up: false },
                 ].map((c) => (
@@ -475,7 +475,7 @@ export function DailyReview() {
             不标出来会和上面的实时块混在一起，让人以为它也在跳 */}
         {emotion?.date && (
           <span className="ml-auto text-[11px] text-muted-foreground/50">
-            {emotion.date} 收盘 · 不随实时刷新
+            {emotion.date} 收盘定稿 · 只有表格里标（实时）的两列随盘刷新
           </span>
         )}
       </div>
@@ -503,7 +503,8 @@ export function DailyReview() {
               {[
                 { k: "封板率", v: emotion.seal_rate, hint: "封住 / 尝试涨停", strong: true },
                 { k: "炸板率", v: emotion.break_rate, hint: "炸板 / 尝试涨停", strong: false },
-                { k: "晋级率", v: emotion.promotion_rate, hint: "昨涨停今又停", strong: true },
+                { k: "晋级率", v: emotion.promotion_rate,
+                  hint: `前一交易日涨停的票，${emotion.date} 又封住`, strong: true },
               ].map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2.5 text-center">
                   <p className="text-[11px] text-muted-foreground">{c.k}</p>
@@ -645,7 +646,7 @@ export function DailyReview() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["行业", "涨跌%", "今日净流入", "流入", "流出", "家数"].map((h) => (
+                  {["行业", "涨跌%", "今日净流入", "流入(亿)", "流出(亿)", "成分股数"].map((h) => (
                     <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -674,13 +675,24 @@ export function DailyReview() {
       </div>
       <div className="mb-2 grid gap-4 md:grid-cols-2">
         {[
-          { title: "流入 Top", icon: TrendingUp, color: "text-danger", rows: sectors.slice(0, 6) },
-          { title: "流出 Top", icon: TrendingDown, color: "text-success", rows: [...sectors].slice(-6).reverse() },
+          {
+            title: "流入 Top", icon: TrendingUp, color: "text-danger",
+            rows: sectors.filter((s) => s.net > 0).slice(0, 6),
+            empty: "今日没有行业净流入",
+          },
+          {
+            title: "流出 Top", icon: TrendingDown, color: "text-success",
+            rows: sectors.filter((s) => s.net < 0)
+              .sort((a, b) => a.net - b.net).slice(0, 6),
+            empty: "今日没有行业净流出",
+          },
         ].map((col) => (
           <GlassCard key={col.title}>
             <h4 className={cn("mb-3 flex items-center gap-1.5 text-sm font-semibold", col.color)}><col.icon className="h-4 w-4" /> {col.title}</h4>
             {col.rows.length === 0 ? (
-              pending(ovDone)
+              ovDone && sectors.length > 0
+                ? <p className="py-4 text-center text-sm text-muted-foreground/60">{col.empty}</p>
+                : pending(ovDone)
             ) : (
               <div className="space-y-1.5">
                 {col.rows.map((s, i) => (
