@@ -3087,6 +3087,61 @@ class TestReflectionRefreshedOnRead:
 
 
 @pytest.mark.unit
+class TestAutoRefreshIsSafe:
+    """自动刷新的三条铁律。写错都不会报错，只表现为「频率不对 / 白打请求」。"""
+
+    @staticmethod
+    def _src():
+        import pathlib
+
+        return pathlib.Path("frontend/src/pages/DailyReview.tsx").read_text(encoding="utf-8")
+
+    def test_trading_hours_come_from_backend_not_local_clock(self):
+        """时段判断不能用本机时钟 —— 人在海外会盘中不刷、半夜狂刷。
+
+        ⚠️ 必须**排除注释行**再查：源码里有一句"不要用 `new Date().getHours()`"
+        的说明，直接对全文断言会被自己的注释命中（守卫撞上它要防的那句话）。
+        """
+        src = self._src()
+        assert 'session?.phase === "盘中"' in src, "要用后端给的 phase 判断"
+        code = "\n".join(l for l in src.splitlines()
+                         if not l.lstrip().startswith(("//", "*", "/*")))
+        for bad in ("getHours()", "getMinutes()"):
+            assert bad not in code, f"不许用本机时钟判交易时段（{bad}）"
+
+    def test_polling_cleans_up_both_timers(self):
+        """cleanup 少清一个，旧定时器会跟新的并行 → 实际频率翻倍。"""
+        src = self._src()
+        i = src.index("const liveTimer = setInterval")
+        block = src[i:i + 700]
+        assert "clearInterval(liveTimer)" in block and "clearInterval(heavyTimer)" in block, \
+            "两个定时器都要在 cleanup 里清掉"
+
+    def test_heavy_endpoints_are_not_on_the_fast_timer(self):
+        """板块资金走 akshare+JS 引擎、成交额榜走东财 clist —— 5 秒刷会撞限流。"""
+        src = self._src()
+        i = src.index("const loadLive = () =>")
+        live = src[i:src.index("const loadHeavy")]
+        for heavy in ("marketOverview", "turnoverTop", "globalIndices"):
+            assert heavy not in live, f"{heavy} 不该在 5 秒那一组里"
+        assert "api.indices()" in live and "api.overseas()" in live
+
+    def test_settled_block_is_not_polled_at_all(self):
+        """短线情绪锚在已收盘那一场，刷它纯属白打请求。"""
+        src = self._src()
+        i = src.index("const liveTimer = setInterval")
+        block = src[i:i + 700]
+        assert "api.emotion" not in block and "loadSettled" not in block
+
+    def test_switch_defaults_to_off(self):
+        """别替用户决定要不要一直打请求。"""
+        src = self._src()
+        i = src.index("const [autoRefresh")
+        assert 'localStorage.getItem(AUTO_KEY) === "1"' in src[i:i + 200], \
+            "默认关（只有本地存过 1 才是开）"
+
+
+@pytest.mark.unit
 class TestReviewOnlyRunsOnSettledSessions:
     """复盘只能跑**已经收盘**的那一场，不做当日动态分析。
 

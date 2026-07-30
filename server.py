@@ -220,6 +220,45 @@ def _add_vr_to_path() -> None:
 
 
 _VR_ROUTES = _merge_vr_routes()
+def _pin_pool_to_settled_session() -> int:
+    """把「涨停池」的可见范围钉在**已经收盘**的交易日上。返回 1 = 已生效。
+
+    `vr/` 的首板分析、短线情绪都是"从今天往前回溯，第一天有池子就用它"。
+    东财在**盘中**就发布当日池子，于是 09:35 打开看到的是「今天才 18 家涨停」
+    这种半成品，而复盘看板是上一场（07-29 的 81 家）—— 同一个产品两个日期，
+    而且每刷一次数字都变，最容易让人整块不信。
+
+    复盘系统不做当日动态分析。所以这里不去改 `vr/`（要保持能同步上游），
+    而是给它的取数口包一层：**未收盘的交易日，涨停池视为"还没有"**，
+    它的回溯逻辑就自然落到上一场，一行都不用动它。
+
+    影响面只在 `vr/` 那几个走涨停池的块；复盘链路走的是
+    `duanxian/fetchers.py`（akshare），不受这层影响。
+    """
+    live = sys.modules.get("astock")
+    if live is None or not hasattr(live, "em_zt_topic_pool"):
+        _alert("⚠️ 没能钉住涨停池日期：找不到已加载的 vr astock —— "
+               "首板/短线情绪可能显示盘中半成品")
+        return 0
+    if getattr(live, "_pool_pinned", False):
+        return 1                                   # 幂等：重复调用无害
+
+    orig = live.em_zt_topic_pool
+
+    def guarded(kind, date, sort, *a, **kw):
+        ymd = str(date)
+        if len(ymd) == 8 and ymd.isdigit():
+            iso = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"
+            if not trade_calendar.is_settled(iso):
+                return []                          # 还没收盘 → 当作还没有池子
+        return orig(kind, date, sort, *a, **kw)
+
+    live.em_zt_topic_pool = guarded
+    live._pool_pinned = True
+    return 1
+
+
+_POOL_PINNED = _pin_pool_to_settled_session()
 _guard_vr_userdata()
 _DISABLED_CLIS = _disable_unsafe_clis()
 

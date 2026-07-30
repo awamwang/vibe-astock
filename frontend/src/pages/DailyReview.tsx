@@ -13,6 +13,10 @@ import { cn } from "@/lib/utils";
 // A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致，
 // A 股惯例：红涨绿跌。与国际绿涨惯例相反，是有意选择，全站必须一致，勿改。
 
+const AUTO_KEY = "vibe-astock-auto-refresh";
+const LIVE_MS = 5_000;      // 轻量行情：腾讯批量，5 秒
+const HEAVY_MS = 60_000;    // 板块资金 / 成交额榜：东财+akshare，60 秒
+
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
 
@@ -28,6 +32,9 @@ export function DailyReview() {
   // 隔夜外围：指数 + 七姐妹。走自己的接口是为了拿到**行情所属交易日**
   // （vr 的 /api/global/indices 不回时间，界面就只能按本机今天贴日期）
   const [oversea, setOversea] = useState<OverseasSnapshot | null>(null);
+  // 自动刷新开关：**默认关**（别替用户决定要不要一直打请求），选择记在本地
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(
+    () => localStorage.getItem(AUTO_KEY) === "1");
   // 关注股票（自选，存本地）
   const [watchCodes, setWatchCodes] = useState<string[]>(loadWatch);
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
@@ -39,15 +46,27 @@ export function DailyReview() {
   const [emoDone, setEmoDone] = useState(false);
   const [toDone, setToDone] = useState(false);
 
-  const loadIndices = () => {
+  // 轻量实时组：全是腾讯批量行情，一次一个请求，5 秒一刷不吃力
+  const loadLive = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
-    api.marketSession().then(setSession).catch(() => {});
     api.overseas().then(setOversea).catch(() => {});
+    api.marketSession().then(setSession).catch(() => {});
+  };
+
+  // 重量组：板块资金走 akshare + JS 引擎（90 个行业）、成交额榜走东财 clist。
+  // **不能跟着 5 秒刷** —— 会撞限流，而且这两样本身变化慢。
+  const loadHeavy = () => {
     api.globalIndices().then(setGlobalIdx).catch(() => {});
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
-    api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
     api.turnoverTop().then(setTurnover).catch(() => {}).finally(() => setToDone(true));
   };
+
+  // 短线情绪锚在已收盘那一场，只在进页面时取一次，不参与任何轮询
+  const loadSettled = () => {
+    api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
+  };
+
+  const loadIndices = () => { loadLive(); loadHeavy(); loadSettled(); };
 
   // 数据块占位：请求没回来 = 加载中；回来了但为空 = 数据源暂不可用（别让用户干等）
   const pending = (done: boolean) => (
@@ -67,6 +86,30 @@ export function DailyReview() {
     refreshWatch(loadWatch());
   }, []);
 
+  // ⭐ 自动刷新。三条不能写错的地方：
+  //  ① **交易时段用后端给的 `session.phase` 判断**，不要用 `new Date().getHours()`
+  //     —— 那是本机时区，人在海外会盘中不刷、半夜狂刷。后端算的是北京时间。
+  //  ② 收盘 / 非交易日**不刷** —— 数字不会动，白打请求还可能撞限流。
+  //  ③ cleanup 必须把两个句柄都清掉，且**句柄只属于这一次 effect**。
+  //     共享句柄或忘了清，旧的定时器会活下来跟新的并行 → 实际频率翻倍。
+  useEffect(() => {
+    const live = session?.phase === "盘中" || session?.phase === "集合竞价";
+    if (!autoRefresh || !live) return;
+
+    const liveTimer = setInterval(() => {
+      loadLive();
+      if (watchCodes.length) refreshWatch(watchCodes);
+    }, LIVE_MS);
+    const heavyTimer = setInterval(loadHeavy, HEAVY_MS);
+    return () => { clearInterval(liveTimer); clearInterval(heavyTimer); };
+  }, [autoRefresh, session?.phase, watchCodes]);
+
+  const toggleAuto = () => {
+    const next = !autoRefresh;
+    setAutoRefresh(next);
+    localStorage.setItem(AUTO_KEY, next ? "1" : "0");
+  };
+
   const addWatch = () => {
     // 支持一次粘贴多只（逗号 / 空格分隔）；全部无效或重复则清空输入、无副作用。
     const { next, added } = addCodes(watchCodes, watchInput);
@@ -81,6 +124,8 @@ export function DailyReview() {
   };
 
   const today = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+  // 是否处在会动的时段（后端判定，避免本机时区坑）
+  const liveNow = session?.phase === "盘中" || session?.phase === "集合竞价";
 
   const dataSummary = indices.length
     ? indices.map((i) => `${i.name} ${i.price}（${i.change_pct > 0 ? "+" : ""}${i.change_pct}%）`).join("；")
@@ -121,14 +166,32 @@ export function DailyReview() {
   return (
     <div>
       <PageHeader
-        title="每日复盘"
-        subtitle={`${session?.label ?? today} · 大盘 / 情绪 / 板块资金一屏看全，交给你的 AI 做复盘`}
+        title="盘面数据"
+        subtitle={`${session?.label ?? today} · 指数 / 外围 / 板块资金一屏看全（复盘统计在「复盘看板」）`}
         actions={
-          <AskAiButton
-            context={`今日大盘数据：${dataSummary}`}
-            label="问 AI"
-            suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}
-          />
+          <div className="flex items-center gap-2">
+            {/* 开着但不在交易时段时要说清「为什么不动」——否则会被当成坏了 */}
+            <button
+              onClick={toggleAuto}
+              title={autoRefresh
+                ? `已开：指数/外围/自选每 ${LIVE_MS / 1000} 秒、板块资金与成交额榜每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
+                : "开启后在交易时段自动刷新行情"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors",
+                autoRefresh
+                  ? "bg-primary/15 text-primary hover:bg-primary/25"
+                  : "text-muted-foreground hover:text-primary",
+              )}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", autoRefresh && liveNow && "animate-spin")} />
+              {autoRefresh ? (liveNow ? `每 ${LIVE_MS / 1000} 秒自动刷新` : "自动刷新（非交易时段暂停）") : "自动刷新"}
+            </button>
+            <AskAiButton
+              context={`今日大盘数据：${dataSummary}`}
+              label="问 AI"
+              suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}
+            />
+          </div>
         }
       />
 
@@ -316,7 +379,13 @@ export function DailyReview() {
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Flame className="h-4 w-4" /> 短线情绪</h3>
         <span className="text-[11px] text-muted-foreground/50">连板股 · 打板情绪 · 客观公开榜单</span>
-        {emotion?.date && <span className="ml-auto text-[11px] text-muted-foreground/50">{emotion.date}</span>}
+        {/* 这块锚在**已收盘那一场**（复盘口径），不跟上面的实时行情一起刷 ——
+            不标出来会和上面的实时块混在一起，让人以为它也在跳 */}
+        {emotion?.date && (
+          <span className="ml-auto text-[11px] text-muted-foreground/50">
+            {emotion.date} 收盘 · 不随实时刷新
+          </span>
+        )}
       </div>
       <GlassCard className="mb-6">
         {!emotion || emotion.zt_count === undefined ? (
