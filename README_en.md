@@ -229,6 +229,47 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 > branch runs with `--disallowedTools`, which is enough for one-off questions.
 > Running the review on its own with `python main.py` does not need the second switch.
 
+<details>
+<summary><b>On Windows (the commands above are macOS / Linux)</b></summary>
+
+Two things differ on Windows: the interpreter lives at `.venv\Scripts\python`
+(not `.venv/bin/python`), and environment variables cannot be prefixed onto the
+command — set them separately first.
+
+**PowerShell** (recommended):
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# (1) With an API key: write mimo.env as above, at %USERPROFILE%\.config\mimo\mimo.env
+# (2) With a local CLI subscription:
+$env:VIBE_LLM_CLI = "claude"
+.venv\Scripts\python server.py
+```
+
+**CMD**:
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+set VIBE_LLM_CLI=claude
+.venv\Scripts\python server.py
+```
+
+For a CLI other than `claude` you still need the second switch (PowerShell:
+`$env:VIBE_ALLOW_UNSAFE_CLI = "codex"`; CMD: `set VIBE_ALLOW_UNSAFE_CLI=codex`).
+
+This assumes the CLI is already installed and logged in — typing `claude` in the
+same terminal should drop you into it. The backend only looks it up on PATH and
+reuses that session; it will not log in for you. If `claude` runs fine on its own
+but the server reports "not detected" or fails to start, please paste the full
+error into an [issue](https://github.com/simonlin1212/vibe-astock/issues) along
+with your Windows version and how the CLI was installed (npm / installer).
+
+</details>
+
 Run it:
 
 ```bash

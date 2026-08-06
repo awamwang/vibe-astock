@@ -188,6 +188,45 @@ VIBE_LLM_CLI=claude .venv/bin/python server.py
 > 塞进 prompt，注入面比复盘大得多。`claude` 分支带 `--disallowedTools`，做一次性问答够用。
 > 用 `python main.py` 独立跑复盘则不需要第二个开关。
 
+<details>
+<summary><b>Windows 用户看这里（上面的命令是 macOS / Linux 写法）</b></summary>
+
+Windows 上有两处不一样：解释器路径是 `.venv\Scripts\python`（不是 `.venv/bin/python`），
+环境变量不能写在命令前面，要先单独设。
+
+**PowerShell**（推荐）：
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# ① 用 API key：照上面写 mimo.env，路径是 %USERPROFILE%\.config\mimo\mimo.env
+# ② 用本机 CLI 订阅：
+$env:VIBE_LLM_CLI = "claude"
+.venv\Scripts\python server.py
+```
+
+**CMD**：
+
+```bat
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+set VIBE_LLM_CLI=claude
+.venv\Scripts\python server.py
+```
+
+要跑 `claude` 以外的 CLI，同样要加第二个开关（PowerShell：
+`$env:VIBE_ALLOW_UNSAFE_CLI = "codex"`；CMD：`set VIBE_ALLOW_UNSAFE_CLI=codex`）。
+
+前提是那个 CLI **已经装好并登录过**，在同一个终端里直接敲 `claude` 能进得去——
+后端只是去 PATH 里找它、复用它的登录态，不会替你登录。
+如果 `claude` 单独能跑、经 server 却报「未检测到」或起不来，
+请把完整报错贴到 [issue](https://github.com/simonlin1212/vibe-astock/issues) 里，
+注明 Windows 版本和 CLI 的安装方式（npm / 安装包），我们跟进。
+
+</details>
+
 跑起来：
 
 ```bash
