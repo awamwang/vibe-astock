@@ -242,7 +242,10 @@ command — set them separately first.
 py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 
-# (1) With an API key: write mimo.env as above, at %USERPROFILE%\.config\mimo\mimo.env
+# The frontend must be built first, or the page returns 503 (frontend/dist is gitignored)
+cd frontend; npm install; npm run build; cd ..
+
+# (1) With an API key: write mimo.env as above, at $env:USERPROFILE\.config\mimo\mimo.env
 # (2) With a local CLI subscription:
 $env:VIBE_LLM_CLI = "claude"
 .venv\Scripts\python server.py
@@ -253,6 +256,9 @@ $env:VIBE_LLM_CLI = "claude"
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+
+rem The frontend must be built first, or the page returns 503
+cd frontend && npm install && npm run build && cd ..
 
 set VIBE_LLM_CLI=claude
 .venv\Scripts\python server.py

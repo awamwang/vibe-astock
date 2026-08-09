@@ -200,7 +200,10 @@ Windows 上有两处不一样：解释器路径是 `.venv\Scripts\python`（不�
 py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 
-# ① 用 API key：照上面写 mimo.env，路径是 %USERPROFILE%\.config\mimo\mimo.env
+# 前端必须先构建，否则打开页面是 503（frontend/dist 不进 git）
+cd frontend; npm install; npm run build; cd ..
+
+# ① 用 API key：照上面写 mimo.env，路径是 $env:USERPROFILE\.config\mimo\mimo.env
 # ② 用本机 CLI 订阅：
 $env:VIBE_LLM_CLI = "claude"
 .venv\Scripts\python server.py
@@ -211,6 +214,9 @@ $env:VIBE_LLM_CLI = "claude"
 ```bat
 py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+
+rem 前端必须先构建，否则打开页面是 503
+cd frontend && npm install && npm run build && cd ..
 
 set VIBE_LLM_CLI=claude
 .venv\Scripts\python server.py
