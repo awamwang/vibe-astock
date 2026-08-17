@@ -1,9 +1,10 @@
-"""LLM 配置 —— 统一走 MiMo（OpenAI 兼容，订阅零 key，定位『量活』）。
+"""LLM 配置 —— 统一走 OpenAI 兼容端点（默认 MiMo；也可指到 DeepSeek 等）。
 
-- quick 档 = mimo-v2.5（快，跑分析师这种高频节点）
-- deep  档 = mimo-v2.5-pro（推理模型，准，跑综合裁判这种收敛节点）
+- quick 档 = MIMO_QUICK_MODEL（默认 mimo-v2.5，跑分析师等高频节点）
+- deep  档 = MIMO_MODEL（默认 mimo-v2.5-pro，跑综合裁判等收敛节点）
 
-凭据从 ~/.config/mimo/mimo.env 读取（MIMO_API_KEY / MIMO_BASE_URL / MIMO_MODEL），
+凭据从 ~/.config/mimo/mimo.env 读取
+（MIMO_API_KEY / MIMO_BASE_URL / MIMO_MODEL / MIMO_QUICK_MODEL），
 绝不硬编码 key。
 """
 
@@ -21,8 +22,11 @@ _MIMO_ENV = Path.home() / ".config" / "mimo" / "mimo.env"
 
 _CREDS: dict[str, str] | None = None
 
-# quick / deep 两档模型名。deep 优先用环境里的 MIMO_MODEL（默认 pro）。
+_CRED_KEYS = ("MIMO_API_KEY", "MIMO_BASE_URL", "MIMO_MODEL", "MIMO_QUICK_MODEL")
+
+# quick / deep 两档默认模型名（可被 mimo.env / 环境变量覆盖）。
 QUICK_MODEL = "mimo-v2.5"
+DEEP_MODEL = "mimo-v2.5-pro"
 
 
 def _ensure_mimo_loaded() -> None:
@@ -32,7 +36,7 @@ def _ensure_mimo_loaded() -> None:
         return
     creds = {}
     # ① 环境里已有就用（用户主动设的，尊重）
-    for k in ("MIMO_API_KEY", "MIMO_BASE_URL", "MIMO_MODEL"):
+    for k in _CRED_KEYS:
         v = os.environ.get(k)
         if v:
             creds[k] = v
@@ -57,7 +61,10 @@ def make_llm(deep: bool = False, temperature: float = 0.6):
     assert _CREDS is not None
     base_url = _CREDS.get("MIMO_BASE_URL") or "https://token-plan-cn.xiaomimimo.com/v1"
     api_key = _CREDS["MIMO_API_KEY"]
-    model = (_CREDS.get("MIMO_MODEL") or "mimo-v2.5-pro") if deep else QUICK_MODEL
+    if deep:
+        model = _CREDS.get("MIMO_MODEL") or DEEP_MODEL
+    else:
+        model = _CREDS.get("MIMO_QUICK_MODEL") or QUICK_MODEL
     return ChatOpenAI(
         model=model,
         base_url=base_url,
