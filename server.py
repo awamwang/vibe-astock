@@ -772,6 +772,80 @@ def api_verify_save(request: Request, date: str, body: dict = Body(...)):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+def _zt_fallback_date() -> str | None:
+    try:
+        import firstboard as _fb
+
+        return (_fb.get_first_board() or {}).get("date")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _zt_import_guard(request: Request, body: dict):
+    """写操作来源校验 + 取出粘贴文本。失败返回 JSONResponse，成功返回 str。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    text = str((body or {}).get("text") or "")
+    if not text.strip():
+        return JSONResponse({"error": "请粘贴同花顺导出的文本",
+                             "detail": "请粘贴同花顺导出的文本"}, status_code=400)
+    return text
+
+
+@app.post("/api/market/first-board/parse-reasons")
+def api_parse_zt_reasons(request: Request, body: dict = Body(...)):
+    """解析同花顺涨停池 txt，只返回预览，不写入题材串缓存。"""
+    text = _zt_import_guard(request, body)
+    if not isinstance(text, str):
+        return text
+    from duanxian.zt_reason_import import ZtReasonImportError, parse_preview
+
+    try:
+        result = parse_preview(text, fallback_date=_zt_fallback_date())
+    except ZtReasonImportError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {
+        "ok": True,
+        "date": result["date"],
+        "count": result["count"],
+        "skipped": result["skipped"],
+        "rows": result["rows"],
+    }}
+
+
+@app.post("/api/market/first-board/import-reasons")
+def api_import_zt_reasons(request: Request, body: dict = Body(...)):
+    """导入同花顺涨停池 txt，解析涨停原因并写入题材串缓存。"""
+    text = _zt_import_guard(request, body)
+    if not isinstance(text, str):
+        return text
+    from duanxian.zt_reason_import import ZtReasonImportError, import_ths_text
+
+    try:
+        result = import_ths_text(text, fallback_date=_zt_fallback_date())
+    except ZtReasonImportError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+    try:
+        import firstboard as _fb
+
+        _fb.apply_imported_reasons(result["date_ymd"], result["reasons"])
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {"data": {
+        "ok": True,
+        "date": result["date"],
+        "count": result["count"],
+        "imported": result["imported"],
+        "skipped": result["skipped"],
+    }}
+
+
 def _mount_static() -> None:
     """挂静态资源 + SPA 兜底"""
     if not os.path.isdir(_DIST):
@@ -811,5 +885,22 @@ if __name__ == "__main__":
         print(f"⚠️  VIBE_ALLOW_UNSAFE_CLI 已放开：{', '.join(sorted(_opted_in_clis()))}"
               f" —— 这些 CLI 会不经询问地读写文件、执行命令，"
               f"而问 AI 时抓来的外部新闻原文会原样进 prompt。确认你信任数据源再用。")
-    print(f"→ 打开 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    # VIBE_RELOAD=1：源码变化后自动重启。必须传 import 字符串，传 app 对象时
+    # uvicorn 会静默关掉 reload。只盯仓库里的 .py，避开 frontend / tests。
+    reload = os.environ.get("VIBE_RELOAD", "").strip().lower() in ("1", "true", "yes")
+    if reload:
+        print("↻ 开发模式：Python 源码变化后自动重启")
+        print(f"→ 后端 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
+        print("→ 改前端请打开 Vite Watch（默认 http://127.0.0.1:5910 ）")
+        uvicorn.run(
+            "server:app",
+            host="127.0.0.1",
+            port=port,
+            reload=True,
+            reload_dirs=[_HERE],
+            reload_includes=["*.py"],
+            reload_excludes=["frontend/*", "tests/*", "scripts/*"],
+        )
+    else:
+        print(f"→ 打开 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
+        uvicorn.run(app, host="127.0.0.1", port=port)

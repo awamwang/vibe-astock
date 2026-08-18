@@ -268,7 +268,9 @@ def get_macro_sector_data(date: str) -> str:
 # ============ ③ 题材热点（涨停原因题材串）============
 def get_theme_reasons(date: str) -> str:
     try:
-        reasons, err = dr.fetch_zt_reasons(_ymd(date))
+        from . import theme_tree as tt
+
+        reasons, err = tt.reasons_of(date)
         if not reasons:
             return _degrade_msg("题材涨停原因", date, f"涨停原因题材串未取到：{err}")
         tags = Counter()

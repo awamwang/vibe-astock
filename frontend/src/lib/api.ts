@@ -189,6 +189,14 @@ export interface FirstBoardData {
   stocks: FirstBoardStock[];
 }
 
+export interface ZtReasonPreviewRow {
+  code: string; name: string; reason: string;
+}
+export interface ZtReasonPreview {
+  ok: boolean; date: string; count: number; skipped: number;
+  rows: ZtReasonPreviewRow[];
+}
+
 // 全市场成交额榜（客观公开榜单）
 export interface TurnoverStock {
   code: string; name: string;
@@ -333,6 +341,11 @@ export const api = {
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),
   firstBoard: () => get<FirstBoardData>("/market/first-board"),
+  parseZtReasons: (text: string) =>
+    request<ZtReasonPreview>("/market/first-board/parse-reasons", "POST", { text }),
+  importZtReasons: (text: string) =>
+    request<{ ok: boolean; date: string; count: number; imported: number; skipped: number }>(
+      "/market/first-board/import-reasons", "POST", { text }),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),

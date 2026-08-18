@@ -26,7 +26,8 @@
 ## 数据与降级
 
 题材串来自问财（`fetchers.fetch_zt_reasons`），按交易日查，实测能回溯到一年前。
-每天复盘时仍**落盘囤起来**——省一次请求、也让没配 `IWENCAI_API_KEY` 的时候
+也可以从首板分析页导入同花顺涨停池 txt（不配 `IWENCAI_API_KEY` 时走这条）。
+每天复盘时仍**落盘囤起来**——省一次请求、也让没配密钥 / 改用导入的时候
 历史场次照样看得到。缓存没有就现查，查回来的东西由 `fetch_zt_reasons`
 用返回列名里的日期核对过场次，不会把别的交易日的题材塞进来。
 
@@ -63,17 +64,51 @@ def _is_generic(tag: str) -> bool:
     return tag in _GENERIC or tag.endswith(_GENERIC_SUFFIX)
 
 
+def _iso_date(date: str) -> str:
+    d = str(date).replace("/", "-").strip()
+    if len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
+
+
+def load_cached_reasons(date: str) -> tuple[dict[str, str], Optional[str]]:
+    """只读落盘缓存，不打问财。没有或损坏返回空。"""
+    date = _iso_date(date)
+    path = os.path.join(_CACHE_DIR, f"{date}.json")
+    if not os.path.isfile(path):
+        return {}, None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            env = json.load(fh)
+        if env.get("schema") == _SCHEMA and env.get("date") == date:
+            reasons = env.get("reasons") or {}
+            return {str(k).zfill(6): str(v) for k, v in reasons.items() if v}, None
+    except Exception:  # noqa: BLE001
+        return {}, None
+    return {}, None
+
+
+def save_reasons(date: str, reasons: dict[str, str], source: str = "import") -> str:
+    """把代码→题材串写入题材树缓存，返回落盘路径。"""
+    date = _iso_date(date)
+    path = os.path.join(_CACHE_DIR, f"{date}.json")
+    payload = {
+        "schema": _SCHEMA,
+        "date": date,
+        "reasons": {str(k).zfill(6): str(v) for k, v in (reasons or {}).items() if v},
+        "source": source,
+    }
+    if not atomic_write_json(path, payload):
+        raise OSError(f"写入题材串缓存失败：{path}")
+    return path
+
+
 def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
     """某日的 代码→题材串。先读缓存，没有就按那一天现查并落盘。"""
-    path = os.path.join(_CACHE_DIR, f"{date}.json")
-    if os.path.isfile(path):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                env = json.load(fh)
-            if env.get("schema") == _SCHEMA and env.get("date") == date:
-                return env.get("reasons") or {}, None
-        except Exception:  # noqa: BLE001
-            pass
+    date = _iso_date(date)
+    cached, _err = load_cached_reasons(date)
+    if cached:
+        return cached, None
 
     try:
         from . import fetchers as dr
@@ -85,7 +120,10 @@ def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
         return {}, err or "问财未返回题材串"
     # 只有定稿的日子才落盘（同 emotion_metrics 的判据）
     if trade_calendar.is_settled(date):
-        atomic_write_json(path, {"schema": _SCHEMA, "date": date, "reasons": reasons})
+        try:
+            save_reasons(date, reasons, source="iwencai")
+        except OSError:
+            pass
     return reasons, None
 
 

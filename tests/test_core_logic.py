@@ -4013,10 +4013,17 @@ class TestPreflightSeesTheRealFailureStrings:
 
         monkeypatch.setattr(tc, "is_settled", lambda d: True)
 
-    def test_theme_failure_is_visible_to_the_gate(self, monkeypatch):
+    @staticmethod
+    def _no_reason_cache(monkeypatch, tmp_path):
+        from duanxian import theme_tree as tt
+
+        monkeypatch.setattr(tt, "_CACHE_DIR", str(tmp_path))
+
+    def test_theme_failure_is_visible_to_the_gate(self, monkeypatch, tmp_path):
         from duanxian import data, fetchers, preflight
 
         self._settled(monkeypatch)
+        self._no_reason_cache(monkeypatch, tmp_path)
         monkeypatch.setattr(fetchers, "fetch_zt_reasons",
                             lambda d: ({}, "缺 IWENCAI_API_KEY (未 source .env)"))
         txt = data.get_theme_reasons("2026-07-29")
@@ -4030,11 +4037,12 @@ class TestPreflightSeesTheRealFailureStrings:
         txt = data.get_dragon_tiger_data("2026-07-29")
         assert preflight._looks_degraded(txt), f"体检看不见龙虎榜取数失败：{txt!r}"
 
-    def test_gate_turns_them_into_warnings(self, monkeypatch):
+    def test_gate_turns_them_into_warnings(self, monkeypatch, tmp_path):
         """两路都真失败时，闸要如实计进 warnings —— 而不是 ok 且 warnings 为空。"""
         from duanxian import data, fetchers, preflight
 
         self._settled(monkeypatch)
+        self._no_reason_cache(monkeypatch, tmp_path)
         # 核心三路给正常内容（它们不是这条的主题）
         for name in ("get_sentiment_data", "get_emotion_metrics", "get_leader_data", "get_capital_data"):
             ret = ("正常内容", {}) if name == "get_emotion_metrics" else "正常内容"
@@ -4431,3 +4439,125 @@ class TestVerificationItemsCarryBaseline:
         assert rs._with_baselines(None) is None
         assert rs._with_baselines({"focus": None}) == {"focus": None}
         assert rs._with_baselines({}) == {}
+
+
+@pytest.mark.unit
+class TestThsZtReasonImport:
+    """同花顺涨停池 txt → 题材串。日期必须认导出场次，不能用「涨停原因类别」上的模板日期。"""
+
+    HEADER = "\t".join([
+        ".", "代码", "名称", ".", "涨幅%", "现价",
+        "涨停原因类别[20250324]", "连续涨停天数",
+        "首次涨停时间[20260818]", "最终涨停时间[20260818]",
+        "封单额", "流通市值", "概念龙头[20260818]", "所属概念",
+    ])
+    ROW = "\t".join([
+        "260.00", "SH600536", "中国软件", "", "+9.99", "34.45",
+        "麒麟OS+信创+央企", "1",
+        "14:06:09", "14:09:09",
+        "1.91亿", "290.6亿", "--",
+        "【华为欧拉;电子身份证;中国AI 50;信创】",
+    ])
+
+    def test_parses_code_reason_and_session_date(self):
+        from duanxian.zt_reason_import import parse_ths_limit_up_txt
+
+        parsed = parse_ths_limit_up_txt(self.HEADER + "\n" + self.ROW + "\n")
+        assert parsed["date"] == "2026-08-18", parsed["date"]
+        assert parsed["reasons"] == {"600536": "麒麟OS+信创+央企"}
+        assert parsed["rows"][0]["name"] == "中国软件"
+
+    def test_space_separated_rows_still_map_by_header(self):
+        from duanxian.zt_reason_import import parse_ths_limit_up_txt
+
+        header = "代码    名称    涨停原因类别[20260818]    首次涨停时间[20260818]"
+        row = "SZ000001    平安银行    银行+国企改革    09:30:00"
+        parsed = parse_ths_limit_up_txt(header + "\n" + row)
+        assert parsed["reasons"]["000001"] == "银行+国企改革"
+        assert parsed["date"] == "2026-08-18"
+
+    def test_falls_back_when_reason_column_date_is_stale(self):
+        from duanxian.zt_reason_import import parse_ths_limit_up_txt
+
+        text = "代码\t名称\t涨停原因类别[20250324]\nSH600000\t浦发银行\t银行"
+        parsed = parse_ths_limit_up_txt(text, fallback_date="20260818")
+        assert parsed["date"] == "2026-08-18"
+
+    def test_empty_or_headerless_raises(self):
+        from duanxian.zt_reason_import import ZtReasonImportError, parse_ths_limit_up_txt
+
+        with pytest.raises(ZtReasonImportError):
+            parse_ths_limit_up_txt("")
+        with pytest.raises(ZtReasonImportError):
+            parse_ths_limit_up_txt("SH600000 浦发银行 银行")
+
+    def test_writes_theme_tree_cache_used_by_reasons_of(self, tmp_path, monkeypatch):
+        from duanxian import theme_tree as tt
+        from duanxian import zt_reason_import as zi
+        import duanxian.fetchers as dr
+
+        monkeypatch.setattr(tt, "_CACHE_DIR", str(tmp_path / "zt"))
+        monkeypatch.setattr(zi, "_IMPORT_DIR", str(tmp_path / "imp"))
+        result = zi.import_ths_text(self.HEADER + "\n" + self.ROW + "\n")
+        assert result["imported"] == 1
+        assert (tmp_path / "imp" / "2026-08-18.json").is_file()
+        assert (tmp_path / "imp" / "2026-08-18.txt").is_file()
+
+        def _boom(ymd):
+            raise AssertionError("有导入缓存还去打问财")
+
+        monkeypatch.setattr(dr, "fetch_zt_reasons", _boom)
+        reasons, err = tt.reasons_of("2026-08-18")
+        assert reasons == {"600536": "麒麟OS+信创+央企"}, (reasons, err)
+        assert err is None
+
+    def test_double_tab_export_skips_empty_reason_rows(self):
+        """同花顺原文是列间双 Tab、个股行又夹单 Tab；无涨停原因（--）的行必须丢掉。"""
+        from duanxian.zt_reason_import import parse_ths_limit_up_txt
+
+        header = ".\t\t代码\t\t名称\t\t.\t\t涨幅%\t\t现价\t\t涨停原因类别[20250324]\t\t连续涨停天数\t\t首次涨停时间[20260818]\t\t"
+        software = "260.00\t\tSH600536\t中国软件\t\t\t+9.99\t\t34.45\t\t麒麟OS+信创+央企\t1\t\t14:06:09\t14:09:09\t"
+        marker = "260.00\t\tSZ000852\t石化机械\t1\t\t+10.08\t\t5.79\t\t油气技术装备+氢能+央企\t1\t\t09:48:15\t"
+        airport = "260.00\t\tSH600004\t白云机场\t\t\t-0.40\t\t7.42\t\t--\t\t0\t\t--\t\t--\t\t--\t\t"
+        again = header
+        parsed = parse_ths_limit_up_txt("\n".join([header, software, marker, again, airport]))
+        assert parsed["date"] == "2026-08-18"
+        assert parsed["reasons"]["600536"] == "麒麟OS+信创+央企"
+        assert parsed["reasons"]["000852"] == "油气技术装备+氢能+央企"
+        assert "600004" not in parsed["reasons"]
+        assert parsed["skipped"] >= 1
+        names = {r["code"]: r["name"] for r in parsed["rows"]}
+        assert names["600536"] == "中国软件"
+
+    def test_import_endpoint_is_wired(self):
+        from pathlib import Path
+
+        fe = Path("frontend/src/lib/api.ts").read_text(encoding="utf-8")
+        be = Path("server.py").read_text(encoding="utf-8")
+        page = Path("frontend/src/pages/FirstBoard.tsx").read_text(encoding="utf-8")
+        assert "/market/first-board/parse-reasons" in fe
+        assert "/market/first-board/import-reasons" in fe
+        assert "/api/market/first-board/parse-reasons" in be
+        assert "/api/market/first-board/import-reasons" in be
+        assert "确认导入" in page
+        assert "parseZtReasons" in fe
+
+    def test_second_import_replaces_the_day(self, tmp_path, monkeypatch):
+        from duanxian import theme_tree as tt
+        from duanxian import zt_reason_import as zi
+
+        monkeypatch.setattr(tt, "_CACHE_DIR", str(tmp_path / "zt"))
+        monkeypatch.setattr(zi, "_IMPORT_DIR", str(tmp_path / "imp"))
+        zi.import_ths_text(self.HEADER + "\n" + self.ROW + "\n")
+        extra = "\t".join([
+            "261.00", "SZ000001", "平安银行", "", "+10.00", "12.00",
+            "银行+国企改革", "2",
+            "09:30:01", "09:30:01",
+            "1亿", "200亿", "--", "【银行】",
+        ])
+        zi.import_ths_text(self.HEADER + "\n" + extra + "\n")
+        reasons, _ = tt.load_cached_reasons("2026-08-18")
+        assert "600536" not in reasons
+        assert reasons["000001"] == "银行+国企改革"
+
+

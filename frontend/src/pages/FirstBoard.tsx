@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useState } from "react";
-import { Flame, Loader2, Sparkles, AlertCircle, X } from "lucide-react";
+import { Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Caliber } from "@/components/ui/Caliber";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { api, type FirstBoardData, type FirstBoardStock } from "@/lib/api";
+import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
@@ -16,11 +17,60 @@ const dateLabel = (d: string) =>
 export function FirstBoard() {
   const [data, setData] = useState<FirstBoardData | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [preview, setPreview] = useState<ZtReasonPreview | null>(null);
   const dd = useDeepDive("firstboard", data?.date || "");
 
-  useEffect(() => {
+  const reload = () =>
     api.firstBoard().then(setData).catch(() => {}).finally(() => setLoaded(true));
+
+  useEffect(() => {
+    reload();
   }, []);
+
+  const closeImport = () => {
+    if (importing) return;
+    setImportOpen(false);
+    setPreview(null);
+  };
+
+  const submitParse = async () => {
+    if (!importText.trim()) {
+      toast.error("请粘贴同花顺导出的文本");
+      return;
+    }
+    setImporting(true);
+    try {
+      const r = await api.parseZtReasons(importText);
+      setPreview(r);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "解析失败");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const submitImport = async () => {
+    if (!importText.trim()) {
+      toast.error("请粘贴同花顺导出的文本");
+      return;
+    }
+    setImporting(true);
+    try {
+      const r = await api.importZtReasons(importText);
+      toast.success(`已导入 ${r.imported} 只涨停原因（${r.date}）`);
+      setImportOpen(false);
+      setImportText("");
+      setPreview(null);
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const buildPrompt = (s: FirstBoardStock) =>
     `今天（${dateLabel(data?.date || "")}）A 股首板涨停股「${s.name}（${s.code}）」的客观数据：\n` +
@@ -47,6 +97,15 @@ export function FirstBoard() {
       <PageHeader
         title="首板分析"
         subtitle="今日首板涨停股（连板数=1）· 涨停原因题材 · 每只可让 AI 深入分析"
+        actions={
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            <Upload className="h-3.5 w-3.5" /> 导入涨停原因
+          </button>
+        }
       />
 
       {data && (
@@ -151,6 +210,109 @@ export function FirstBoard() {
       </GlassCard>
 
       <Disclaimer />
+
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+          onClick={closeImport}
+        >
+          <div
+            className={`glass w-full p-5 ${preview ? "max-w-4xl" : "max-w-2xl"}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">
+                {preview ? "确认涨停原因" : "导入涨停原因"}
+              </h2>
+              <button
+                type="button"
+                disabled={importing}
+                onClick={closeImport}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {!preview ? (
+              <>
+                <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+                  粘贴同花顺涨停池导出的 txt（含表头）。没有涨停原因的行会自动跳过；
+                  点确定后先预览解析结果，再确认写入。
+                </p>
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder="粘贴同花顺导出的全部文本…"
+                  className="h-64 w-full resize-y rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-primary/60"
+                  spellCheck={false}
+                />
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={importing}
+                    onClick={closeImport}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={importing}
+                    onClick={() => void submitParse()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-60"
+                  >
+                    {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {importing ? "解析中…" : "确定"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  {preview.date} 解析到 <b className="text-foreground">{preview.count}</b> 只涨停原因
+                  {preview.skipped > 0 ? `，已忽略 ${preview.skipped} 行（无涨停原因）` : ""}。
+                  左栏股票，右栏题材串。确认无误后再写入。
+                </p>
+                <div className="max-h-[55vh] overflow-auto rounded-lg border border-border/60">
+                  <div className="grid grid-cols-2 sticky top-0 z-10 border-b border-border bg-muted/80 px-3 py-2 text-xs font-medium text-muted-foreground backdrop-blur">
+                    <div>股票</div>
+                    <div>涨停原因</div>
+                  </div>
+                  {preview.rows.map((r) => (
+                    <div key={r.code} className="grid grid-cols-2 gap-2 border-b border-border/40 px-3 py-1.5 text-xs last:border-b-0">
+                      <div className="min-w-0">
+                        <span className="font-medium">{r.name || "—"}</span>{" "}
+                        <span className="text-muted-foreground/60">{r.code}</span>
+                      </div>
+                      <div className="min-w-0 leading-relaxed text-foreground">{r.reason}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={importing}
+                    onClick={() => setPreview(null)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    返回修改
+                  </button>
+                  <button
+                    type="button"
+                    disabled={importing}
+                    onClick={() => void submitImport()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-60"
+                  >
+                    {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {importing ? "写入中…" : "确认导入"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

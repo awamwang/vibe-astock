@@ -2,12 +2,13 @@
 
 短线投资实例专属模块（不回推开源仓库）。
 - 首板名单：东财涨停池（astock.em_zt_topic_pool，免费无 key）。
-- 涨停原因：同花顺问财 query2data「今日涨停的股票 涨停原因」，需要环境变量
-  IWENCAI_API_KEY（不入库）；拿不到时优雅降级为空串，页面照常显示其余字段。
+- 涨停原因：优先读题材树落盘缓存（含首板页导入的同花顺 txt）；没有再问同花顺问财
+  （需要 IWENCAI_API_KEY）。拿不到时优雅降级为空串，页面照常显示其余字段。
 """
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime, timedelta
@@ -17,6 +18,7 @@ from market import BEIJING, _num
 
 _CACHE: dict = {}
 _TTL = 600  # 10 分钟；涨停原因盘中变化不快
+_ZT_REASONS_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_reasons")
 
 
 def _clean_reason(text: str, max_tags: int = 4, max_len: int = 40) -> str:
@@ -64,11 +66,48 @@ def _fetch_reasons(date: str) -> tuple[dict, str | None]:
 _REASONS_CACHE: dict = {}
 
 
+def _read_disk_reasons(date: str) -> dict:
+    """读题材事件树同一份落盘缓存（手工导入的涨停原因也写在这儿）。"""
+    ymd = str(date).replace("-", "")
+    if len(ymd) != 8 or not ymd.isdigit():
+        return {}
+    iso = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"
+    path = os.path.join(_ZT_REASONS_DIR, f"{iso}.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            env = json.load(fh)
+        if env.get("date") not in (iso, ymd):
+            return {}
+        reasons = env.get("reasons") or {}
+        return {str(k).zfill(6): str(v) for k, v in reasons.items() if v}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def apply_imported_reasons(date: str, reasons: dict) -> None:
+    """导入成功后灌进内存缓存，并让首板列表 / 短线情绪下次重建。"""
+    ymd = str(date).replace("-", "")
+    _CACHE.pop("first_board", None)
+    try:
+        import market as _market
+
+        _market._CACHE.pop("emotion", None)
+    except Exception:  # noqa: BLE001
+        pass
+    _REASONS_CACHE[ymd] = (time.time(), dict(reasons), None)
+
+
 def get_reasons(date: str) -> tuple[dict, str | None]:
     """当日全部涨停股的涨停原因（带缓存，首板页与每日复盘连板表共用）。"""
     hit = _REASONS_CACHE.get(date)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1], hit[2]
+    disk = _read_disk_reasons(date)
+    if disk:
+        _REASONS_CACHE[date] = (time.time(), disk, None)
+        return disk, None
     reasons, err = _fetch_reasons(date)
     if reasons:
         _REASONS_CACHE[date] = (time.time(), reasons, err)
