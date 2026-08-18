@@ -4440,6 +4440,58 @@ class TestVerificationItemsCarryBaseline:
         assert rs._with_baselines({"focus": None}) == {"focus": None}
         assert rs._with_baselines({}) == {}
 
+    def test_load_rebuilds_theme_tree_from_imported_reasons(self, monkeypatch):
+        """先生成复盘、后导入涨停原因：读取时要把题材树补上，不能一直显示没密钥。"""
+        from duanxian import review_store as rs, theme_tree as tt
+
+        env = {
+            "target_date": "2026-08-18",
+            "market_facts": {
+                "theme_tree": {"available": False,
+                               "reason": "没配问财接口密钥 IWENCAI_API_KEY"},
+                "seal_quality": {"available": True},
+            },
+        }
+        monkeypatch.setattr(tt, "load_cached_reasons",
+                            lambda d: ({"600536": "麒麟OS+信创+央企"}, None))
+        monkeypatch.setattr(tt, "build", lambda d, **kw: {
+            "available": True, "date": d, "tag_count": 1,
+            "themes": [{"tag": "麒麟OS", "limit_up": 1}], "covered": 1,
+        })
+        out = rs._with_theme_tree(env)
+        tree = out["market_facts"]["theme_tree"]
+        assert tree["available"] is True
+        assert tree["themes"][0]["tag"] == "麒麟OS"
+        assert out["market_facts"]["seal_quality"]["available"] is True, "别把别的事实表冲掉"
+
+    def test_theme_tree_backfill_keeps_available_snapshot(self, monkeypatch):
+        from duanxian import review_store as rs, theme_tree as tt
+
+        env = {
+            "target_date": "2026-08-18",
+            "market_facts": {"theme_tree": {"available": True, "tag_count": 3}},
+        }
+
+        def _boom(*_a, **_k):
+            raise AssertionError("已有可用题材树不该再重搭")
+
+        monkeypatch.setattr(tt, "load_cached_reasons", _boom)
+        monkeypatch.setattr(tt, "build", _boom)
+        assert rs._with_theme_tree(env) is env
+
+    def test_theme_tree_backfill_is_safe_without_cache(self, monkeypatch):
+        from duanxian import review_store as rs, theme_tree as tt
+
+        env = {
+            "target_date": "2026-08-18",
+            "market_facts": {"theme_tree": {"available": False, "reason": "没配密钥"}},
+        }
+        monkeypatch.setattr(tt, "load_cached_reasons", lambda d: ({}, None))
+        out = rs._with_theme_tree(env)
+        assert out["market_facts"]["theme_tree"]["available"] is False
+        assert rs._with_theme_tree(None) is None
+        assert rs._with_theme_tree({}) == {}
+
 
 @pytest.mark.unit
 class TestThsZtReasonImport:

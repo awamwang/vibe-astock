@@ -111,11 +111,44 @@ def _with_baselines(env: dict | None) -> dict | None:
         env.get("emotion_metrics") or {}, env.get("market_facts") or {})}}
 
 
+def _with_theme_tree(env: dict | None) -> dict | None:
+    """生成复盘之后才导入的涨停原因，看板读的仍是当时冻结的题材树。
+
+    题材事件树是纯计算（涨停池 + 题材串缓存），有缓存就当场重搭，
+    别让用户为了看树再跑一遍 AI。存档里已经可用的树不动。
+    """
+    if not isinstance(env, dict):
+        return env
+    date = env.get("target_date") or env.get("trade_date")
+    if not date:
+        return env
+    facts = env.get("market_facts")
+    if not isinstance(facts, dict):
+        facts = {}
+    stored = facts.get("theme_tree") or {}
+    if stored.get("available"):
+        return env
+    try:
+        from . import theme_tree as tt
+
+        cached, _err = tt.load_cached_reasons(str(date))
+        if not cached:
+            return env
+        rebuilt = tt.build(str(date))
+    except Exception:  # noqa: BLE001
+        return env
+    if not rebuilt.get("available"):
+        return env
+    return {**env, "market_facts": {**facts, "theme_tree": rebuilt}}
+
+
 def load(date: str | None = None) -> dict | None:
     """读某天的复盘；`date=None` 读 latest。文件损坏当不存在处理（不抛）。"""
     name = "latest.json" if date is None else f"{date}.json"
     path = safe_join(DIR, name)
-    return _with_baselines(_read(path)) if os.path.exists(path) else None
+    if not os.path.exists(path):
+        return None
+    return _with_theme_tree(_with_baselines(_read(path)))
 
 
 def dates() -> list[str]:
