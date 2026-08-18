@@ -1,11 +1,11 @@
-# 开发模式：前端 Vite Watch（:5910）+ 后端 uvicorn reload（:8910）
+﻿# 开发模式：前端 Vite Watch（:5910）+ 后端 uvicorn reload（:8910）
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts/run_dev.ps1
 #   或双击 / 运行 scripts/run_dev.cmd
 #
 # 请打开前端地址做开发（HMR）；后端只给 /api，改 .py 会自动重启。
-# Ctrl+C 会同时停掉前后端。
+# Ctrl+C 会同时停止前后端。
 
 param(
     [int]$Port = 0,
@@ -28,7 +28,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 $frontendDir = Join-Path $Repo "frontend"
 if (-not (Test-Path (Join-Path $frontendDir "package.json"))) {
-    Write-Host "找不到 frontend/package.json：$frontendDir"
+    Write-Host "找不到 frontend/package.json: $frontendDir"
     exit 1
 }
 if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
@@ -51,15 +51,14 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "开发模式"
-Write-Host "  前端 Watch  http://127.0.0.1:${FrontendPort}   <- 请打开这个地址"
-Write-Host "  后端 Reload http://127.0.0.1:${Port}          /api 热重启"
+Write-Host "  前端 Watch  http://127.0.0.1:$FrontendPort   请打开这个地址"
+Write-Host "  后端 Reload http://127.0.0.1:$Port          /api 热重启"
 Write-Host "  Ctrl+C 同时停止前后端"
 Write-Host ""
 
-$frontendTitle = "vibe-astock Frontend :$FrontendPort"
-$frontend = Start-Process -FilePath "cmd.exe" -ArgumentList @(
-    "/c",
-    "title $frontendTitle && npm run dev -- --port $FrontendPort --strictPort"
+$npm = (Get-Command npm).Source
+$frontend = Start-Process -FilePath $npm -ArgumentList @(
+    "run", "dev", "--", "--port", "$FrontendPort", "--strictPort"
 ) -WorkingDirectory $frontendDir -PassThru
 
 $env:VIBE_RELOAD = "1"
