@@ -24,3 +24,4 @@ mini-racer>=0.12
 
 # 开发/测试
 pytest>=8
+watchfiles>=0.21
