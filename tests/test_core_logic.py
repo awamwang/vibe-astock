@@ -4613,3 +4613,134 @@ class TestThsZtReasonImport:
         assert reasons["000001"] == "银行+国企改革"
 
 
+@pytest.mark.unit
+class TestDataBackup:
+    """~/.duanxian-agents 非日志数据的打包导出 / 导入。"""
+
+    def _seed(self, root):
+        (root / "reviews").mkdir(parents=True)
+        (root / "cache" / "market_facts").mkdir(parents=True)
+        (root / "logs").mkdir(parents=True)
+        (root / "reviews" / "2026-08-18.json").write_text('{"ok": true}', encoding="utf-8")
+        (root / "cache" / "market_facts" / "2026-08-18.json").write_text('{"zt": 1}', encoding="utf-8")
+        (root / "logs" / "run.log").write_text("noise", encoding="utf-8")
+        (root / "cache" / "scratch.tmp").write_text("tmp", encoding="utf-8")
+
+    def test_overview_skips_logs_and_counts_cache(self, tmp_path, monkeypatch):
+        from duanxian import backup
+
+        root = tmp_path / "duanxian-agents"
+        self._seed(root)
+        monkeypatch.setattr(backup, "DATA_ROOT", str(root))
+        info = backup.overview(str(root))
+        names = {f["name"] for f in info["folders"]}
+        assert "cache" in names
+        assert "reviews" in names
+        assert "logs" not in names
+        assert info["file_count"] == 2
+        assert info["skipped_logs"] >= 2
+
+    def test_export_zip_excludes_logs_and_roundtrips(self, tmp_path, monkeypatch):
+        from duanxian import backup
+
+        root = tmp_path / "duanxian-agents"
+        dest = tmp_path / "out"
+        imported = tmp_path / "restored"
+        self._seed(root)
+        monkeypatch.setattr(backup, "DATA_ROOT", str(root))
+        result = backup.export_to_dir(str(dest), root=str(root))
+        zip_path = tmp_path / "out" / result["filename"]
+        assert zip_path.is_file()
+        assert result["file_count"] == 2
+
+        backup.import_from_path(str(zip_path), dest_root=str(imported))
+        assert (imported / "reviews" / "2026-08-18.json").is_file()
+        assert (imported / "cache" / "market_facts" / "2026-08-18.json").is_file()
+        assert not (imported / "logs" / "run.log").exists()
+        assert not (imported / "cache" / "scratch.tmp").exists()
+
+    def test_import_from_raw_folder(self, tmp_path):
+        from duanxian import backup
+
+        src = tmp_path / "folder"
+        dest = tmp_path / "dest"
+        self._seed(src)
+        result = backup.import_from_path(str(src), dest_root=str(dest))
+        assert result["imported"] == 2
+        assert (dest / "cache" / "market_facts" / "2026-08-18.json").read_text(
+            encoding="utf-8") == '{"zt": 1}'
+
+    def test_zip_slip_is_rejected(self, tmp_path):
+        import io
+        import zipfile
+
+        from duanxian.backup import BackupError, import_from_zip_bytes
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("../evil.json", '{"pwn": true}')
+        with pytest.raises(BackupError, match="越界"):
+            import_from_zip_bytes(buf.getvalue(), dest_root=str(tmp_path / "dest"))
+
+    def test_refuse_export_into_data_root(self, tmp_path, monkeypatch):
+        from duanxian import backup
+        from duanxian.backup import BackupError
+
+        root = tmp_path / "duanxian-agents"
+        self._seed(root)
+        monkeypatch.setattr(backup, "DATA_ROOT", str(root))
+        with pytest.raises(BackupError, match="数据根目录"):
+            backup.export_to_dir(str(root / "cache"), root=str(root))
+
+    def test_export_rejects_foreign_origin(self):
+        import server
+
+        class _Req:
+            headers = {"origin": "https://evil.example"}
+
+        resp = server.api_backup_export(_Req(), body={"dest_dir": "C:\\\\tmp"})  # type: ignore[arg-type]
+        assert getattr(resp, "status_code", 200) == 403
+
+    def test_backup_is_wired(self):
+        from pathlib import Path
+
+        fe = Path("frontend/src/lib/api.ts").read_text(encoding="utf-8")
+        be = Path("server.py").read_text(encoding="utf-8")
+        nav = Path("frontend/src/components/layout/Layout.tsx").read_text(encoding="utf-8")
+        page = Path("frontend/src/pages/DataBackup.tsx").read_text(encoding="utf-8")
+        router = Path("frontend/src/router.tsx").read_text(encoding="utf-8")
+        assert "/backup/status" in fe
+        assert "/backup/open" in fe
+        assert "/backup/export" in fe
+        assert "/backup/import" in fe
+        assert "downloadBackup" in fe
+        assert "/api/backup/status" in be
+        assert "/api/backup/open" in be
+        assert "/api/backup/export" in be
+        assert "/api/backup/import" in be
+        assert "/api/backup/download" in be
+        assert 'label: "数据管理"' in nav
+        assert 'groupLabel("设置")' in nav
+        assert "/settings/data" in router
+        assert "数据管理" in page
+        assert "打开" in page
+        assert "打包到目录" in page
+        assert "从路径导入" in page
+        assert "选择压缩包" in page
+
+    def test_open_only_allows_root_or_cache(self, tmp_path, monkeypatch):
+        from duanxian import backup
+        from duanxian.backup import BackupError
+
+        opened: list[str] = []
+        monkeypatch.setattr(backup, "DATA_ROOT", str(tmp_path / "duanxian-agents"))
+        monkeypatch.setattr(backup, "_reveal_dir", lambda p: opened.append(str(p)))
+        out = backup.open_data_dir("cache", root=str(tmp_path / "duanxian-agents"))
+        assert out["kind"] == "cache"
+        assert (tmp_path / "duanxian-agents" / "cache").is_dir()
+        assert opened
+        with pytest.raises(BackupError, match="只能打开"):
+            backup.open_data_dir("tmp", root=str(tmp_path / "duanxian-agents"))
+
+
+

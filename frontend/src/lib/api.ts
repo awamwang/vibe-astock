@@ -380,4 +380,58 @@ export const api = {
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),
+  backupStatus: () => get<BackupStatus>("/backup/status"),
+  backupOpen: (kind: "root" | "cache") =>
+    request<{ ok: boolean; path: string; kind: string }>("/backup/open", "POST", { kind }),
+  backupExport: (destDir: string) =>
+    request<BackupExportResult>("/backup/export", "POST", { dest_dir: destDir }),
+  backupImportPath: (path: string) =>
+    request<BackupImportResult>("/backup/import", "POST", { path }),
+  backupImportZip: (contentB64: string) =>
+    request<BackupImportResult>("/backup/import", "POST", { content_b64: contentB64 }),
 };
+
+export interface BackupFolder {
+  name: string; files: number; bytes: number;
+}
+export interface BackupStatus {
+  root: string; cache_dir: string; exists: boolean;
+  file_count: number; byte_count: number; skipped_logs: number;
+  folders: BackupFolder[];
+}
+export interface BackupExportResult {
+  ok: boolean; path: string; filename: string;
+  file_count: number; byte_count: number; skipped_logs: number;
+  created_at?: string;
+}
+export interface BackupImportResult {
+  ok: boolean; imported: number; byte_count: number;
+  skipped_logs: number; root: string;
+}
+
+export async function downloadBackup(): Promise<string> {
+  const resp = await fetch(apiUrl("/api/backup/download"), { headers: authHeaders() });
+  if (!resp.ok) {
+    let detail = `下载失败 HTTP ${resp.status}`;
+    try {
+      const payload = await resp.json();
+      detail = payload?.detail || payload?.error || detail;
+    } catch {
+      /* 非 JSON */
+    }
+    throw new ApiError(detail, resp.status);
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get("content-disposition") || "";
+  const matched = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(cd);
+  const filename = matched ? decodeURIComponent(matched[1]) : "duanxian-agents-backup.zip";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+}

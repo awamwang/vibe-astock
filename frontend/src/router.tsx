@@ -5,6 +5,7 @@ import { DailyReview } from "@/pages/DailyReview";
 import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { Settings } from "@/pages/Settings";
+import { DataBackup } from "@/pages/DataBackup";
 
 // basename 跟着构建时的 --base 走，这样挂在子路径下内部跳转才不会掉回站点根目录
 export const router = createBrowserRouter([
@@ -17,6 +18,8 @@ export const router = createBrowserRouter([
       { path: "/first-board", element: <FirstBoard /> },
       { path: "/heat", element: <AgentWeekly /> },
       { path: "/settings", element: <Settings /> },
+      { path: "/settings/data", element: <DataBackup /> },
+      { path: "/settings/backup", element: <DataBackup /> },
       { path: "*", element: <Navigate to="/agent/review" replace /> },
     ],
   },

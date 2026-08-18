@@ -846,6 +846,118 @@ def api_import_zt_reasons(request: Request, body: dict = Body(...)):
     }}
 
 
+def _backup_guard(request: Request):
+    """备份/导入是写盘操作，必须过本机来源闸。失败返回 JSONResponse。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    return None
+
+
+@app.get("/api/backup/status")
+def api_backup_status():
+    """当前可备份数据规模（~/.duanxian-agents 非日志文件）。"""
+    from duanxian import backup
+
+    return {"data": backup.overview()}
+
+
+@app.post("/api/backup/open")
+def api_backup_open(request: Request, body: Optional[dict] = Body(None)):
+    """用系统文件管理器打开数据根目录或 cache 目录。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import backup
+    from duanxian.backup import BackupError
+
+    kind = str((body or {}).get("kind") or "root")
+    try:
+        return {"data": backup.open_data_dir(kind)}
+    except BackupError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
+@app.post("/api/backup/export")
+def api_backup_export(request: Request, body: Optional[dict] = Body(None)):
+    """把非日志数据打包成 zip，写到本机指定目录。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import backup
+    from duanxian.backup import BackupError
+
+    dest = str((body or {}).get("dest_dir") or "")
+    try:
+        return {"data": backup.export_to_dir(dest)}
+    except BackupError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
+@app.get("/api/backup/download")
+def api_backup_download(request: Request):
+    """把非日志数据打包成 zip，由浏览器下载。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    import shutil
+    import tempfile as _tempfile
+
+    from starlette.background import BackgroundTask
+
+    from duanxian import backup
+    from duanxian.backup import BackupError
+
+    tmp_dir = _tempfile.mkdtemp(prefix="vibe-backup-")
+    try:
+        result = backup.export_to_dir(tmp_dir)
+        path = result["path"]
+    except BackupError as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+    def _cleanup() -> None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return FileResponse(
+        path,
+        filename=result["filename"],
+        media_type="application/zip",
+        background=BackgroundTask(_cleanup),
+    )
+
+
+@app.post("/api/backup/import")
+def api_backup_import(request: Request, body: Optional[dict] = Body(None)):
+    """从本机 zip / 文件夹路径，或上传的 zip（base64）导入数据。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import backup
+    from duanxian.backup import BackupError
+
+    blob = str((body or {}).get("content_b64") or "")
+    src = str((body or {}).get("path") or "")
+    try:
+        if blob.strip():
+            result = backup.import_from_base64(blob)
+        elif src.strip():
+            result = backup.import_from_path(src)
+        else:
+            raise BackupError("请选择压缩包，或填写本机 zip / 文件夹路径")
+        return {"data": result}
+    except BackupError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
 def _mount_static() -> None:
     """挂静态资源 + SPA 兜底"""
     if not os.path.isdir(_DIST):

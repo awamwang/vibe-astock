@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,10 @@ const REVIEW_NAV = [
   { to: "/heat", icon: CalendarRange, label: "近5天热度" },
 ];
 
-const SETTINGS_NAV = [{ to: "/settings", icon: Cog, label: "接入 AI" }];
+const SETTINGS_NAV = [
+  { to: "/settings", icon: Cog, label: "接入 AI" },
+  { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
+];
 
 export function Layout() {
   const { pathname } = useLocation();
@@ -98,6 +101,7 @@ export function Layout() {
           {REVIEW_NAV.map((n) => item(n, "agent" in n && n.agent))}
 
           {!collapsed && <div className="my-2 border-t border-border/40" />}
+          {groupLabel("设置")}
           {SETTINGS_NAV.map((n) => item(n))}
         </nav>
 
