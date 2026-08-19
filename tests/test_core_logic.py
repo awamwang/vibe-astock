@@ -3918,7 +3918,7 @@ class TestPerStockPromptsStayAtSectorLevel:
     所以：强弱/阶段判断必须显式限定在**题材板块**层面，并显式禁止外推到个股。
     """
 
-    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/DailyReview.tsx")
+    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/DailyReview.tsx", "pages/Watchlist.tsx")
 
     def _src(self, rel):
         import pathlib

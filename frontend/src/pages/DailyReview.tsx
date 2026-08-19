@@ -1,4 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
+import { Link } from "react-router-dom";
 import { pctColor } from "@/lib/colors";
 import { Sparkles, Loader2, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -322,11 +323,14 @@ export function DailyReview() {
       {/* 2. 关注股票（自选） */}
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-muted-foreground">关注股票</h3>
-        {watchCodes.length > 0 && (
-          <button onClick={() => refreshWatch(watchCodes)} className="text-muted-foreground hover:text-primary" title="刷新价格">
-            {watchLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <Link to="/watchlist" className="text-xs text-primary/80 hover:text-primary">完整自选页 →</Link>
+          {watchCodes.length > 0 && (
+            <button onClick={() => refreshWatch(watchCodes)} className="text-muted-foreground hover:text-primary" title="刷新价格">
+              {watchLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            </button>
+          )}
+        </div>
       </div>
       <GlassCard className="mb-6">
         <div className="mb-3 flex gap-2">
