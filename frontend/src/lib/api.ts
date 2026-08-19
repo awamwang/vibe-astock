@@ -76,7 +76,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
     if (resp.status === 401) {
       throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
     }
-    throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
+    throw new ApiError(payload?.detail || payload?.error || `HTTP ${resp.status}`, resp.status);
   }
   return (payload?.data ?? payload) as T;
 }
@@ -230,6 +230,32 @@ export interface PortfolioData {
   closed: ClosedPosition[];
   realized_pnl: number;
   updated: string; last_refresh: string | null;
+}
+
+/** 券商持仓截图 AI 解析草稿（对照确认后再写入） */
+export interface ScreenshotHoldingRow {
+  code: string;
+  name?: string | null;
+  shares: number;
+  available_shares?: number | null;
+  cost?: number | null;
+  price?: number | null;
+  pnl?: number | null;
+  market_value?: number | null;
+  include?: boolean;
+}
+export interface ScreenshotDraft {
+  broker?: string | null;
+  equity?: number | null;
+  available?: number | null;
+  withdrawable?: number | null;
+  frozen?: number | null;
+  stock_market_value?: number | null;
+  position_pnl?: number | null;
+  daily_pnl?: number | null;
+  daily_pnl_pct?: number | null;
+  note?: string | null;
+  holdings: ScreenshotHoldingRow[];
 }
 
 /** 仓位预算六档（硬规则，与 AI 五档分开） */
@@ -451,6 +477,20 @@ export const api = {
     get<TradeGuard>(`/trade/guard${date ? `?date=${date}` : ""}`),
   tradeSize: (body: { date?: string; stop_pct: number; boards?: number | null }) =>
     request<TradeSizeResult>("/trade/size", "POST", body),
+  parseTradeScreenshot: (image_b64: string, llm: { provider: string; baseURL: string; apiKey: string; model: string }) =>
+    request<{ ok: boolean; draft: ScreenshotDraft }>("/trade/screenshot/parse", "POST", { image_b64, llm }),
+  applyTradeScreenshot: (body: {
+    equity?: number | null;
+    note?: string;
+    holdings: { code: string; shares: number; cost: number; include?: boolean }[];
+    replace?: boolean;
+  }) => request<{
+    ok: boolean;
+    account: TradeAccount;
+    portfolio: PortfolioData;
+    written_holdings: number;
+    replace: boolean;
+  }>("/trade/screenshot/apply", "POST", body),
   valuation: (code: string) => get<Valuation>(`/valuation?code=${code}`),
   percentile: (code: string) => get<ValPercentile>(`/valuation/percentile?code=${code}`),
   financials: (code: string) => get<Financials>(`/financials?code=${code}`),

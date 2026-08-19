@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Loader2, Plus, Trash2, Wallet } from "lucide-react";
+import { Loader2, Plus, Trash2, Upload, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
+import { PortfolioScreenshotImport } from "@/components/PortfolioScreenshotImport";
 import { api, type PortfolioData, type TradeAccount, type TradeGuard, type TradePhaseRow, type TradeSizeResult } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { DOWN_TEXT, UP_TEXT } from "@/lib/colors";
@@ -36,6 +37,7 @@ export function TradeBudgetPage() {
   const [addCode, setAddCode] = useState("");
   const [addShares, setAddShares] = useState("");
   const [addCost, setAddCost] = useState("");
+  const [shotOpen, setShotOpen] = useState(false);
 
   const load = useCallback(async (d?: string) => {
     setBusy(true);
@@ -200,11 +202,18 @@ export function TradeBudgetPage() {
         title="持仓与预算"
         subtitle="本地权益与仓位上限对照；不荐股、不下单。预算与 AI 复盘隔离。"
         actions={
-          <button onClick={() => void refreshBudget()} disabled={busy}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            重算今日预算
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setShotOpen(true)} disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted">
+              <Upload className="h-4 w-4" />
+              截图导入
+            </button>
+            <button onClick={() => void refreshBudget()} disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              重算今日预算
+            </button>
+          </div>
         }
       />
 
@@ -384,11 +393,24 @@ export function TradeBudgetPage() {
         </div>
       )}
 
+      <PortfolioScreenshotImport
+        open={shotOpen}
+        onClose={() => setShotOpen(false)}
+        onApplied={() => load(date || undefined)}
+      />
+
       {/* 持仓录入 */}
       <div className="glass rounded-2xl p-5">
-        <h3 className="mb-2 text-sm font-bold">本地持仓</h3>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold">本地持仓</h3>
+          <button type="button" onClick={() => setShotOpen(true)} disabled={busy}
+            className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground">
+            <Upload className="h-3.5 w-3.5" />
+            截图导入
+          </button>
+        </div>
         <p className="mb-3 text-[11px] text-muted-foreground">
-          数据在 ~/.vibe-research/portfolio.json，不上传、不进复盘 JSON。
+          数据在 ~/.vibe-research/portfolio.json，不上传、不进复盘 JSON。也可上传券商持仓截图由 AI 解析后确认写入。
         </p>
         <div className="mb-3 flex flex-wrap gap-2">
           <input value={addCode} onChange={(e) => setAddCode(e.target.value)} placeholder="代码"

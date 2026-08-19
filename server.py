@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    live_emotion, overseas, preflight, reflection, review_store, trade_calendar,
-    trade_budget, trade_store,
+    live_emotion, overseas, preflight, reflection, review_store, screenshot_parse,
+    trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -973,6 +973,77 @@ def api_trade_guard(date: str | None = None):
                     f"触及当日亏损限额（{pnl_pct:.2%} ≤ -{limit:.0%}）"
                 )
     return out
+
+
+@app.post("/api/trade/screenshot/parse")
+def api_trade_screenshot_parse(request: Request, body: dict = Body(...)):
+    """上传券商持仓截图，用用户配置的识图模型解析为对照草稿（不落盘）。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    image = body.get("image_b64") or body.get("image") or ""
+    llm = body.get("llm") or {}
+    if not isinstance(llm, dict):
+        return JSONResponse({"error": "llm 配置无效"}, status_code=400)
+    try:
+        draft = screenshot_parse.parse_screenshot(str(image), llm)
+        return {"ok": True, "draft": draft}
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+@app.post("/api/trade/screenshot/apply")
+def api_trade_screenshot_apply(request: Request, body: dict = Body(...)):
+    """用户确认对照表后写入总权益与本地持仓。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        equity, note, holdings, replace = screenshot_parse.validate_apply_payload(body or {})
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    account = None
+    if equity is not None:
+        try:
+            account = trade_store.set_equity(equity, note)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    elif note:
+        # 只改备注：保留原权益
+        try:
+            cur = trade_store.load_account()
+            eq = cur.get("equity")
+            if eq is not None:
+                account = trade_store.set_equity(float(eq), note)
+            else:
+                account = trade_store.load_account()
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    portfolio = None
+    try:
+        import portfolio as pf
+        import watchtower
+
+        if replace:
+            portfolio = pf.replace_holdings(holdings)
+        else:
+            for h in holdings:
+                portfolio = pf.add_holding(h["code"], h["shares"], h["cost"])
+            if portfolio is None:
+                portfolio = pf.get_portfolio()
+        watchtower.poke()
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"写入持仓失败：{type(exc).__name__}: {exc}"}, status_code=500)
+
+    return {
+        "ok": True,
+        "account": account or trade_store.load_account(),
+        "portfolio": portfolio,
+        "written_holdings": len(holdings),
+        "replace": replace,
+    }
 
 
 @app.post("/api/trade/size")

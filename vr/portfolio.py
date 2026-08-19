@@ -92,6 +92,27 @@ def remove_holding(code: str) -> dict:
     return get_portfolio()
 
 
+def replace_holdings(items: list[dict]) -> dict:
+    """用确认后的列表整表覆盖当前持仓（保留 closed，不改已清仓记录）。"""
+    cleaned: list[dict] = []
+    seen: set[str] = set()
+    for it in items or []:
+        code = str(it.get("code") or "").strip()
+        if not code.isdigit() or len(code) != 6 or code in seen:
+            continue
+        shares = float(it.get("shares") or 0)
+        cost = float(it.get("cost") or 0)
+        if shares <= 0:
+            continue
+        seen.add(code)
+        cleaned.append({"code": code, "shares": shares, "cost": cost})
+    with _LOCK:
+        d = _load()
+        d["holdings"] = cleaned
+        _save(d)
+    return get_portfolio()
+
+
 def close_position(code: str, date: str, price: float, shares: float, cost: float) -> dict:
     """记一笔已清仓：算已实现盈亏，存入 closed 列表。"""
     pnl = (price - cost) * shares
