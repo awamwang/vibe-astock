@@ -232,6 +232,81 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
+/** 仓位预算六档（硬规则，与 AI 五档分开） */
+export interface TradePhaseRow {
+  phase: string; cap_total: number; cap_single: number;
+  allow: string[]; forbid: string[];
+}
+export interface TradeRepairProxy {
+  met: boolean;
+  checks: { key: string; ok: boolean; detail: string }[];
+}
+export interface TradeBudget {
+  schema?: number;
+  date: string;
+  available: boolean;
+  reason?: string | null;
+  rule_phase?: string | null;
+  override_phase?: string | null;
+  override_reason?: string | null;
+  phase?: string | null;
+  cap_total?: number | null;
+  cap_single?: number | null;
+  allow?: string[];
+  forbid?: string[];
+  expansion_allowed?: boolean;
+  demoted?: boolean;
+  classify_reasons?: string[];
+  repair_proxy?: TradeRepairProxy;
+  prev_rule_phase?: string | null;
+  block_new_long_reasons?: string[];
+  width_divergence?: { hit?: boolean; skipped?: boolean; reason?: string } | null;
+  generated_at?: string;
+}
+export interface TradeConstants {
+  risk_per_trade: number;
+  daily_loss_limit: number;
+  max_dd_soft: number;
+  max_dd_hard: number;
+}
+export interface TradeAccount {
+  schema: number;
+  equity: number | null;
+  equity_note: string;
+  updated_at: string | null;
+  snapshots: Record<string, { equity: number; market_value: number; asof: string }>;
+  constants: TradeConstants;
+}
+export interface TradeGuard {
+  date: string;
+  budget: TradeBudget;
+  equity: number | null;
+  constants: TradeConstants;
+  position: {
+    market_value: number;
+    total_pct: number | null;
+    over_total: boolean;
+    remain_total: number;
+    per_name: { code: string; name: string; market_value: number; pct_of_equity: number | null; over_single: boolean }[];
+    breaches: string[];
+  } | null;
+  reduce_order: {
+    code: string; name: string; market_value: number; pnl: number; pnl_pct?: number;
+    action: string; suggest_cut?: number;
+  }[];
+  daily_loss: {
+    prev_date: string; prev_equity: number; equity: number;
+    pnl_pct: number; limit: number; hit: boolean;
+  } | null;
+  block_new_long_reasons: string[];
+}
+export interface TradeSizeResult {
+  ok: boolean; reason?: string; amount: number;
+  date?: string; phase?: string;
+  cap_total?: number; cap_single?: number; used?: number;
+  components?: Record<string, number>;
+}
+
 // 资金面 / 筹码 / 信号（v3.3 并入，均为「用户查的那只股」的公开数据）
 export interface MarginRow { date: string; rzye: number; rzmre: number; rzche: number; rqye: number; rqmcl: number; rzrqye: number }
 export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number; vol: number; amount: number; buyer: string; seller: string }
@@ -358,6 +433,24 @@ export const api = {
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
+  tradePhases: () => get<{ phases: TradePhaseRow[] }>("/trade/phases"),
+  tradeBudget: (date?: string, refresh = false) =>
+    get<TradeBudget>(`/trade/budget?${date ? `date=${date}&` : ""}refresh=${refresh ? 1 : 0}`),
+  tradeBudgetRefresh: (date?: string) =>
+    request<TradeBudget>(`/trade/budget/refresh${date ? `?date=${date}` : ""}`, "POST"),
+  tradeOverride: (date: string, phase: string | null, reason = "") =>
+    request<TradeBudget>(`/trade/budget/override?date=${date}`, "POST", { phase, reason }),
+  tradeAccount: () => get<TradeAccount>("/trade/account"),
+  setTradeEquity: (equity: number, note = "") =>
+    request<TradeAccount>("/trade/account/equity", "POST", { equity, note }),
+  setTradeConstants: (c: Partial<TradeConstants>) =>
+    request<TradeAccount>("/trade/account/constants", "POST", c),
+  tradeSnapshot: (date: string, market_value: number) =>
+    request<TradeAccount>(`/trade/account/snapshot?date=${date}`, "POST", { market_value }),
+  tradeGuard: (date?: string) =>
+    get<TradeGuard>(`/trade/guard${date ? `?date=${date}` : ""}`),
+  tradeSize: (body: { date?: string; stop_pct: number; boards?: number | null }) =>
+    request<TradeSizeResult>("/trade/size", "POST", body),
   valuation: (code: string) => get<Valuation>(`/valuation?code=${code}`),
   percentile: (code: string) => get<ValPercentile>(`/valuation/percentile?code=${code}`),
   financials: (code: string) => get<Financials>(`/financials?code=${code}`),

@@ -4,6 +4,7 @@ import { AgentReview } from "@/pages/AgentReview";
 import { DailyReview } from "@/pages/DailyReview";
 import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
+import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
 import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
 
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
       { path: "/daily-review", element: <DailyReview /> },
       { path: "/first-board", element: <FirstBoard /> },
       { path: "/heat", element: <AgentWeekly /> },
+      { path: "/trade", element: <TradeBudgetPage /> },
       { path: "/settings", element: <Settings /> },
       { path: "/settings/data", element: <DataBackup /> },
       { path: "/settings/backup", element: <DataBackup /> },

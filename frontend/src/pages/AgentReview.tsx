@@ -12,10 +12,12 @@ import {
 } from "@/components/MarketFactsPanel";
 import { BreadthPanel } from "@/components/BreadthPanel";
 import { TrendPanel } from "@/components/TrendPanel";
+import { TradeBudgetCard } from "@/components/TradeBudgetCard";
 import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
   type FocusDirection, type ReviewData, type VerificationItem, type JobStatus,
 } from "@/lib/agent";
+import { api, type TradeBudget } from "@/lib/api";
 
 
 /** 验证条件里的读数与阈值怎么显示。
@@ -158,6 +160,7 @@ export function AgentReview() {
   const [err, setErr] = useState("");
   // 「已复盘/还没收盘」这类不是错误、是正常告知，跟 err 分开显示
   const [notice, setNotice] = useState("");
+  const [tradeBudget, setTradeBudget] = useState<TradeBudget | null>(null);
   // polling: 防重入（React state 在同一轮渲染里读到的是旧值，双击能穿过去）
   // timer / alive: 卸载后停掉轮询，别再 setState
   // reqId: 只接受最后一次请求的响应，防止慢的旧响应覆盖新结果
@@ -174,6 +177,16 @@ export function AgentReview() {
     };
   }, []);
 
+  async function loadTradeBudget(d?: string) {
+    if (!d) { setTradeBudget(null); return; }
+    try {
+      const b = await api.tradeBudget(d);
+      if (alive.current) setTradeBudget(b);
+    } catch {
+      if (alive.current) setTradeBudget(null);
+    }
+  }
+
   /** 读复盘：不传 d 读最近一份；传 d 读那天的历史存档。 */
   async function loadLatest(d?: string) {
     const my = ++reqId.current;
@@ -184,9 +197,11 @@ export function AgentReview() {
         setData(r); setMissing("");
         // 没指定日期时（首次加载）把日期框对到真正载入的那一场 ——
         // 默认值是本机今天，而复盘的对象是「最近已收盘那一场」，盘前会差一天
-        if (!d) setDate(r.target_date || r.trade_date || "");
+        const day = r.target_date || r.trade_date || "";
+        if (!d) setDate(day);
+        void loadTradeBudget(day);
       }
-      else if (d) { setData(null); setMissing(d); }         // 这天没跑过 —— 要说出来，不能默默留着上一天的
+      else if (d) { setData(null); setMissing(d); setTradeBudget(null); }         // 这天没跑过 —— 要说出来，不能默默留着上一天的
     } catch {
       if (alive.current && my === reqId.current) setErr("读取历史复盘失败，仍可尝试重新生成");
     }
@@ -316,6 +331,10 @@ export function AgentReview() {
       {/* ① 今天好不好做 */}
       {}
       <BreadthPanel b={facts?.breadth} limitDown={facts?.loss_effect?.market_limit_down} />
+      <TradeBudgetCard
+        b={tradeBudget}
+        date={data?.target_date || data?.trade_date || date}
+      />
 
       {/* ② 昨天进去的人今天赚不赚钱 —— 用户说这是全页最有用的一块，所以提到第二位 */}
       <section className="space-y-4">

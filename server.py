@@ -17,7 +17,10 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from duanxian import live_emotion, overseas, preflight, reflection, review_store, trade_calendar
+from duanxian import (
+    live_emotion, overseas, preflight, reflection, review_store, trade_calendar,
+    trade_budget, trade_store,
+)
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
 from duanxian.review_graph import build_review_graph
@@ -340,6 +343,11 @@ def _run_review(date: str, job_id: str) -> None:
             # 产物不可用 → 必须让用户看见，不能"任务成功但内容是空的"
             raise RuntimeError(res.reason)
         _capture_theme_reasons()     # 题材串同理（问财只给最近交易日）
+        # 仓位预算：与复盘同源读数，但写入 trade/，绝不进 reviews JSON
+        try:
+            trade_store.refresh(date)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 仓位预算写入失败（{date}）：{type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001
         with _lock:
             if _job["job_id"] == job_id:
@@ -770,6 +778,246 @@ def api_verify_save(request: Request, date: str, body: dict = Body(...)):
         return JSONResponse({"error": str(exc)}, status_code=400)
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/trade/phases")
+def api_trade_phases():
+    """六档清单与默认 Cap（前端下拉 / 说明）。"""
+    rows = []
+    for p in trade_budget.PHASES:
+        ct, cs = trade_budget.caps_for(p)
+        act = trade_budget.actions_for(p)
+        rows.append({
+            "phase": p, "cap_total": ct, "cap_single": cs,
+            "allow": act["allow"], "forbid": act["forbid"],
+        })
+    return {"phases": rows}
+
+
+@app.get("/api/trade/budget")
+def api_trade_budget(date: str | None = None, refresh: int = 0):
+    """某日仓位预算。默认读落盘；refresh=1 重算（保留手拨覆盖）。"""
+    try:
+        if not date:
+            date = trade_calendar.latest_session() or china_today()
+        date = validate_trade_date(date)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    try:
+        if refresh:
+            env = trade_store.refresh(date)
+        else:
+            env = trade_store.get_or_compute(date)
+        return env
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+@app.post("/api/trade/budget/refresh")
+def api_trade_budget_refresh(request: Request, date: str | None = None):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        if not date:
+            date = trade_calendar.latest_session() or china_today()
+        date = validate_trade_date(date)
+        return trade_store.refresh(date)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+@app.post("/api/trade/budget/override")
+def api_trade_override(request: Request, date: str, body: dict = Body(...)):
+    """人手覆盖当日档位；phase 为空则清除覆盖。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        date = validate_trade_date(date)
+        phase = body.get("phase")
+        if phase == "" or phase is None:
+            phase = None
+        reason = str(body.get("reason") or "")
+        return trade_store.set_override(date, phase, reason)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+@app.get("/api/trade/account")
+def api_trade_account():
+    return trade_store.load_account()
+
+
+@app.post("/api/trade/account/equity")
+def api_trade_equity(request: Request, body: dict = Body(...)):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        eq = float(body.get("equity"))
+        note = str(body.get("note") or "")
+        return trade_store.set_equity(eq, note)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@app.post("/api/trade/account/constants")
+def api_trade_constants(request: Request, body: dict = Body(...)):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        return trade_store.set_constants(**{
+            k: body[k] for k in (
+                "risk_per_trade", "daily_loss_limit", "max_dd_soft", "max_dd_hard",
+            ) if k in body
+        })
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@app.post("/api/trade/account/snapshot")
+def api_trade_snapshot(request: Request, date: str | None = None, body: dict | None = Body(None)):
+    """写入当日权益快照（通常在盘后对照持仓市值）。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        if not date:
+            date = trade_calendar.latest_session() or china_today()
+        date = validate_trade_date(date)
+        mv = float((body or {}).get("market_value") or 0)
+        return trade_store.snapshot_equity(date, mv)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+def _portfolio_holdings() -> tuple[list, float]:
+    """读 VR 持仓；失败当空。返回 (holdings, market_value)。"""
+    try:
+        import portfolio as pf
+
+        data = pf.get_portfolio()
+        hs = data.get("holdings") or []
+        mv = float((data.get("totals") or {}).get("market_value") or 0)
+        return hs, mv
+    except Exception:  # noqa: BLE001
+        return [], 0.0
+
+
+@app.get("/api/trade/guard")
+def api_trade_guard(date: str | None = None):
+    """现仓 vs 上限、降档减仓顺序、当日亏损闸（有快照才启用）。"""
+    try:
+        if not date:
+            date = trade_calendar.latest_session() or china_today()
+        date = validate_trade_date(date)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    budget = trade_store.get_or_compute(date)
+    account = trade_store.load_account()
+    equity = account.get("equity")
+    holdings, mv = _portfolio_holdings()
+    consts = account.get("constants") or {}
+
+    out: dict = {
+        "date": date,
+        "budget": budget,
+        "equity": equity,
+        "constants": consts,
+        "position": None,
+        "reduce_order": [],
+        "daily_loss": None,
+        "block_new_long_reasons": list(budget.get("block_new_long_reasons") or []),
+    }
+    if not budget.get("available"):
+        return out
+    if equity is None or float(equity) <= 0:
+        out["block_new_long_reasons"] = out["block_new_long_reasons"] + ["未录入总权益"]
+        return out
+
+    eq = float(equity)
+    cap_t = float(budget["cap_total"])
+    cap_s = float(budget["cap_single"])
+    pos = trade_budget.position_vs_caps(holdings, eq, cap_t, cap_s)
+    out["position"] = pos
+    out["reduce_order"] = trade_budget.reduce_order(holdings, eq, cap_t)
+    if pos.get("over_total"):
+        out["block_new_long_reasons"].append("总仓已达当前档 Cap_total")
+    if not budget.get("expansion_allowed") and budget.get("phase") in (
+        "过热防守", "退潮杀伤", "高潮拥挤",
+    ):
+        pass  # 理由已在 budget.block_new_long_reasons
+
+    # 当日亏损：相对上一交易日权益快照
+    prev = trade_calendar.prev_trade_date(date)
+    snaps = account.get("snapshots") or {}
+    prev_snap = snaps.get(prev) if prev else None
+    if prev_snap and prev_snap.get("equity"):
+        prev_eq = float(prev_snap["equity"])
+        if prev_eq > 0:
+            pnl_pct = (eq - prev_eq) / prev_eq
+            limit = float(consts.get("daily_loss_limit") or trade_budget.DEFAULT_DAILY_LOSS_LIMIT)
+            hit = pnl_pct <= -limit
+            out["daily_loss"] = {
+                "prev_date": prev,
+                "prev_equity": prev_eq,
+                "equity": eq,
+                "pnl_pct": round(pnl_pct, 4),
+                "limit": limit,
+                "hit": hit,
+            }
+            if hit:
+                out["block_new_long_reasons"].append(
+                    f"触及当日亏损限额（{pnl_pct:.2%} ≤ -{limit:.0%}）"
+                )
+    return out
+
+
+@app.post("/api/trade/size")
+def api_trade_size(request: Request, body: dict = Body(...)):
+    """单笔金额计算器。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        date = body.get("date") or trade_calendar.latest_session() or china_today()
+        date = validate_trade_date(str(date))
+        stop_pct = float(body["stop_pct"])
+        boards = body.get("boards")
+        if boards is not None:
+            boards = int(boards)
+    except (KeyError, TypeError, ValueError) as exc:
+        return JSONResponse({"error": f"参数错误：{exc}"}, status_code=400)
+
+    budget = trade_store.get_or_compute(date)
+    account = trade_store.load_account()
+    equity = account.get("equity")
+    if not budget.get("available"):
+        return {"ok": False, "reason": budget.get("reason") or "预算不可用", "amount": 0}
+    if equity is None or float(equity) <= 0:
+        return {"ok": False, "reason": "请先录入总权益", "amount": 0}
+
+    holdings, _ = _portfolio_holdings()
+    used = sum(float(h.get("market_value") or 0) for h in holdings)
+    risk = float((account.get("constants") or {}).get("risk_per_trade")
+                 or trade_budget.DEFAULT_RISK_PER_TRADE)
+    result = trade_budget.size_amount(
+        float(equity),
+        float(budget["cap_total"]),
+        float(budget["cap_single"]),
+        used,
+        risk,
+        stop_pct,
+        boards=boards,
+        phase=str(budget.get("phase") or "升温扩张"),
+    )
+    result["date"] = date
+    result["phase"] = budget.get("phase")
+    result["cap_total"] = budget.get("cap_total")
+    result["cap_single"] = budget.get("cap_single")
+    result["used"] = round(used, 2)
+    return result
 
 
 def _zt_fallback_date() -> str | None:
