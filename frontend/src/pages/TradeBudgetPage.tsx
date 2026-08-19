@@ -18,6 +18,11 @@ function money(v?: number | null): string {
   return v.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
+function money2(v?: number | null): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
 export function TradeBudgetPage() {
   const [params, setParams] = useSearchParams();
   const date = params.get("date") || "";
@@ -130,10 +135,16 @@ export function TradeBudgetPage() {
 
   async function snap() {
     if (!date) return;
-    const mv = portfolio?.totals?.market_value ?? 0;
+    const fields = account?.account_fields || {};
+    const mv = portfolio?.totals?.market_value
+      ?? fields.stock_market_value
+      ?? 0;
     setBusy(true);
     try {
-      await api.tradeSnapshot(date, mv);
+      await api.tradeSnapshot(date, mv, {
+        account_fields: fields,
+        note: equityNote || undefined,
+      });
       await load(date);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "快照失败");
@@ -141,6 +152,13 @@ export function TradeBudgetPage() {
       setBusy(false);
     }
   }
+
+  const snapRows = useMemo(() => {
+    const snaps = account?.snapshots || {};
+    return Object.entries(snaps)
+      .map(([d, s]) => ({ date: d, ...s }))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [account]);
 
   async function calcSize() {
     const sp = Number(stopPct) / 100;
@@ -230,7 +248,7 @@ export function TradeBudgetPage() {
             <h3 className="text-sm font-bold">账户权益</h3>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            总权益可手改；缺现金等项也按手录处理。日快照供日后亏损/回撤，v1 不自动清仓。
+            总权益可手改；截图导入的账户名/资金余额/可用/市值/当日盈亏等会命名写入日快照，同日覆盖。v1 不自动清仓。
           </p>
           <div className="flex flex-wrap gap-2">
             <input value={equityInput} onChange={(e) => setEquityInput(e.target.value)}
@@ -244,6 +262,20 @@ export function TradeBudgetPage() {
             <button onClick={() => void snap()} disabled={busy || !date}
               className="rounded-lg border border-border px-3 py-2 text-sm">写入日快照</button>
           </div>
+          {account?.account_fields && Object.keys(account.account_fields).length > 0 && (
+            <div className="text-[11px] leading-relaxed text-muted-foreground">
+              {[
+                account.account_fields.account_name && `账户名 ${account.account_fields.account_name}`,
+                account.account_fields.cash_balance != null && `资金余额 ${account.account_fields.cash_balance}`,
+                account.account_fields.account_display && `右下角 ${account.account_fields.account_display}`,
+                account.account_fields.broker && `来源 ${account.account_fields.broker}`,
+                account.account_fields.available != null && `可用 ${account.account_fields.available}`,
+                account.account_fields.stock_market_value != null && `市值 ${account.account_fields.stock_market_value}`,
+                account.account_fields.daily_pnl != null && `当日盈亏 ${account.account_fields.daily_pnl}`,
+                account.account_fields.daily_pnl_pct != null && `当日盈亏比 ${account.account_fields.daily_pnl_pct}%`,
+              ].filter(Boolean).join(" · ")}
+            </div>
+          )}
           {account?.constants && (
             <div className="text-[11px] text-muted-foreground">
               单笔风险 {pct(account.constants.risk_per_trade, 1)} ·
@@ -254,6 +286,55 @@ export function TradeBudgetPage() {
           )}
         </div>
       </div>
+
+      {snapRows.length > 0 && (
+        <div className="glass rounded-2xl p-5">
+          <h3 className="mb-2 text-sm font-bold">日快照（按日覆盖）</h3>
+          <p className="mb-3 text-[11px] text-muted-foreground">
+            同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[48rem] text-left text-[12px]">
+              <thead className="text-[11px] text-muted-foreground">
+                <tr>
+                  <th className="py-1 pr-2">日期</th>
+                  <th className="pr-2">权益</th>
+                  <th className="pr-2">市值</th>
+                  <th className="pr-2">可用</th>
+                  <th className="pr-2">资金余额</th>
+                  <th className="pr-2">当日盈亏</th>
+                  <th className="pr-2">盈亏比</th>
+                  <th className="pr-2">账户</th>
+                  <th>摘要</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapRows.map((s) => (
+                  <tr key={s.date} className={cn("border-t border-border/50", s.date === date && "bg-primary/5")}>
+                    <td className="py-1.5 pr-2 font-mono tabular-nums">{s.date}</td>
+                    <td className="pr-2 tabular-nums">{money(s.equity)}</td>
+                    <td className="pr-2 tabular-nums">{money(s.market_value ?? s.stock_market_value)}</td>
+                    <td className="pr-2 tabular-nums">{s.available != null ? money2(s.available) : "—"}</td>
+                    <td className="pr-2 tabular-nums">{s.cash_balance != null ? money2(s.cash_balance) : "—"}</td>
+                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl ?? 0) > 0 ? UP_TEXT : "")}>
+                      {s.daily_pnl != null ? money2(s.daily_pnl) : "—"}
+                    </td>
+                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl_pct ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl_pct ?? 0) > 0 ? UP_TEXT : "")}>
+                      {s.daily_pnl_pct != null ? `${s.daily_pnl_pct}%` : "—"}
+                    </td>
+                    <td className="pr-2 max-w-[8rem] truncate" title={s.account_name || s.account_display || ""}>
+                      {s.account_display || s.account_name || "—"}
+                    </td>
+                    <td className="max-w-[16rem] truncate text-muted-foreground" title={s.summary || ""}>
+                      {s.summary || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* 手拨档位 */}
       <div className="glass rounded-2xl p-5">

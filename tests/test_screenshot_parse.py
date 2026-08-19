@@ -11,7 +11,10 @@ class TestNormalizeParsed:
     def test_full_broker_like_payload(self):
         raw = {
             "broker": "中金财富",
+            "account_name": "中金财富-王*",
+            "account_display": "中金财富6323",
             "equity": "136,140.15",
+            "cash_balance": 440.85,
             "available": 3404.15,
             "withdrawable": 440.85,
             "frozen": 0,
@@ -39,6 +42,9 @@ class TestNormalizeParsed:
         }
         out = sp.normalize_parsed(raw)
         assert out["broker"] == "中金财富"
+        assert out["account_name"] == "中金财富-王*"
+        assert out["account_display"] == "中金财富6323"
+        assert out["cash_balance"] == 440.85
         assert out["equity"] == 136140.15
         assert out["daily_pnl_pct"] == -3.34
         assert len(out["holdings"]) == 3
@@ -46,6 +52,11 @@ class TestNormalizeParsed:
         assert h0["code"] == "603629" and h0["include"] is True
         h2 = out["holdings"][2]
         assert h2["shares"] == 0 and h2["include"] is False
+
+    def test_cash_balance_fills_withdrawable(self):
+        out = sp.normalize_parsed({"cash_balance": 440.85, "holdings": []})
+        assert out["cash_balance"] == 440.85
+        assert out["withdrawable"] == 440.85
 
     def test_json_fence_and_pad_code(self):
         text = '```json\n{"equity": 1, "holdings": [{"code": "123", "shares": 100, "cost": 10}]}\n```'
@@ -66,10 +77,13 @@ class TestNormalizeParsed:
 
 class TestValidateApply:
     def test_filters_unchecked_and_zero(self):
-        eq, note, hs, replace = sp.validate_apply_payload({
+        eq, note, hs, replace, fields = sp.validate_apply_payload({
             "equity": 1000,
             "note": "x",
             "replace": True,
+            "account_name": "中金财富-王*",
+            "cash_balance": 440.85,
+            "available": 3404.15,
             "holdings": [
                 {"code": "603629", "shares": 200, "cost": 130, "include": True},
                 {"code": "300243", "shares": 0, "cost": 1, "include": True},
@@ -79,6 +93,9 @@ class TestValidateApply:
         assert eq == 1000
         assert note == "x"
         assert replace is True
+        assert fields["account_name"] == "中金财富-王*"
+        assert fields["cash_balance"] == 440.85
+        assert fields["available"] == 3404.15
         assert hs == [{"code": "603629", "shares": 200.0, "cost": 130.0}]
 
     def test_reject_negative_equity(self):

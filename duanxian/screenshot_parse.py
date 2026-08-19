@@ -28,7 +28,10 @@ _USER_PROMPT = """从这张券商/交易软件截图中抽取账户与持仓信�
 严格输出如下 JSON 对象（键名固定）：
 {
   "broker": "券商或软件名，未知则 null",
+  "account_name": "账户名（如 中金财富-王*），无则 null",
+  "account_display": "界面右下角账户标识（如 中金财富6323），无则 null",
   "equity": 总资产或总权益数字或 null,
+  "cash_balance": 资金余额数字或 null,
   "available": 可用金额或 null,
   "withdrawable": 可取金额或 null,
   "frozen": 冻结金额或 null,
@@ -36,7 +39,7 @@ _USER_PROMPT = """从这张券商/交易软件截图中抽取账户与持仓信�
   "position_pnl": 持仓盈亏或 null,
   "daily_pnl": 当日盈亏或 null,
   "daily_pnl_pct": 当日盈亏比（百分数，如 -3.34）或 null,
-  "note": "一句话备注，可含账户号尾号等可见信息，无可 null",
+  "note": "一句话备注；勿重复上述已拆字段，无可 null",
   "holdings": [
     {
       "code": "600000",
@@ -151,11 +154,29 @@ def normalize_parsed(raw: Any) -> dict:
     if note is not None:
         note = str(note).strip() or None
 
+    def _text(key: str) -> Optional[str]:
+        v = raw.get(key)
+        if v is None or v == "":
+            return None
+        s = str(v).strip()
+        return s or None
+
+    cash = _to_float(raw.get("cash_balance"))
+    withdrawable = _to_float(raw.get("withdrawable"))
+    # 图中常把「资金余额」与「可取」写成同一数；缺一则互填
+    if cash is None and withdrawable is not None:
+        cash = withdrawable
+    if withdrawable is None and cash is not None:
+        withdrawable = cash
+
     return {
-        "broker": (str(raw["broker"]).strip() if raw.get("broker") not in (None, "") else None),
+        "broker": _text("broker"),
+        "account_name": _text("account_name"),
+        "account_display": _text("account_display"),
         "equity": None if equity is None else round(float(equity), 2),
+        "cash_balance": cash,
         "available": _to_float(raw.get("available")),
-        "withdrawable": _to_float(raw.get("withdrawable")),
+        "withdrawable": withdrawable,
         "frozen": _to_float(raw.get("frozen")),
         "stock_market_value": _to_float(raw.get("stock_market_value")),
         "position_pnl": _to_float(raw.get("position_pnl")),
@@ -258,8 +279,37 @@ def parse_screenshot(image_b64: str, llm: dict) -> dict:
     raise RuntimeError("截图解析失败")
 
 
-def validate_apply_payload(body: dict) -> tuple[Optional[float], str, list[dict], bool]:
-    """校验确认写入体：equity 可空（不改权益）、holdings、replace。"""
+_APPLY_FIELD_KEYS = (
+    "account_name", "account_display", "broker",
+    "cash_balance", "available", "withdrawable", "frozen",
+    "stock_market_value", "position_pnl", "daily_pnl", "daily_pnl_pct",
+)
+
+
+def extract_account_fields(body: dict) -> dict:
+    """从确认写入体抽出命名账户栏位。"""
+    src = body.get("account_fields") if isinstance(body.get("account_fields"), dict) else body
+    out: dict[str, Any] = {}
+    for k in _APPLY_FIELD_KEYS:
+        if k not in src:
+            continue
+        v = src[k]
+        if v is None or v == "":
+            continue
+        if k in {
+            "cash_balance", "available", "withdrawable", "frozen",
+            "stock_market_value", "position_pnl", "daily_pnl", "daily_pnl_pct",
+        }:
+            fv = _to_float(v)
+            if fv is not None:
+                out[k] = fv
+        else:
+            out[k] = str(v).strip()
+    return out
+
+
+def validate_apply_payload(body: dict) -> tuple[Optional[float], str, list[dict], bool, dict]:
+    """校验确认写入体：equity 可空（不改权益）、holdings、replace、账户栏位。"""
     equity = body.get("equity", None)
     if equity is not None and equity != "":
         eq = float(equity)
@@ -269,6 +319,7 @@ def validate_apply_payload(body: dict) -> tuple[Optional[float], str, list[dict]
         eq = None
     note = str(body.get("note") or "")
     replace = bool(body.get("replace", True))
+    fields = extract_account_fields(body or {})
     rows_in = body.get("holdings") or []
     if not isinstance(rows_in, list):
         raise ValueError("holdings 须为数组")
@@ -290,4 +341,4 @@ def validate_apply_payload(body: dict) -> tuple[Optional[float], str, list[dict]
             raise ValueError(f"持仓代码重复：{code}")
         seen.add(code)
         out.append({"code": code, "shares": float(shares), "cost": float(cost)})
-    return eq, note, out, replace
+    return eq, note, out, replace, fields

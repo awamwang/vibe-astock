@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Upload, X } from "lucide-react";
-import { ApiError, api, type ScreenshotDraft, type ScreenshotHoldingRow } from "@/lib/api";
+import { ApiError, api, type ScreenshotDraft, type ScreenshotHoldingRow, type TradeAccountFields } from "@/lib/api";
 import { hasLlm, loadLlm } from "@/lib/llm";
 import { cn } from "@/lib/utils";
 
 type AccountFieldKey =
+  | "account_name"
+  | "account_display"
   | "equity"
+  | "cash_balance"
   | "available"
   | "withdrawable"
   | "frozen"
@@ -14,16 +17,33 @@ type AccountFieldKey =
   | "daily_pnl"
   | "daily_pnl_pct";
 
-const ACCOUNT_FIELDS: { key: AccountFieldKey; label: string; editable: boolean }[] = [
-  { key: "equity", label: "总权益/总资产", editable: true },
-  { key: "available", label: "可用金额", editable: true },
-  { key: "withdrawable", label: "可取金额", editable: true },
-  { key: "frozen", label: "冻结金额", editable: true },
-  { key: "stock_market_value", label: "股票市值", editable: true },
-  { key: "position_pnl", label: "持仓盈亏", editable: true },
-  { key: "daily_pnl", label: "当日盈亏", editable: true },
-  { key: "daily_pnl_pct", label: "当日盈亏比%", editable: true },
+const ACCOUNT_FIELDS: { key: AccountFieldKey; label: string }[] = [
+  { key: "account_name", label: "账户名" },
+  { key: "account_display", label: "右下角显示" },
+  { key: "equity", label: "总权益/总资产" },
+  { key: "cash_balance", label: "资金余额" },
+  { key: "available", label: "可用金额" },
+  { key: "withdrawable", label: "可取金额" },
+  { key: "frozen", label: "冻结金额" },
+  { key: "stock_market_value", label: "股票市值" },
+  { key: "position_pnl", label: "持仓盈亏" },
+  { key: "daily_pnl", label: "当日盈亏" },
+  { key: "daily_pnl_pct", label: "当日盈亏比%" },
 ];
+
+const EMPTY_ACCOUNT: Record<AccountFieldKey, string> = {
+  account_name: "",
+  account_display: "",
+  equity: "",
+  cash_balance: "",
+  available: "",
+  withdrawable: "",
+  frozen: "",
+  stock_market_value: "",
+  position_pnl: "",
+  daily_pnl: "",
+  daily_pnl_pct: "",
+};
 
 function numStr(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return "";
@@ -37,21 +57,73 @@ function parseNum(s: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function buildNote(draft: ScreenshotDraft, account: Record<AccountFieldKey, string>, note: string): string {
-  const parts: string[] = [];
-  if (draft.broker) parts.push(`来源:${draft.broker}`);
+/** 命名格式化摘要（与后端 format_account_summary 对齐） */
+function buildNote(
+  draft: ScreenshotDraft,
+  account: Record<AccountFieldKey, string>,
+  note: string,
+): string {
+  const head: string[] = [];
+  const name = account.account_name.trim();
+  if (name) head.push(`账户名${name}`);
+  const cash = parseNum(account.cash_balance) ?? parseNum(account.withdrawable);
+  if (cash != null) head.push(`资金余额${cash}`);
+  const disp = account.account_display.trim();
+  if (disp) head.push(`右下角显示${disp}`);
+
+  const tail: string[] = [];
+  const broker = (draft.broker || "").trim();
+  if (broker) tail.push(`来源:${broker}`);
   const av = parseNum(account.available);
+  if (av != null) tail.push(`可用${av}`);
   const mv = parseNum(account.stock_market_value);
+  if (mv != null) tail.push(`市值${Number.isInteger(mv) ? mv : mv}`);
   const dp = parseNum(account.daily_pnl);
+  if (dp != null) tail.push(`当日盈亏${dp}`);
   const dpp = parseNum(account.daily_pnl_pct);
-  if (av != null) parts.push(`可用${av}`);
-  if (mv != null) parts.push(`市值${mv}`);
-  if (dp != null) parts.push(`当日盈亏${dp}`);
-  if (dpp != null) parts.push(`当日盈亏比${dpp}%`);
-  const auto = parts.join(" · ");
+  if (dpp != null) tail.push(`当日盈亏比${dpp}%`);
+
+  let auto = "";
+  if (head.length && tail.length) auto = `${head.join("，")}｜${tail.join(" · ")}`;
+  else if (head.length) auto = head.join("，");
+  else if (tail.length) auto = tail.join(" · ");
+
   const manual = note.trim();
-  if (manual && auto) return `${manual}｜${auto}`;
+  if (manual && auto) {
+    if (manual === auto || manual.includes(auto)) return manual;
+    return manual.includes("｜") ? `${manual} · ${auto}` : `${manual}｜${auto}`;
+  }
   return manual || auto;
+}
+
+function collectFields(
+  draft: ScreenshotDraft,
+  account: Record<AccountFieldKey, string>,
+): TradeAccountFields {
+  const out: TradeAccountFields = {};
+  const name = account.account_name.trim();
+  if (name) out.account_name = name;
+  const disp = account.account_display.trim();
+  if (disp) out.account_display = disp;
+  if (draft.broker?.trim()) out.broker = draft.broker.trim();
+
+  const nums: { key: keyof TradeAccountFields; src: AccountFieldKey }[] = [
+    { key: "cash_balance", src: "cash_balance" },
+    { key: "available", src: "available" },
+    { key: "withdrawable", src: "withdrawable" },
+    { key: "frozen", src: "frozen" },
+    { key: "stock_market_value", src: "stock_market_value" },
+    { key: "position_pnl", src: "position_pnl" },
+    { key: "daily_pnl", src: "daily_pnl" },
+    { key: "daily_pnl_pct", src: "daily_pnl_pct" },
+  ];
+  for (const { key, src } of nums) {
+    const n = parseNum(account[src]);
+    if (n != null) out[key] = n;
+  }
+  if (out.cash_balance == null && out.withdrawable != null) out.cash_balance = out.withdrawable;
+  if (out.withdrawable == null && out.cash_balance != null) out.withdrawable = out.cash_balance;
+  return out;
 }
 
 export function PortfolioScreenshotImport({
@@ -67,10 +139,7 @@ export function PortfolioScreenshotImport({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [draft, setDraft] = useState<ScreenshotDraft | null>(null);
-  const [account, setAccount] = useState<Record<AccountFieldKey, string>>({
-    equity: "", available: "", withdrawable: "", frozen: "",
-    stock_market_value: "", position_pnl: "", daily_pnl: "", daily_pnl_pct: "",
-  });
+  const [account, setAccount] = useState<Record<AccountFieldKey, string>>({ ...EMPTY_ACCOUNT });
   const [note, setNote] = useState("");
   const [rows, setRows] = useState<ScreenshotHoldingRow[]>([]);
   const [replace, setReplace] = useState(true);
@@ -81,10 +150,7 @@ export function PortfolioScreenshotImport({
     setRows([]);
     setNote("");
     setReplace(true);
-    setAccount({
-      equity: "", available: "", withdrawable: "", frozen: "",
-      stock_market_value: "", position_pnl: "", daily_pnl: "", daily_pnl_pct: "",
-    });
+    setAccount({ ...EMPTY_ACCOUNT });
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -96,10 +162,14 @@ export function PortfolioScreenshotImport({
 
   function applyDraft(d: ScreenshotDraft) {
     setDraft(d);
+    const cash = d.cash_balance ?? d.withdrawable;
     setAccount({
+      account_name: d.account_name || "",
+      account_display: d.account_display || "",
       equity: numStr(d.equity),
+      cash_balance: numStr(cash),
       available: numStr(d.available),
-      withdrawable: numStr(d.withdrawable),
+      withdrawable: numStr(d.withdrawable ?? cash),
       frozen: numStr(d.frozen),
       stock_market_value: numStr(d.stock_market_value),
       position_pnl: numStr(d.position_pnl),
@@ -219,9 +289,11 @@ export function PortfolioScreenshotImport({
     setBusy(true);
     setErr("");
     try {
+      const account_fields = collectFields(draft, account);
       await api.applyTradeScreenshot({
         equity,
         note: buildNote(draft, account, note),
+        account_fields,
         holdings,
         replace,
       });
@@ -236,6 +308,8 @@ export function PortfolioScreenshotImport({
   }
 
   if (!open) return null;
+
+  const previewNote = draft ? buildNote(draft, account, note) : "";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" onClick={close}>
@@ -291,7 +365,7 @@ export function PortfolioScreenshotImport({
           <>
             <p className="mb-3 text-xs text-muted-foreground">
               栏位固定；请核对数字后再写入。勾选的持仓会
-              {replace ? "整表覆盖" : "合并加入"}本地持仓；总权益写入账户。
+              {replace ? "整表覆盖" : "合并加入"}本地持仓；总权益与命名账户栏位写入日快照（同日可覆盖）。
               {draft.broker ? ` 识别来源：${draft.broker}` : ""}
               {" "}也可再粘贴截图重新解析。
             </p>
@@ -323,7 +397,7 @@ export function PortfolioScreenshotImport({
                       <input
                         value={note}
                         onChange={(e) => setNote(e.target.value)}
-                        placeholder="可选"
+                        placeholder="可选；空则用下方自动摘要"
                         className="w-full rounded border border-border bg-card px-2 py-1 outline-none focus:border-primary/50"
                       />
                     </td>
@@ -331,6 +405,12 @@ export function PortfolioScreenshotImport({
                 </tbody>
               </table>
             </div>
+
+            {previewNote && (
+              <p className="mb-3 rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                格式化写入：{previewNote}
+              </p>
+            )}
 
             <div className="mb-3 max-h-[40vh] overflow-auto rounded-lg border border-border/60">
               <table className="w-full text-left text-xs">

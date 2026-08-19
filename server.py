@@ -879,15 +879,29 @@ def api_trade_constants(request: Request, body: dict = Body(...)):
 
 @app.post("/api/trade/account/snapshot")
 def api_trade_snapshot(request: Request, date: str | None = None, body: dict | None = Body(None)):
-    """写入当日权益快照（通常在盘后对照持仓市值）。"""
+    """写入当日权益快照（同日覆盖；可带命名账户栏位）。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
     try:
         if not date:
             date = trade_calendar.latest_session() or china_today()
         date = validate_trade_date(date)
-        mv = float((body or {}).get("market_value") or 0)
-        return trade_store.snapshot_equity(date, mv)
+        payload = body or {}
+        mv = float(payload.get("market_value") or 0)
+        fields = payload.get("account_fields")
+        if not isinstance(fields, dict):
+            # 允许扁平传栏位
+            fields = {
+                k: payload[k] for k in (
+                    "account_name", "cash_balance", "account_display", "broker",
+                    "available", "withdrawable", "frozen",
+                    "stock_market_value", "position_pnl", "daily_pnl", "daily_pnl_pct",
+                ) if k in payload
+            } or None
+        note = payload.get("note")
+        return trade_store.snapshot_equity(
+            date, mv, fields, note=None if note is None else str(note),
+        )
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -995,27 +1009,32 @@ def api_trade_screenshot_parse(request: Request, body: dict = Body(...)):
 
 @app.post("/api/trade/screenshot/apply")
 def api_trade_screenshot_apply(request: Request, body: dict = Body(...)):
-    """用户确认对照表后写入总权益与本地持仓。"""
+    """用户确认对照表后写入总权益、账户栏位、本地持仓，并按日覆盖写入快照。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
     try:
-        equity, note, holdings, replace = screenshot_parse.validate_apply_payload(body or {})
+        equity, note, holdings, replace, fields = screenshot_parse.validate_apply_payload(body or {})
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+    # 备注为空时用命名栏位格式化
+    if not note.strip() and fields:
+        note = trade_store.format_account_summary(fields)
 
     account = None
     if equity is not None:
         try:
-            account = trade_store.set_equity(equity, note)
+            account = trade_store.set_equity(equity, note, fields=fields or None)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-    elif note:
-        # 只改备注：保留原权益
+    elif fields or note:
         try:
             cur = trade_store.load_account()
             eq = cur.get("equity")
             if eq is not None:
-                account = trade_store.set_equity(float(eq), note)
+                account = trade_store.set_equity(float(eq), note, fields=fields or None)
+            elif fields:
+                account = trade_store.set_account_fields(fields, note=note or None)
             else:
                 account = trade_store.load_account()
         except (TypeError, ValueError) as exc:
@@ -1037,12 +1056,25 @@ def api_trade_screenshot_apply(request: Request, body: dict = Body(...)):
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"写入持仓失败：{type(exc).__name__}: {exc}"}, status_code=500)
 
+    # 按最近交易日覆盖写入日快照（含命名栏位）
+    snap_date = None
+    try:
+        snap_date = trade_calendar.latest_session() or china_today()
+        snap_date = validate_trade_date(snap_date)
+        mv = float((portfolio or {}).get("totals", {}).get("market_value") or 0)
+        if mv == 0 and fields.get("stock_market_value") is not None:
+            mv = float(fields["stock_market_value"])
+        account = trade_store.snapshot_equity(snap_date, mv, fields or None, note=note or None)
+    except (TypeError, ValueError):
+        account = account or trade_store.load_account()
+
     return {
         "ok": True,
         "account": account or trade_store.load_account(),
         "portfolio": portfolio,
         "written_holdings": len(holdings),
         "replace": replace,
+        "snapshot_date": snap_date,
     }
 
 

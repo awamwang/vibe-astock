@@ -23,6 +23,25 @@ _ACCOUNT_FILE = os.path.join(_ACCOUNT_DIR, "trade_account.json")
 _SCHEMA = 1
 _LOCK = threading.Lock()
 
+# 日快照 / 账户栏位：命名写入；同日覆盖
+_ACCOUNT_FIELD_KEYS = (
+    "account_name",
+    "cash_balance",
+    "account_display",
+    "broker",
+    "available",
+    "withdrawable",
+    "frozen",
+    "stock_market_value",
+    "position_pnl",
+    "daily_pnl",
+    "daily_pnl_pct",
+)
+_NUM_FIELD_KEYS = frozenset({
+    "cash_balance", "available", "withdrawable", "frozen",
+    "stock_market_value", "position_pnl", "daily_pnl", "daily_pnl_pct",
+})
+
 
 def _trade_path(date: str) -> str:
     return os.path.join(_TRADE_DIR, f"{date}.json")
@@ -33,6 +52,7 @@ def _default_account() -> dict:
         "schema": _SCHEMA,
         "equity": None,
         "equity_note": "",
+        "account_fields": {},
         "updated_at": None,
         "snapshots": {},
         "constants": {
@@ -42,6 +62,82 @@ def _default_account() -> dict:
             "max_dd_hard": tb.DEFAULT_MAX_DD_HARD,
         },
     }
+
+
+def _to_opt_float(v: Any) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        return round(float(v), 4 if abs(float(v)) < 1000 else 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_account_fields(raw: Optional[dict]) -> dict:
+    """只保留已知栏位；数字统一 float，文本去空白。"""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k in _ACCOUNT_FIELD_KEYS:
+        if k not in raw:
+            continue
+        v = raw[k]
+        if v is None or v == "":
+            continue
+        if k in _NUM_FIELD_KEYS:
+            fv = _to_opt_float(v)
+            if fv is not None:
+                out[k] = fv
+        else:
+            s = str(v).strip()
+            if s:
+                out[k] = s
+    return out
+
+
+def format_account_summary(fields: Optional[dict], manual_note: str = "") -> str:
+    """命名格式化摘要，例如：账户名…，资金余额…，右下角显示…｜来源:… · 可用… · …"""
+    f = normalize_account_fields(fields)
+    head: list[str] = []
+    if f.get("account_name"):
+        head.append(f"账户名{f['account_name']}")
+    cash = f.get("cash_balance")
+    if cash is None:
+        cash = f.get("withdrawable")
+    if cash is not None:
+        head.append(f"资金余额{cash}")
+    if f.get("account_display"):
+        head.append(f"右下角显示{f['account_display']}")
+
+    tail: list[str] = []
+    if f.get("broker"):
+        tail.append(f"来源:{f['broker']}")
+    if f.get("available") is not None:
+        tail.append(f"可用{f['available']}")
+    mv = f.get("stock_market_value")
+    if mv is not None:
+        # 市值整数不带小数尾巴
+        tail.append(f"市值{int(mv) if float(mv) == int(mv) else mv}")
+    if f.get("daily_pnl") is not None:
+        tail.append(f"当日盈亏{f['daily_pnl']}")
+    if f.get("daily_pnl_pct") is not None:
+        tail.append(f"当日盈亏比{f['daily_pnl_pct']}%")
+
+    auto = ""
+    if head and tail:
+        auto = "，".join(head) + "｜" + " · ".join(tail)
+    elif head:
+        auto = "，".join(head)
+    elif tail:
+        auto = " · ".join(tail)
+
+    manual = (manual_note or "").strip()
+    if manual and auto:
+        # 手工备注不重复整段自动摘要
+        if manual == auto or auto in manual:
+            return manual
+        return f"{manual}｜{auto}" if "｜" not in manual else f"{manual} · {auto}"
+    return manual or auto
 
 
 def load_account() -> dict:
@@ -56,6 +152,8 @@ def load_account() -> dict:
             base["constants"] = {**base["constants"], **d["constants"]}
         if isinstance(d.get("snapshots"), dict):
             base["snapshots"] = d["snapshots"]
+        if isinstance(d.get("account_fields"), dict):
+            base["account_fields"] = normalize_account_fields(d["account_fields"])
         return base
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return _default_account()
@@ -70,14 +168,38 @@ def save_account(d: dict) -> dict:
     return d
 
 
-def set_equity(equity: float, note: str = "") -> dict:
+def set_equity(equity: float, note: str = "", fields: Optional[dict] = None) -> dict:
     if equity < 0:
         raise ValueError("权益不能为负")
     with _LOCK:
         d = load_account()
         d["equity"] = round(float(equity), 2)
+        if fields is not None:
+            merged = {**(d.get("account_fields") or {}), **normalize_account_fields(fields)}
+            d["account_fields"] = normalize_account_fields(merged)
+        if note is not None:
+            d["equity_note"] = str(note) if str(note).strip() else format_account_summary(
+                d.get("account_fields") or {}
+            )
+        return save_account(d)
+
+
+def set_account_fields(fields: dict, *, note: Optional[str] = None, replace: bool = False) -> dict:
+    """更新账户结构化栏位；replace=True 整表替换，否则合并。"""
+    with _LOCK:
+        d = load_account()
+        norm = normalize_account_fields(fields)
+        if replace:
+            d["account_fields"] = norm
+        else:
+            d["account_fields"] = normalize_account_fields({
+                **(d.get("account_fields") or {}),
+                **norm,
+            })
         if note is not None:
             d["equity_note"] = str(note)
+        elif not (d.get("equity_note") or "").strip():
+            d["equity_note"] = format_account_summary(d.get("account_fields") or {})
         return save_account(d)
 
 
@@ -99,20 +221,48 @@ def set_constants(**kwargs: float) -> dict:
         return save_account(d)
 
 
-def snapshot_equity(date: str, market_value: float) -> dict:
-    """已收盘日写入权益快照（供日后当日亏损/回撤；v1 不自动执行 MaxDD）。"""
+def snapshot_equity(
+    date: str,
+    market_value: float,
+    fields: Optional[dict] = None,
+    *,
+    note: Optional[str] = None,
+) -> dict:
+    """已收盘日写入权益快照（同日覆盖）。含命名账户栏位；v1 不自动执行 MaxDD。"""
     date = str(date)
     with _LOCK:
         d = load_account()
         eq = d.get("equity")
         if eq is None:
             return d
-        snaps = dict(d.get("snapshots") or {})
-        snaps[date] = {
+        # 未显式传入则沿用账户当前栏位
+        src = normalize_account_fields(fields) if fields is not None else {}
+        if not src:
+            src = dict(d.get("account_fields") or {})
+        elif fields is not None:
+            # 显式传入时与账户栏位合并（传入优先），并回写账户
+            merged = {**(d.get("account_fields") or {}), **src}
+            src = normalize_account_fields(merged)
+            d["account_fields"] = src
+
+        mv = round(float(market_value), 2)
+        if mv == 0 and src.get("stock_market_value") is not None:
+            mv = round(float(src["stock_market_value"]), 2)
+
+        snap: dict[str, Any] = {
             "equity": eq,
-            "market_value": round(float(market_value), 2),
+            "market_value": mv,
             "asof": china_now().strftime("%Y-%m-%d %H:%M:%S"),
+            **src,
         }
+        summary = format_account_summary(src, note or "")
+        if summary:
+            snap["summary"] = summary
+            if note is not None or not (d.get("equity_note") or "").strip():
+                d["equity_note"] = summary
+
+        snaps = dict(d.get("snapshots") or {})
+        snaps[date] = snap  # 同日整行覆盖
         d["snapshots"] = snaps
         return save_account(d)
 

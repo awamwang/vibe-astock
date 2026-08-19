@@ -246,7 +246,10 @@ export interface ScreenshotHoldingRow {
 }
 export interface ScreenshotDraft {
   broker?: string | null;
+  account_name?: string | null;
+  account_display?: string | null;
   equity?: number | null;
+  cash_balance?: number | null;
   available?: number | null;
   withdrawable?: number | null;
   frozen?: number | null;
@@ -256,6 +259,27 @@ export interface ScreenshotDraft {
   daily_pnl_pct?: number | null;
   note?: string | null;
   holdings: ScreenshotHoldingRow[];
+}
+
+export interface TradeAccountFields {
+  account_name?: string;
+  cash_balance?: number;
+  account_display?: string;
+  broker?: string;
+  available?: number;
+  withdrawable?: number;
+  frozen?: number;
+  stock_market_value?: number;
+  position_pnl?: number;
+  daily_pnl?: number;
+  daily_pnl_pct?: number;
+}
+
+export interface TradeDaySnapshot extends TradeAccountFields {
+  equity: number;
+  market_value: number;
+  asof: string;
+  summary?: string;
 }
 
 /** 仓位预算六档（硬规则，与 AI 五档分开） */
@@ -299,8 +323,9 @@ export interface TradeAccount {
   schema: number;
   equity: number | null;
   equity_note: string;
+  account_fields?: TradeAccountFields;
   updated_at: string | null;
-  snapshots: Record<string, { equity: number; market_value: number; asof: string }>;
+  snapshots: Record<string, TradeDaySnapshot>;
   constants: TradeConstants;
 }
 export interface TradeGuard {
@@ -471,8 +496,14 @@ export const api = {
     request<TradeAccount>("/trade/account/equity", "POST", { equity, note }),
   setTradeConstants: (c: Partial<TradeConstants>) =>
     request<TradeAccount>("/trade/account/constants", "POST", c),
-  tradeSnapshot: (date: string, market_value: number) =>
-    request<TradeAccount>(`/trade/account/snapshot?date=${date}`, "POST", { market_value }),
+  tradeSnapshot: (date: string, market_value: number, extra?: {
+    account_fields?: TradeAccountFields;
+    note?: string;
+  }) =>
+    request<TradeAccount>(`/trade/account/snapshot?date=${date}`, "POST", {
+      market_value,
+      ...(extra || {}),
+    }),
   tradeGuard: (date?: string) =>
     get<TradeGuard>(`/trade/guard${date ? `?date=${date}` : ""}`),
   tradeSize: (body: { date?: string; stop_pct: number; boards?: number | null }) =>
@@ -482,6 +513,7 @@ export const api = {
   applyTradeScreenshot: (body: {
     equity?: number | null;
     note?: string;
+    account_fields?: TradeAccountFields;
     holdings: { code: string; shares: number; cost: number; include?: boolean }[];
     replace?: boolean;
   }) => request<{
@@ -490,6 +522,7 @@ export const api = {
     portfolio: PortfolioData;
     written_holdings: number;
     replace: boolean;
+    snapshot_date?: string | null;
   }>("/trade/screenshot/apply", "POST", body),
   valuation: (code: string) => get<Valuation>(`/valuation?code=${code}`),
   percentile: (code: string) => get<ValPercentile>(`/valuation/percentile?code=${code}`),
