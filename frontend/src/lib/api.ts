@@ -457,12 +457,42 @@ export interface LiveEmotion {
   promotion_base_date?: string | null;
 }
 
+/** 短线盘面环境指标（今日 / 昨日对照，单位见各字段注释） */
+export interface ShortBoardEnv {
+  temperature?: number | null;  // 情绪温度 0-100
+  n_up?: number | null;
+  n_down?: number | null;
+  n_sjzt?: number | null;       // 实际涨停
+  n_sjdt?: number | null;       // 实际跌停
+  v_sh?: number | null;         // 上证成交额，元
+  v_ca?: number | null;         // A 股成交额，元
+  m_net?: number | null;        // 主力净流入，元
+  net_s2n?: number | null;      // 北向净买，元
+  broken_r?: number | null;     // 炸板率，已 *100
+  zt_avg_zr?: number | null;    // 涨停溢价，已 *100
+  broken_c?: number | null;
+}
+export interface ShortBoardSnapshot {
+  available: boolean;
+  reason?: string | null;
+  date?: string;
+  prev_date?: string | null;
+  today: ShortBoardEnv;
+  yesterday: ShortBoardEnv;
+  updated?: string;
+  placeholders?: {
+    volume_vs_yesterday?: boolean;
+    volume_5d_ratio?: boolean;
+  };
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
   marketSession: () => get<MarketSession>("/market/session"),
   overseas: () => get<OverseasSnapshot>("/market/overseas"),
   liveEmotion: () => get<LiveEmotion>("/market/live-emotion"),
+  shortBoard: () => get<ShortBoardSnapshot>("/market/short-board"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),

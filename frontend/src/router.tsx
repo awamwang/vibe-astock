@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { AgentReview } from "@/pages/AgentReview";
 import { DailyReview } from "@/pages/DailyReview";
+import { ShortBoard } from "@/pages/ShortBoard";
 import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <Navigate to="/agent/review" replace /> },
       { path: "/agent/review", element: <AgentReview /> },
+      { path: "/short-board", element: <ShortBoard /> },
       { path: "/daily-review", element: <DailyReview /> },
       { path: "/first-board", element: <FirstBoard /> },
       { path: "/heat", element: <AgentWeekly /> },

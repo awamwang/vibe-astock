@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,7 @@ const AUTHOR = "Simon 林";
 // 复盘看板本身由 agent 驱动（带 🤖 角标），其余是它的分项数据。
 const REVIEW_NAV = [
   { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
+  { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/first-board", icon: Flame, label: "首板分析" },
   { to: "/heat", icon: CalendarRange, label: "近5天热度" },

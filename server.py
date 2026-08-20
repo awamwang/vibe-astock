@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
     live_emotion, overseas, preflight, reflection, review_store, screenshot_parse,
-    trade_calendar, trade_budget, trade_store,
+    short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -514,6 +514,15 @@ def api_market_live_emotion():
     这条要的就是今天、随盘变化。两个块在界面上分别标清是哪一场。
     """
     return live_emotion.snapshot()
+
+
+@app.get("/api/market/short-board")
+def api_market_short_board():
+    """短线盘面环境指标条（情绪温度 / 涨跌家数 / 涨跌停 / 成交额 / 资金等）。
+
+    对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；量能两卡暂占位。
+    """
+    return short_board.snapshot()
 
 
 @app.get("/api/market/overseas")
