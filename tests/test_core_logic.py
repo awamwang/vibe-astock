@@ -4129,10 +4129,9 @@ class TestPreflightSeesTheRealFailureStrings:
     于是只证明了"体检认得出这两种长相"，从没证明"data.py 失败时真的长这样"。
     实际上有两路失败返回的是裸文本：`龙虎榜取数失败：…` 和
     `（涨停原因题材串未取到：…）` —— 非空、没前缀，在体检眼里跟正常数据一模一样。
-    题材那一路对**没配 IWENCAI_API_KEY 的用户是常态**，等于这个闸对他们永远是绿的。
-
-    所以这里只 stub 最底层的取数，让 data.py 自己走失败分支。
-    """
+    题材那一路对**主源与备用都失败的用户**才是常态；下面 stub 最底层取数，
+    让 data.py 自己走失败分支。
+"""
 
     @staticmethod
     def _settled(monkeypatch):
@@ -4189,98 +4188,120 @@ class TestThemeReasonsAskForTheRightSession:
 
     收盘后回看上一场是复盘的常态。问"今日"会把当天的题材当成那天的题材，
     而题材串本身不带日期 —— 分析师和界面都看不出来，只会照着讲。
-    问财的返回列名带着日期（`涨停原因[YYYYMMDD]`），所以能拿数据自己反验，
-    不用靠"调用方记得传了 date"。
+    主源 jqka 用响应 `date` 验场次；备用问财/pywencai 用列名 `涨停原因[YYYYMMDD]`。
     """
 
-    class _FakeClient:
-        def __init__(self, col_date, captured):
-            self.col_date, self.captured = col_date, captured
-
-        def query(self, q, page=1, limit=50):
-            self.captured.append(q)
-            if page > 1:
-                return None
-            import pandas as pd
-
-            return pd.DataFrame({"股票代码": ["002491.SZ"],
-                                 f"涨停原因[{self.col_date}]": ["酒店+国企改革"]})
-
-    def _patch(self, monkeypatch, col_date, captured):
+    def test_jqka_primary_uses_requested_date(self, monkeypatch):
         from duanxian import fetchers
 
-        monkeypatch.setenv("IWENCAI_API_KEY", "test-key")
-        cls = TestThemeReasonsAskForTheRightSession._FakeClient
-        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
-                            lambda: (lambda: cls(col_date, captured)))
+        captured = []
 
-    def test_query_carries_the_requested_date(self, monkeypatch):
-        from duanxian import fetchers
+        class _Resp:
+            status_code = 200
+            content = b"1"
+            text = ""
 
-        cap = []
-        self._patch(monkeypatch, "20260729", cap)
+            def json(self):
+                return {
+                    "data": {
+                        "date": "20260729",
+                        "page": {"count": 1, "total": 1, "limit": 200, "page": 1},
+                        "info": [{
+                            "code": "002491",
+                            "name": "通鼎互联",
+                            "reason_type": "酒店+国企改革",
+                        }],
+                    }
+                }
+
+        def _get(url, **kw):
+            captured.append(url)
+            return _Resp()
+
+        monkeypatch.setattr(fetchers, "_direct_get", _get)
+        monkeypatch.setattr(fetchers, "_fetch_zt_reasons_pywencai",
+                            lambda d: ({}, "不应走到备用"))
+        monkeypatch.setattr(fetchers, "_fetch_zt_reasons_iwencai_api",
+                            lambda d: ({}, "不应走到备用"))
         reasons, err = fetchers.fetch_zt_reasons("20260729")
-        assert reasons and err is None, (reasons, err)
-        assert "2026-07-29" in cap[0], f"问的不是被复盘那一场：{cap[0]!r}"
-        assert "今日" not in cap[0], f"还在问「今日」：{cap[0]!r}"
+        assert reasons == {"002491": "酒店+国企改革"}, (reasons, err)
+        assert err is None
+        assert "date=20260729" in captured[0]
+        assert "今日" not in captured[0]
 
-    def test_undated_column_is_refused(self, monkeypatch):
-        """列名不带日期 → 验不出场次 → 当失败。
-
-        「匹配不到日期就放行」等于在最该拦的时候恰好不拦：问财若回一个通用的
-        `涨停原因` 列，错场次的题材会照原样进来，而这条路径正是加这道校验要防的。
-        """
+    def test_jqka_wrong_session_refused_then_fallback(self, monkeypatch):
+        """主源回错场次 → 不采用，改走备用。"""
         from duanxian import fetchers
 
-        cap = []
-        self._patch(monkeypatch, "20260729", cap)
+        class _Resp:
+            status_code = 200
+            content = b"1"
+            text = ""
 
+            def json(self):
+                return {"data": {"date": "20260730", "info": [], "page": {}}}
+
+        monkeypatch.setattr(fetchers, "_direct_get", lambda url, **kw: _Resp())
+        monkeypatch.setattr(
+            fetchers, "_fetch_zt_reasons_pywencai",
+            lambda d: ({"600000": "银行"}, None),
+        )
+        monkeypatch.setattr(fetchers, "_fetch_zt_reasons_iwencai_api",
+                            lambda d: ({}, "跳过"))
+        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        assert reasons == {"600000": "银行"}, (reasons, err)
+        assert err is None
+
+    def test_undated_wencai_column_is_refused(self, monkeypatch):
+        """列名不带日期 → 验不出场次 → 当失败。"""
+        from duanxian import fetchers
         import pandas as pd
 
-        def _undated(q, page=1, limit=50):
-            cap.append(q)
-            return None if page > 1 else pd.DataFrame(
-                {"股票代码": ["002491.SZ"], "涨停原因": ["酒店+国企改革"]})
-
-        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
-                            lambda: (lambda: type("C", (), {"query": staticmethod(_undated)})()))
-        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        df = pd.DataFrame({"股票代码": ["002491.SZ"], "涨停原因": ["酒店+国企改革"]})
+        reasons, err = fetchers._reasons_from_wencai_df(df, "20260729")
         assert reasons == {}, f"没带日期的列被放行了：{reasons}"
         assert "没带日期" in (err or ""), err
 
-    def test_picks_the_column_matching_the_session(self, monkeypatch):
+    def test_picks_the_column_matching_the_session(self):
         """回来多列时挑对场次那一列，不是第 0 列。"""
         from duanxian import fetchers
-
         import pandas as pd
 
-        def _multi(q, page=1, limit=50):
-            return None if page > 1 else pd.DataFrame({
-                "股票代码": ["002491.SZ"],
-                "涨停原因[20260730]": ["今天的题材"],
-                "涨停原因[20260729]": ["那天的题材"],
-            })
-
-        monkeypatch.setenv("IWENCAI_API_KEY", "test-key")
-        monkeypatch.setattr(fetchers, "_iwencai_client_cls",
-                            lambda: (lambda: type("C", (), {"query": staticmethod(_multi)})()))
-        reasons, err = fetchers.fetch_zt_reasons("20260729")
+        df = pd.DataFrame({
+            "股票代码": ["002491.SZ"],
+            "涨停原因[20260730]": ["今天的题材"],
+            "涨停原因[20260729]": ["那天的题材"],
+        })
+        reasons, err = fetchers._reasons_from_wencai_df(df, "20260729")
         assert reasons == {"002491": "那天的题材"}, (reasons, err)
 
-    def test_wrong_session_in_response_is_refused(self, monkeypatch):
-        """问财回的是别的场次 → 宁可没题材串，也不能混进这一场。"""
+    def test_iwencai_api_query_carries_date(self, monkeypatch):
+        """第三备援官方问财仍必须问具体日期，不能问今日。"""
         from duanxian import fetchers
+        import pandas as pd
 
         cap = []
-        self._patch(monkeypatch, "20260730", cap)   # 请求 0729，回来 0730
-        reasons, err = fetchers.fetch_zt_reasons("20260729")
-        assert reasons == {}, f"把 0730 的题材当成 0729 的了：{reasons}"
-        assert "20260730" in (err or ""), err
+
+        class _C:
+            def query(self, q, page=1, limit=50):
+                cap.append(q)
+                if page > 1:
+                    return None
+                return pd.DataFrame({
+                    "股票代码": ["002491.SZ"],
+                    "涨停原因[20260729]": ["酒店+国企改革"],
+                })
+
+        monkeypatch.setenv("IWENCAI_API_KEY", "test-key")
+        monkeypatch.setattr(fetchers, "_iwencai_client_cls", lambda: (lambda: _C()))
+        reasons, err = fetchers._fetch_zt_reasons_iwencai_api("20260729")
+        assert reasons == {"002491": "酒店+国企改革"}, (reasons, err)
+        assert "2026-07-29" in cap[0]
+        assert "今日" not in cap[0]
 
     def test_bad_date_format_refused(self, monkeypatch):
         from duanxian import fetchers
 
-        self._patch(monkeypatch, "20260729", [])
         assert fetchers.fetch_zt_reasons("2026-07-29")[0] == {}
 
 

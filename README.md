@@ -276,13 +276,17 @@ set VIBE_LLM_CLI=claude
 | akshare 昨日涨停池 | **定稿记录**：昨日涨停股在目标日的表现（赚钱效应 / 亏钱效应 / 连板溢价 / 反馈矩阵的主来源）| 不要 |
 | 腾讯财经 `qt.gtimg.cn` | 实时行情批量（自选股、今日实时打板情绪；也作上面那几项的兜底）| 不要 |
 | 腾讯 hist `stock_zh_a_hist_tx` | K 线与交易日历（部分网络下东财 push2his 被封，故走腾讯） | 不要 |
-| 同花顺问财 | 涨停原因题材串（→ 题材事件树） | **要** |
+| 同花顺涨停池 `data.10jqka.com.cn` | 涨停原因题材串（→ 题材事件树；与 [zvt LimitUpInfo](https://github.com/zvtvz/zvt) 同源） | 不要 |
+| [pywencai](https://github.com/zsrl/pywencai)（备用） | 同上，主源失败时回退 | cookie |
+| 同花顺问财 openapi（再备用） | 同上 | `IWENCAI_API_KEY` |
 
-**除了题材串，其余全部免费直连、不用任何 key。** 题材串走同花顺问财，需要
-`IWENCAI_API_KEY`；不配也能跑，只是「题材事件树」那一块会如实标成不可用
-（复盘的其余部分不受影响）。配法：在仓库根建 `.env` 写一行
+题材串**默认免费**走同花顺涨停池；失败再试 pywencai（需 `IWENCAI_COOKIE` +
+Node.js 16+），再失败可走 `IWENCAI_API_KEY`。全失败时「题材事件树」如实标成不可用
+（复盘其余部分不受影响）。备用配法写在仓库根 `.env`：
 
 ```
+IWENCAI_COOKIE=从问财网页请求头复制的Cookie
+# 或
 IWENCAI_API_KEY=你的key
 ```
 

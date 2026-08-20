@@ -5,8 +5,8 @@
         → push2delay.eastmoney.com 的 clist 接口
         （push2.eastmoney.com 在部分网络下被重置，故用 delay 镜像）
   · 涨停池 / 炸板池 / 强势股池 / 龙虎榜 / 情绪总览 → akshare 原生
-  · 涨停原因题材串 → 同花顺问财（**需要 IWENCAI_API_KEY**，没有就跳过这一路，
-        复盘照常出，只是题材树不可用）
+  · 涨停原因题材串 → 同花顺涨停池（与 zvt LimitUpInfo / jqka 同源，免费）；
+        失败时回退 pywencai（需 cookie）；再失败可走 IWENCAI_API_KEY
   · 5 日 / 10 日累计净额由 clist 三窗口直取，不逐板块拉 daykline
         （push2his 历史接口在部分网络下被封，delay 镜像只给当日）
 """
@@ -77,7 +77,7 @@ _load_env()
 # 在"系统代理挂掉东财"的机器上它会失败 —— 但那是响亮的失败：核心数据缺 → 体检拒跑 →
 # 界面给一句能照着办的话，而不是静默给错数。要连 akshare 一起强行直连就显式开
 # VIBE_MARKET_DIRECT=1（下面会说清它是进程级的）。
-_DIRECT_HOSTS = ("eastmoney.com", "qt.gtimg.cn")
+_DIRECT_HOSTS = ("eastmoney.com", "qt.gtimg.cn", "10jqka.com.cn")
 
 
 def _flag(name: str) -> bool:
@@ -329,75 +329,209 @@ def fetch_zt_pool(date):
 
 
 # ----------------------------------------------------------------------------
-# 2b. 涨停原因/题材 (iwencai query2data)
-#     东财涨停池无"涨停原因"列, 只有所属行业; 用同花顺问财结构化查询补题材串.
+# 2b. 涨停原因/题材
+#     东财涨停池无"涨停原因"列, 只有所属行业.
+#     主源：同花顺 data.10jqka.com.cn 涨停池（与 zvt LimitUpInfo.reason ← reason_type 同源）
+#     备用：pywencai（需 cookie）；再失败可走 IWENCAI_API_KEY 官方接口
 #     返回 {6位代码: reason}. 拿不到 → 空 dict, 调用方填 "—".
 # ----------------------------------------------------------------------------
-def fetch_zt_reasons(date):
-    """
-    date: 'YYYYMMDD'
-    iwencai 返回 涨停原因[YYYYMMDD] 列, 代码形如 002491.SZ, 取前6位匹配.
-    reason 形如 '光纤光缆+产能扩张+数据中心', 已是简洁题材串, 直接用.
 
-    ⚠️ 问的必须是 `date` 那一场，不能问"今日" —— 复盘的常态就是收盘后回看上一场，
-    问"今日"会把当天的题材当成被复盘那天的题材，而且看不出来（题材串本身没有日期）。
-    返回列名里带着问财实际给的日期（`涨停原因[YYYYMMDD]`），拿它和请求的日期对一遍：
-    不一致就当取数失败，宁可没有题材串，也不能把别的交易日的题材塞进这一场。
-    """
+# 与 zvt jqka_api.get_limit_up 相同的 field 列表（含 reason_type=9004）
+_JQKA_LIMIT_UP_FIELDS = (
+    "199112,10,9001,330323,330324,330325,9002,330329,"
+    "133971,133970,1968584,3475914,9003,9004"
+)
+_JQKA_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Host": "data.10jqka.com.cn",
+    "Referer": (
+        "https://data.10jqka.com.cn/datacenterph/limitup/limtupInfo.html"
+        "?fontzoom=no&back_source=wxhy"
+    ),
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/109.0.0.0 Mobile Safari/537.36"
+    ),
+}
+
+
+def _fetch_zt_reasons_jqka(date_ymd):
+    """同花顺涨停池 reason_type（zvt LimitUpInfo 同源），按请求日验场次。"""
+    url = (
+        "https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool"
+        f"?field={_JQKA_LIMIT_UP_FIELDS}&filter=HS,GEM2STAR"
+        f"&order_field=199112&order_type=0&date={date_ymd}"
+    )
+    reasons = {}
+    page = 1
+    page_limit = 200
+    try:
+        while page <= 20:
+            req = f"{url}&page={page}&limit={page_limit}&_={int(time.time() * 1000)}"
+            resp = _direct_get(req, headers=_JQKA_HEADERS, timeout=20)
+            if resp.status_code != 200:
+                return {}, f"HTTP {resp.status_code}: {resp.text[:80]}"
+            payload = resp.json() if resp.content else {}
+            data = (payload or {}).get("data") or {}
+            got_date = str(data.get("date") or "").replace("-", "")
+            if got_date and got_date != date_ymd:
+                return {}, f"同花顺返回的是 {got_date} 的涨停池, 不是 {date_ymd}"
+            info = data.get("info") or []
+            if not info and page == 1:
+                # 非交易日 / 无涨停：接口常给空列表且 date 仍是请求日
+                if got_date == date_ymd or not got_date:
+                    return {}, "同花顺涨停池为空"
+                return {}, f"同花顺返回异常: keys={list(data)[:6]}"
+            for row in info:
+                code6 = str(row.get("code") or "")[:6]
+                reason = str(row.get("reason_type") or "").strip()
+                if code6.isdigit() and len(code6) == 6 and reason and reason.lower() != "nan":
+                    if code6 not in reasons:
+                        reasons[code6] = _clean_reason(reason)
+            page_meta = data.get("page") or {}
+            total_pages = int(page_meta.get("count") or 1)
+            if page >= total_pages or len(info) < page_limit:
+                break
+            page += 1
+    except Exception as e:
+        return {}, f"{type(e).__name__}: {str(e)[:90]}"
+    if not reasons:
+        return {}, "同花顺涨停池无有效涨停原因"
+    return reasons, None
+
+
+def _pywencai_cookie():
+    """pywencai 必填 cookie：优先 IWENCAI_COOKIE，兼容 PYWENCAI_COOKIE。"""
+    return (
+        os.environ.get("IWENCAI_COOKIE", "").strip()
+        or os.environ.get("PYWENCAI_COOKIE", "").strip()
+        or None
+    )
+
+
+def _reasons_from_wencai_df(df, date_ymd):
+    """从问财/pywencai DataFrame 抽出代码→题材串，并用列名日期验场次。"""
+    if df is None or len(df) == 0:
+        return {}, None
+    code_cols = [c for c in df.columns if "代码" in str(c)]
+    reason_cols = [c for c in df.columns if "涨停原因" in str(c)]
+    if not code_cols or not reason_cols:
+        return {}, f"返回无涨停原因列, cols={list(df.columns)[:6]}"
+    # 只认**能验出场次**的列。列名形如 涨停原因[20260729]；验不出来就当失败，
+    # 别"匹配不到就放行" —— 那等于在最需要拦的时候（返回了没日期的通用列）
+    # 恰好不拦，错场次的题材照样进来。
+    dated = {m.group(1): c for c in reason_cols
+             if (m := re.search(r"\[(\d{8})\]", str(c)))}
+    if not dated:
+        return {}, f"涨停原因列没带日期, 无法确认是哪一场: {reason_cols[:3]}"
+    if date_ymd not in dated:
+        return {}, f"问财返回的是 {sorted(dated)} 的涨停原因, 不是 {date_ymd}"
+    cc, rc = code_cols[0], dated[date_ymd]
+    reasons = {}
+    for _, r in df.iterrows():
+        code6 = str(r[cc])[:6]
+        reason = str(r[rc]).strip()
+        if reason and reason.lower() != "nan" and code6 not in reasons:
+            reasons[code6] = _clean_reason(reason)
+    return reasons, None
+
+
+def _fetch_zt_reasons_pywencai(date_ymd):
+    """[pywencai](https://github.com/zsrl/pywencai) 备用；需 cookie + Node.js。"""
+    cookie = _pywencai_cookie()
+    if not cookie:
+        return {}, "没配 IWENCAI_COOKIE（pywencai 备用需要）"
+    try:
+        import pywencai  # noqa: PLC0415
+    except Exception as e:
+        return {}, f"import pywencai 失败: {type(e).__name__}: {str(e)[:60]}"
+
+    query = f"{date_ymd[:4]}-{date_ymd[4:6]}-{date_ymd[6:8]}涨停的股票 涨停原因"
+    try:
+        # loop=True 合并多页；问财单页上限 100
+        df = pywencai.get(query=query, cookie=cookie, loop=True, retry=3, sleep=0.5)
+    except Exception as e:
+        return {}, f"{type(e).__name__}: {str(e)[:90]}"
+
+    if isinstance(df, dict):
+        # 详情类问题可能回 dict；涨停列表应是 DataFrame
+        return {}, "pywencai 返回了详情字典而非列表"
+    reasons, err = _reasons_from_wencai_df(df, date_ymd)
+    if err:
+        return {}, err
+    if not reasons:
+        return {}, "pywencai 未返回有效涨停原因"
+    return reasons, None
+
+
+def _fetch_zt_reasons_iwencai_api(date_ymd):
+    """官方问财 openapi（IWENCAI_API_KEY），第三备援。"""
     try:
         IwencaiClient = _iwencai_client_cls()
     except Exception as e:
         return {}, f"import IwencaiClient 失败: {type(e).__name__}: {str(e)[:80]}"
     if not os.environ.get("IWENCAI_API_KEY"):
-        return {}, "没配问财接口密钥 IWENCAI_API_KEY，取不到涨停原因"
+        return {}, "没配问财接口密钥 IWENCAI_API_KEY"
 
     try:
         client = IwencaiClient()
     except Exception as e:
         return {}, f"IwencaiClient 初始化失败: {type(e).__name__}: {str(e)[:80]}"
 
-    if not (len(str(date)) == 8 and str(date).isdigit()):
-        return {}, f"日期格式应为 YYYYMMDD, 收到 {date!r}"
-    d = str(date)
-    query = f"{d[:4]}-{d[4:6]}-{d[6:8]}涨停的股票 涨停原因"
-
+    query = f"{date_ymd[:4]}-{date_ymd[4:6]}-{date_ymd[6:8]}涨停的股票 涨停原因"
     reasons = {}
     err = None
     try:
-        # 翻页拿全部涨停 (单页 limit=50, 一般 1~2 页够)
         for page in range(1, 4):
             df = client.query(query, page=page, limit=50)
             if df is None or len(df) == 0:
                 break
-            code_cols = [c for c in df.columns if "代码" in c]
-            reason_cols = [c for c in df.columns if "涨停原因" in c]
-            if not code_cols or not reason_cols:
-                err = f"返回无涨停原因列, cols={list(df.columns)[:6]}"
-                break
-            # 只认**能验出场次**的列。列名形如 涨停原因[20260729]；验不出来就当失败，
-            # 别"匹配不到就放行" —— 那等于在最需要拦的时候（返回了没日期的通用列）
-            # 恰好不拦，错场次的题材照样进来。
-            dated = {m.group(1): c for c in reason_cols
-                     if (m := re.search(r"\[(\d{8})\]", c))}
-            if not dated:
-                return {}, f"涨停原因列没带日期, 无法确认是哪一场: {reason_cols[:3]}"
-            if d not in dated:
-                return {}, f"问财返回的是 {sorted(dated)} 的涨停原因, 不是 {d}"
-            cc, rc = code_cols[0], dated[d]
-            for _, r in df.iterrows():
-                code6 = str(r[cc])[:6]
-                reason = str(r[rc]).strip()
-                if reason and reason.lower() != "nan" and code6 not in reasons:
-                    reasons[code6] = _clean_reason(reason)
+            part, part_err = _reasons_from_wencai_df(df, date_ymd)
+            if part_err:
+                return {}, part_err
+            for k, v in part.items():
+                if k not in reasons:
+                    reasons[k] = v
             if len(df) < 50:
                 break
     except Exception as e:
         err = f"{type(e).__name__}: {str(e)[:90]}"
-    return reasons, err
+    if reasons:
+        return reasons, None
+    return {}, err or "问财 API 未返回有效涨停原因"
+
+
+def fetch_zt_reasons(date):
+    """
+    date: 'YYYYMMDD'
+    主源同花顺涨停池 reason_type；失败再试 pywencai / 问财 API。
+    reason 形如 '光纤光缆+产能扩张+数据中心', 已是简洁题材串, 直接用.
+
+    ⚠️ 问的必须是 `date` 那一场，不能问"今日" —— 复盘的常态就是收盘后回看上一场，
+    问"今日"会把当天的题材当成被复盘那天的题材，而且看不出来（题材串本身没有日期）。
+    jqka 用响应里的 date 字段验场次；问财/pywencai 用列名 `涨停原因[YYYYMMDD]` 验场次。
+    """
+    if not (len(str(date)) == 8 and str(date).isdigit()):
+        return {}, f"日期格式应为 YYYYMMDD, 收到 {date!r}"
+    d = str(date)
+
+    errors = []
+    for name, fn in (
+        ("jqka", _fetch_zt_reasons_jqka),
+        ("pywencai", _fetch_zt_reasons_pywencai),
+        ("iwencai_api", _fetch_zt_reasons_iwencai_api),
+    ):
+        reasons, err = fn(d)
+        if reasons:
+            return reasons, None
+        errors.append(f"{name}: {err or '空'}")
+    return {}, "；".join(errors)
 
 
 def _clean_reason(text, max_tags=4, max_len=30):
-    """题材串清洗: 去空白, 限标签数与长度 (iwencai 多用 '+' 分隔)."""
+    """题材串清洗: 去空白, 限标签数与长度 (题材串多用 '+' 分隔)."""
     text = text.replace("，", "+").replace(",", "+").strip()
     parts = [p.strip() for p in text.split("+") if p.strip()]
     if parts:

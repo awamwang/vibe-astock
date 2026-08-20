@@ -146,7 +146,7 @@ export interface EmotionTier { boards: number; count: number; plus: boolean }
 export interface LianbanStock {
   code: string; name: string; boards: number;
   price: number; pct: number; amount: number | null; float_cap: number | null; industry: string;
-  reason: string;  // 涨停原因题材串（问财；缺 key/失败为空串）
+  reason: string;  // 涨停原因题材串（同花顺涨停池主源；失败为空串）
 }
 export interface ShortTermEmotion {
   date: string;

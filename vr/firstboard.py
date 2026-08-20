@@ -2,14 +2,16 @@
 
 短线投资实例专属模块（不回推开源仓库）。
 - 首板名单：东财涨停池（astock.em_zt_topic_pool，免费无 key）。
-- 涨停原因：优先读题材树落盘缓存（含首板页导入的同花顺 txt）；没有再问同花顺问财
-  （需要 IWENCAI_API_KEY）。拿不到时优雅降级为空串，页面照常显示其余字段。
+- 涨停原因：优先读题材树落盘缓存（含首板页导入的同花顺 txt）；没有再走
+  `duanxian.fetchers.fetch_zt_reasons`（同花顺涨停池主源 → pywencai 备用）。
+  拿不到时优雅降级为空串，页面照常显示其余字段。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from datetime import datetime, timedelta
 
@@ -19,10 +21,11 @@ from market import BEIJING, _num
 _CACHE: dict = {}
 _TTL = 600  # 10 分钟；涨停原因盘中变化不快
 _ZT_REASONS_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_reasons")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _clean_reason(text: str, max_tags: int = 4, max_len: int = 40) -> str:
-    """题材串清洗：统一分隔符、限标签数与总长（问财多用 '+' 分隔）。"""
+    """题材串清洗：统一分隔符、限标签数与总长（题材串多用 '+' 分隔）。"""
     text = text.replace("，", "+").replace(",", "+").strip()
     tags = [t.strip() for t in text.split("+") if t.strip()]
     out = "+".join(tags[:max_tags])
@@ -30,37 +33,22 @@ def _clean_reason(text: str, max_tags: int = 4, max_len: int = 40) -> str:
 
 
 def _fetch_reasons(date: str) -> tuple[dict, str | None]:
-    """问财拉当日涨停原因，返回 ({6位代码: 题材串}, 错误说明或 None)。"""
-    if not os.environ.get("IWENCAI_API_KEY"):
-        return {}, "未配置 IWENCAI_API_KEY，涨停原因暂缺"
+    """拉当日涨停原因，返回 ({6位代码: 题材串}, 错误说明或 None)。"""
+    ymd = str(date).replace("-", "")
+    if len(ymd) != 8 or not ymd.isdigit():
+        return {}, f"日期格式异常: {date!r}"
+    # CLI / 单独 import vr 时 sys.path 未必含仓库根
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
     try:
-        from iwencai_client import IwencaiClient
-
-        client = IwencaiClient()
+        from duanxian.fetchers import fetch_zt_reasons  # noqa: PLC0415
     except Exception as e:  # noqa: BLE001
-        return {}, f"问财客户端初始化失败：{type(e).__name__}"
-
-    reasons: dict[str, str] = {}
-    try:
-        for page in range(1, 4):  # 单页 50，涨停一般 1~3 页
-            df = client.query("今日涨停的股票 涨停原因", page=page, limit=50)
-            if df is None or len(df) == 0:
-                break
-            code_cols = [c for c in df.columns if "代码" in c]
-            reason_cols = [c for c in df.columns if "涨停原因" in c]
-            if not code_cols or not reason_cols:
-                return reasons, "问财返回缺少涨停原因列"
-            cc, rc = code_cols[0], reason_cols[0]
-            for _, row in df.iterrows():
-                code6 = str(row[cc])[:6]
-                reason = str(row[rc]).strip()
-                if reason and reason.lower() != "nan" and code6 not in reasons:
-                    reasons[code6] = _clean_reason(reason)
-            if len(df) < 50:
-                break
-    except Exception as e:  # noqa: BLE001
-        return reasons, f"问财查询异常：{type(e).__name__}"
-    return reasons, None
+        return {}, f"import fetch_zt_reasons 失败：{type(e).__name__}"
+    reasons, err = fetch_zt_reasons(ymd)
+    if reasons:
+        # 首板页允许稍长一点的题材串展示
+        return {k: _clean_reason(v, max_len=40) for k, v in reasons.items()}, None
+    return {}, err
 
 
 _REASONS_CACHE: dict = {}

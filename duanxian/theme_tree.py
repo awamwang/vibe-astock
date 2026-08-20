@@ -4,7 +4,7 @@
 "电网设备""元件""IT服务"是东财的行业分类，**不是打板选手复盘时说的题材**。
 同一个行业里可能装着完全不同的炒作原因；同一个题材又常横跨好几个行业。
 
-问财的涨停原因串给的才是真东西：
+问财 / 同花顺涨停池的涨停原因串给的才是真东西：
 
 ```
 000417: 间接投资长鑫科技+百货零售+合肥国资
@@ -25,11 +25,11 @@
 
 ## 数据与降级
 
-题材串来自问财（`fetchers.fetch_zt_reasons`），按交易日查，实测能回溯到一年前。
-也可以从首板分析页导入同花顺涨停池 txt（不配 `IWENCAI_API_KEY` 时走这条）。
-每天复盘时仍**落盘囤起来**——省一次请求、也让没配密钥 / 改用导入的时候
+题材串来自 `fetchers.fetch_zt_reasons`（同花顺涨停池主源 → pywencai 备用），
+按交易日查。也可以从首板分析页导入同花顺涨停池 txt。
+每天复盘时仍**落盘囤起来**——省一次请求、也让改用导入的时候
 历史场次照样看得到。缓存没有就现查，查回来的东西由 `fetch_zt_reasons`
-用返回列名里的日期核对过场次，不会把别的交易日的题材塞进来。
+用返回日期核对过场次，不会把别的交易日的题材塞进来。
 
 拿不到题材串时整棵树标 unavailable，**绝不退回行业分类冒充题材** ——
 那正是这个模块要解决的问题。
@@ -117,11 +117,11 @@ def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
     except Exception as exc:  # noqa: BLE001
         return {}, f"{type(exc).__name__}: {exc}"
     if not reasons:
-        return {}, err or "问财未返回题材串"
+        return {}, err or "涨停原因未返回题材串"
     # 只有定稿的日子才落盘（同 emotion_metrics 的判据）
     if trade_calendar.is_settled(date):
         try:
-            save_reasons(date, reasons, source="iwencai")
+            save_reasons(date, reasons, source="online")
         except OSError:
             pass
     return reasons, None
