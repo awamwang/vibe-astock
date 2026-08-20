@@ -502,6 +502,26 @@ export interface ShortBoardSnapshot {
   };
 }
 
+/** 开盘啦板块人气一行（对齐 awam MoodBlockItem） */
+export interface MoodBlockItem {
+  code: string;
+  name: string;
+  power: number | null;   // 人气
+  pct: number | null;     // 涨跌幅 %
+  speed: number | null;   // 涨速 %
+  m_net: number | null;   // 主力净额，元
+  zt: number | null;      // 涨停家数
+  sort: number;
+}
+export interface MoodBlocksSnapshot {
+  available: boolean;
+  reason?: string | null;
+  date?: string;
+  api_time?: number | null;
+  blocks: MoodBlockItem[];
+  updated?: string;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
@@ -509,6 +529,7 @@ export const api = {
   overseas: () => get<OverseasSnapshot>("/market/overseas"),
   liveEmotion: () => get<LiveEmotion>("/market/live-emotion"),
   shortBoard: () => get<ShortBoardSnapshot>("/market/short-board"),
+  moodBlocks: () => get<MoodBlocksSnapshot>("/market/mood-blocks"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),

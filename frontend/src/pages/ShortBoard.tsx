@@ -13,7 +13,7 @@ import { finite } from "@/lib/agent";
 import {
   api, type MarketOverview, type ShortTermEmotion, type LianbanStock,
   type TurnoverTop, type MarketSession, type LiveEmotion, type ShortBoardSnapshot,
-  type ShortBoardEnv, type Quote,
+  type ShortBoardEnv, type Quote, type MoodBlocksSnapshot,
 } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ const yiCompact = (v: number | null | undefined) => {
   return `${n.toLocaleString("zh-CN", { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 })}亿`;
 };
 
-type TabKey = "emotion" | "turnover" | "sectors" | "rotation";
+type TabKey = "emotion" | "turnover" | "sectors" | "mood" | "rotation";
 
 function SectionHead({
   title, icon, caliber, hint, onRefresh, refreshing, extra,
@@ -117,6 +117,7 @@ export function ShortBoard() {
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
   const [turnover, setTurnover] = useState<TurnoverTop | null>(null);
+  const [moodBlocks, setMoodBlocks] = useState<MoodBlocksSnapshot | null>(null);
   const [session, setSession] = useState<MarketSession | null>(null);
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
@@ -128,6 +129,7 @@ export function ShortBoard() {
   const [ovDone, setOvDone] = useState(false);
   const [emoDone, setEmoDone] = useState(false);
   const [toDone, setToDone] = useState(false);
+  const [moodDone, setMoodDone] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
 
   const mark = (key: string, on: boolean) => setBusy((b) => ({ ...b, [key]: on }));
@@ -162,6 +164,11 @@ export function ShortBoard() {
     return api.turnoverTop().then(setTurnover).catch(() => {})
       .finally(() => { setToDone(true); mark("turnover", false); });
   };
+  const loadMoodBlocks = () => {
+    mark("mood", true);
+    return api.moodBlocks().then(setMoodBlocks).catch(() => {})
+      .finally(() => { setMoodDone(true); mark("mood", false); });
+  };
   const loadSectors = () => {
     mark("sectors", true);
     return api.marketOverview().then(setOverview).catch(() => {})
@@ -178,6 +185,7 @@ export function ShortBoard() {
   const loadHeavy = () => {
     loadSentiment();
     loadTurnover();
+    loadMoodBlocks();
   };
 
   useEffect(() => {
@@ -256,12 +264,14 @@ export function ShortBoard() {
     { key: "emotion", label: "昨日短线情绪" },
     { key: "turnover", label: "全市场成交额 TOP20" },
     { key: "sectors", label: "板块资金趋势榜" },
+    { key: "mood", label: "板块人气" },
     { key: "rotation", label: "资金轮动" },
   ];
 
   const refreshTab = () => {
     if (tab === "emotion") loadEmotion();
     else if (tab === "turnover") loadTurnover();
+    else if (tab === "mood") loadMoodBlocks();
     else loadSectors();
   };
 
@@ -275,7 +285,7 @@ export function ShortBoard() {
             <button
               onClick={toggleAuto}
               title={autoRefresh
-                ? `已开：指标条与打板情绪每 ${LIVE_MS / 1000} 秒、板块资金与成交额榜每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
+                ? `已开：指标条与打板情绪每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
                 : "开启后在交易时段自动刷新"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -474,7 +484,7 @@ export function ShortBoard() {
         )}
       </GlassCard>
 
-      {/* 4. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 资金轮动 */}
+      {/* 4. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 资金轮动 */}
       <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border/50 pb-0">
         {tabs.map((tItem) => (
           <button
@@ -498,7 +508,7 @@ export function ShortBoard() {
           className="ml-auto mb-1 text-muted-foreground hover:text-primary"
           title="刷新当前标签"
         >
-          {(busy.emotion || busy.turnover || busy.sectors)
+          {(busy.emotion || busy.turnover || busy.sectors || busy.mood)
             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
             : <RefreshCw className="h-3.5 w-3.5" />}
         </button>
@@ -700,6 +710,66 @@ export function ShortBoard() {
                       <td className="px-2 py-2 font-mono text-muted-foreground">{fmt(s.inflow)}</td>
                       <td className="px-2 py-2 font-mono text-muted-foreground">{fmt(s.outflow)}</td>
                       <td className="px-2 py-2 font-mono text-muted-foreground">{s.firms}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {tab === "mood" && (
+        <GlassCard className="mb-6">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
+            <Flame className="h-3.5 w-3.5" />
+            <Caliber text={
+              "开盘啦 RealRankingInfo（ZSType=7）板块人气榜，按人气从高到低。\n" +
+              "人气 / 涨跌幅 / 涨速 / 主力净额来自该接口；涨停家数合并同站 PlateAnalysis。\n" +
+              "主力净额单位元，界面按亿元展示。客观公开榜单，非推荐 / 非预测。"
+            } />
+            <span>概念板块 · 按人气排序</span>
+            {moodBlocks?.updated && <span className="ml-auto">更新于 {moodBlocks.updated}</span>}
+          </div>
+          {!moodBlocks?.available || moodBlocks.blocks.length === 0 ? (
+            moodBlocks && !moodBlocks.available && moodDone
+              ? <p className="py-4 text-center text-sm text-muted-foreground/60">{moodBlocks.reason || "暂无数据"}</p>
+              : pending(moodDone)
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
+                    {["#", "板块", "人气", "涨跌幅", "主力净额", "涨速", "涨停"].map((h) => (
+                      <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {moodBlocks.blocks.map((b) => (
+                    <tr key={b.code} className="border-b border-border/30">
+                      <td className="px-2 py-2 font-mono text-xs text-muted-foreground/50">{b.sort}</td>
+                      <td className="px-2 py-2">
+                        <span className="font-medium">{b.name}</span>{" "}
+                        <span className="text-xs text-muted-foreground/50">{b.code}</span>
+                      </td>
+                      <td className={cn("px-2 py-2 font-mono",
+                        b.power != null && b.power > 5000 ? "font-bold text-danger" : "")}>
+                        {b.power == null ? "—" : b.power.toLocaleString("zh-CN")}
+                      </td>
+                      <td className={cn("px-2 py-2 font-mono", pctColor(b.pct))}>
+                        {b.pct == null ? "—" : `${b.pct > 0 ? "+" : ""}${b.pct.toFixed(2)}%`}
+                      </td>
+                      <td className={cn("px-2 py-2 font-mono", pctColor(b.m_net))}>
+                        {b.m_net == null ? "—" : `${b.m_net > 0 ? "+" : ""}${yiCompact(b.m_net)}`}
+                      </td>
+                      <td className={cn("px-2 py-2 font-mono", pctColor(b.speed))}>
+                        {b.speed == null ? "—" : `${b.speed > 0 ? "+" : ""}${b.speed.toFixed(2)}%`}
+                      </td>
+                      <td className={cn("px-2 py-2 font-mono",
+                        b.zt != null && b.zt >= 5 ? "font-bold text-danger" : "text-muted-foreground")}>
+                        {b.zt == null ? "—" : b.zt}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

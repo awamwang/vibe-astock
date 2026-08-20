@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    live_emotion, overseas, preflight, reflection, review_store, screenshot_parse,
+    live_emotion, mood_block, overseas, preflight, reflection, review_store, screenshot_parse,
     short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
@@ -523,6 +523,15 @@ def api_market_short_board():
     对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；量能两卡暂占位。
     """
     return short_board.snapshot()
+
+
+@app.get("/api/market/mood-blocks")
+def api_market_mood_blocks():
+    """板块人气排名（开盘啦 RealRankingInfo ZSType=7）。
+
+    对齐 awam-stock MoodBlockItem：人气 / 涨跌幅 / 主力净额 / 涨速；涨停家数合并 PlateAnalysis。
+    """
+    return mood_block.snapshot()
 
 
 @app.get("/api/market/overseas")

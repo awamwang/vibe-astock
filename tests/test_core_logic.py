@@ -3453,6 +3453,34 @@ class TestShortBoardArchive:
 
 
 @pytest.mark.unit
+class TestMoodBlockParse:
+    """开盘啦 RealRankingInfo 行解析（对齐 awam moodBlockItemMap）。"""
+
+    def test_parse_sample_row(self):
+        from duanxian import mood_block as mb
+
+        # 与 awam LongTou.data「板块人气」样例一致
+        row = mb._parse_mood_row(
+            ["801519", "汽车类", 2751, -2.334, 0.8, 154525464351, -825580915],
+            sort=1,
+        )
+        assert row is not None
+        assert row["code"] == "801519"
+        assert row["name"] == "汽车类"
+        assert row["power"] == 2751
+        assert row["pct"] == -2.334
+        assert row["speed"] == 0.8
+        assert row["m_net"] == -825580915
+        assert row["sort"] == 1
+        assert row["zt"] is None
+
+    def test_parse_rejects_short_row(self):
+        from duanxian import mood_block as mb
+
+        assert mb._parse_mood_row(["801519", "汽车类"], sort=1) is None
+
+
+@pytest.mark.unit
 class TestPreflightRefusesBadInput:
     """核心数据取不到就不跑。结论交给用户的 AI，但**喂进去的必须是真的**。
 
