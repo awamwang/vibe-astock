@@ -436,6 +436,18 @@ export interface OverseasSnapshot {
 }
 
 /** 今日实时打板情绪（盘面数据页）—— 与 ShortTermEmotion（已收盘那一场）分开 */
+export interface LiveEmotionYesterday {
+  zt_count?: number | null;
+  dt_count?: number | null;
+  zb_count?: number | null;
+  max_boards?: number | null;
+  lianban_count?: number | null;
+  seal_rate?: number | null;
+  break_rate?: number | null;
+  promotion_rate?: number | null;
+  promotion_base?: number | null;
+}
+
 export interface LiveEmotion {
   available: boolean;
   reason?: string;
@@ -455,6 +467,10 @@ export interface LiveEmotion {
   promotion_base?: number | null;
   /** 分母是哪一场。两张卡都叫「晋级率」，而各自的「昨」不是同一天，所以把日期给出来写死 */
   promotion_base_date?: string | null;
+  /** 上一交易日（本地归档对照用） */
+  prev_date?: string | null;
+  /** 上一交易日收盘归档；无归档时为空对象，界面显示 /- */
+  yesterday?: LiveEmotionYesterday;
 }
 
 /** 短线盘面环境指标（今日 / 昨日对照，单位见各字段注释） */

@@ -68,7 +68,8 @@ function SectionHead({
   );
 }
 
-/** 今日 / 昨日对照卡。色规则对齐 awam TwoDataProp：今日相对昨日更大→红（reversed 则相反）。 */
+/** 今日 / 昨日对照卡。色规则对齐 awam TwoDataProp：今日相对昨日更大→红（reversed 则相反）。
+ *  无昨日归档时右侧固定 `/-` 占位，避免只显示今日误以为没有对照能力。 */
 function EnvCard({
   name, today, yesterday, format, reversed,
 }: {
@@ -96,9 +97,7 @@ function EnvCard({
         <span className={cn("font-bold", hasT ? color : "text-muted-foreground/40")}>
           {hasT ? format(today as number) : "—"}
         </span>
-        {hasY && (
-          <span className="text-muted-foreground">/{format(yesterday as number)}</span>
-        )}
+        <span className="text-muted-foreground">/{hasY ? format(yesterday as number) : "-"}</span>
       </div>
     </div>
   );
@@ -302,7 +301,8 @@ export function ShortBoard() {
         title="短线指标"
         icon={<Radar className="h-4 w-4" />}
         caliber={
-          "今日 / 昨日对照：左侧今日、右侧昨日归档（无归档时主力等字段可能来自东财日 K）。\n" +
+          "今日 / 昨日对照：左侧今日、右侧昨日归档（无归档时显示 /-）。\n" +
+          "盘中每次刷新覆盖写「今天」快照，收盘后最后一次即为次日的「昨日」。\n" +
           "情绪温度 / 炸板率 / 涨停溢价来自选股宝；涨跌家数优先开盘啦、否则选股宝；\n" +
           "实际涨跌停优先开盘啦、否则东财涨跌停池；成交额优先开盘啦、否则腾讯上证+深证；\n" +
           "主力净流入 / 北向净买来自东财。颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
@@ -393,11 +393,15 @@ export function ShortBoard() {
         caliber={
           "封板率 = 最终封住家数 ÷ 摸板家数；炸板率 = 炸板未回封家数 ÷ 摸板家数。\n" +
           "摸板家数 = 涨停 + 炸板，**按家数算，不按炸板次数算**。\n" +
+          "晋级率 / 封板率等同屏指标盘中写入本地归档，收盘后最后一次即为次日「昨日」对照；无归档显示 /-。\n" +
           "最高连板只给板数，具体是哪只票看下方「昨日短线情绪」标签里的连板股表。"
         }
         hint={liveEmo?.available ? (
           <span className="text-[11px] text-warning">
             {liveEmo.date} {liveEmo.as_of} · {liveEmo.phase}（随盘变化）
+            {liveEmo.prev_date && (
+              <span className="text-muted-foreground/60"> · 对照 {liveEmo.prev_date}</span>
+            )}
           </span>
         ) : liveEmo ? (
           <span className="text-[11px] text-muted-foreground/50">{liveEmo.reason}</span>
@@ -412,42 +416,60 @@ export function ShortBoard() {
           </p>
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { k: "涨停", v: liveEmo.zt_count, unit: "", up: true },
-              { k: "跌停", v: liveEmo.dt_count, unit: "", up: false },
-              { k: "最高连板", v: liveEmo.max_boards, unit: " 板", up: true },
-              { k: "连板（2板+）", v: liveEmo.lianban_count, unit: " 家", up: true },
-            ].map((c) => (
-              <div key={c.k} className="rounded-lg bg-muted/30 p-3 text-center">
-                <p className="text-xs text-muted-foreground">{c.k}</p>
-                <p className={cn("mt-1 font-mono text-xl font-bold",
-                  c.v == null ? "text-muted-foreground/40" : c.up ? "text-danger" : "text-success")}>
-                  {c.v ?? "—"}{c.v != null && c.unit}
-                </p>
-              </div>
-            ))}
-            {[
-              { k: "封板率", v: liveEmo.seal_rate, sub: "封住 / 尝试涨停", up: true },
-              { k: "炸板率", v: liveEmo.break_rate, sub: "炸板 / 尝试涨停", up: false },
-              {
-                k: "晋级率", v: liveEmo.promotion_rate, up: true,
-                sub: liveEmo.promotion_base != null
-                  ? `${liveEmo.promotion_base_date || "上一场"} 涨停 ${liveEmo.promotion_base} 家，今天又封住`
-                  : "上一场涨停的票，今天又封住",
-              },
-              { k: "炸板家数", v: null as number | null, raw: liveEmo.zb_count, sub: "炸板未回封", up: false },
-            ].map((c) => (
-              <div key={c.k} className="rounded-lg bg-muted/30 p-3 text-center">
-                <p className="text-xs text-muted-foreground">{c.k}</p>
-                <p className={cn("mt-1 font-mono text-xl font-bold",
-                  (c.raw ?? c.v) == null ? "text-muted-foreground/40"
-                    : c.up ? "text-danger" : "text-success")}>
-                  {c.raw != null ? c.raw
-                    : c.v != null ? `${(c.v * 100).toFixed(1)}%` : "—"}
-                </p>
-                <p className="mt-0.5 text-[10px] text-muted-foreground/50">{c.sub}</p>
-              </div>
-            ))}
+            {(() => {
+              const y = liveEmo.yesterday || {};
+              /** 今日值 / 昨日值；无昨日固定 `/-` */
+              const Dual = ({
+                label, today, yesterday, format, up, sub,
+              }: {
+                label: string;
+                today: number | null | undefined;
+                yesterday: number | null | undefined;
+                format: (n: number) => string;
+                up: boolean;
+                sub?: string;
+              }) => {
+                const hasT = today != null && Number.isFinite(today);
+                const hasY = yesterday != null && Number.isFinite(yesterday);
+                return (
+                  <div className="rounded-lg bg-muted/30 p-3 text-center">
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className={cn("mt-1 font-mono text-xl font-bold",
+                      !hasT ? "text-muted-foreground/40" : up ? "text-danger" : "text-success")}>
+                      {hasT ? format(today as number) : "—"}
+                      <span className="text-sm font-normal text-muted-foreground">
+                        /{hasY ? format(yesterday as number) : "-"}
+                      </span>
+                    </p>
+                    {sub && <p className="mt-0.5 text-[10px] text-muted-foreground/50">{sub}</p>}
+                  </div>
+                );
+              };
+              const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+              return (
+                <>
+                  <Dual label="涨停" today={liveEmo.zt_count} yesterday={y.zt_count}
+                    format={(n) => String(n)} up />
+                  <Dual label="跌停" today={liveEmo.dt_count} yesterday={y.dt_count}
+                    format={(n) => String(n)} up={false} />
+                  <Dual label="最高连板" today={liveEmo.max_boards} yesterday={y.max_boards}
+                    format={(n) => `${n} 板`} up />
+                  <Dual label="连板（2板+）" today={liveEmo.lianban_count} yesterday={y.lianban_count}
+                    format={(n) => `${n} 家`} up />
+                  <Dual label="封板率" today={liveEmo.seal_rate} yesterday={y.seal_rate}
+                    format={pct} up sub="封住 / 尝试涨停" />
+                  <Dual label="炸板率" today={liveEmo.break_rate} yesterday={y.break_rate}
+                    format={pct} up={false} sub="炸板 / 尝试涨停" />
+                  <Dual label="晋级率" today={liveEmo.promotion_rate} yesterday={y.promotion_rate}
+                    format={pct} up
+                    sub={liveEmo.promotion_base != null
+                      ? `${liveEmo.promotion_base_date || "上一场"} 涨停 ${liveEmo.promotion_base} 家，今天又封住`
+                      : "上一场涨停的票，今天又封住"} />
+                  <Dual label="炸板家数" today={liveEmo.zb_count} yesterday={y.zb_count}
+                    format={(n) => String(n)} up={false} sub="炸板未回封" />
+                </>
+              );
+            })()}
           </div>
         )}
       </GlassCard>

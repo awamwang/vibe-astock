@@ -10,14 +10,19 @@
 
 ⚠️ 炸板率必须**另取炸板池**：涨停池里的 `zbc` 只是"这一只炸过几次"，
    全市场炸了多少家它答不了。分母 = 最终封住 + 炸板未回封 = 尝试过涨停的家数。
+
+「今日 / 昨日」对照：盘中每次成功快照写入本地归档，收盘后最后一次覆盖即为次日的「昨日」。
+晋级率一并归档，便于与封板率 / 炸板率等同屏对照。
 """
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from . import trade_calendar
 from .util import china_now
@@ -36,6 +41,13 @@ _PREV_TTL = 3600.0
 _CAL_TTL = 3600.0
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
+
+_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/live_emotion")
+# 写入归档的字段（不含 date / as_of 等元数据）
+_ARCHIVE_KEYS = (
+    "zt_count", "dt_count", "zb_count", "max_boards", "lianban_count",
+    "seal_rate", "break_rate", "promotion_rate", "promotion_base",
+)
 
 
 _MISS = object()
@@ -79,20 +91,68 @@ def _rate(hit: int, total: int) -> Optional[float]:
     return round(hit / total, 4) if total else None
 
 
+def _archive_path(date: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date}.json")
+
+
+def _load_archive(date: str | None) -> dict:
+    if not date:
+        return {}
+    path = _archive_path(date)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _save_archive(date: str, env: dict) -> None:
+    """盘中也写：收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        path = _archive_path(date)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        payload = {k: env.get(k) for k in _ARCHIVE_KEYS if env.get(k) is not None}
+        payload["date"] = date
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _yesterday_slice(prev: str | None) -> dict[str, Any]:
+    """从上一交易日归档取出对照字段；无归档返回空 dict（前端显示 /-）。"""
+    raw = _load_archive(prev)
+    return {k: raw[k] for k in _ARCHIVE_KEYS if k in raw and raw[k] is not None}
+
+
 def snapshot() -> dict:
-    """今日实时打板情绪。非交易时段 / 取不到数据 → available=False 并说明原因。"""
+    """今日实时打板情绪。非交易时段 / 取不到数据 → available=False 并说明原因。
+
+    成功时附带 `yesterday`（上一交易日收盘归档）与 `prev_date`，供界面今日/昨日对照。
+    """
     today = china_now().strftime("%Y-%m-%d")
     ymd = today.replace("-", "")
+    prev_day = _cached(f"prevday:{today}", _CAL_TTL,
+                       lambda: trade_calendar.prev_trade_date(today))
 
     settled = _cached(f"settled:{today}", _CAL_TTL,
                       lambda: ("Y" if trade_calendar.is_settled(today) else "N")) == "Y"
 
     zt = _cached(f"zt:{ymd}", _TODAY_TTL, lambda: _pool("getTopicZTPool", ymd))
     if zt is None:
-        return {"available": False, "reason": "涨停池取数失败"}
+        return {"available": False, "reason": "涨停池取数失败",
+                "prev_date": prev_day, "yesterday": _yesterday_slice(prev_day)}
     if not zt:
         return {"available": False, "date": today,
-                "reason": "今日还没有涨停池（未开盘 / 非交易日）"}
+                "reason": "今日还没有涨停池（未开盘 / 非交易日）",
+                "prev_date": prev_day, "yesterday": _yesterday_slice(prev_day)}
 
     zb = _cached(f"zb:{ymd}", _TODAY_TTL, lambda: _pool("getTopicZBPool", ymd))   # 炸板未回封
     dt = _cached(f"dt:{ymd}", _TODAY_TTL, lambda: _pool("getTopicDTPool", ymd))   # 跌停
@@ -106,8 +166,6 @@ def snapshot() -> dict:
     # （`emotion_metrics` 那份要收盘价，盘中给不了）。
     # ⚠️ 别用东财的 `getYesterdayZTPool` —— 实测它对任何日期都返回 0 条。
     #    直接取「上一交易日」的涨停池自己比。
-    prev_day = _cached(f"prevday:{today}", _CAL_TTL,
-                       lambda: trade_calendar.prev_trade_date(today))
     prev = (_cached(f"zt:{prev_day}", _PREV_TTL,
                     lambda: _pool("getTopicZTPool", prev_day.replace("-", "")))
             if prev_day else None)
@@ -118,7 +176,7 @@ def snapshot() -> dict:
         promo_base = len(prev)
         promo = _rate(sum(1 for p in prev if str(p.get("c")) in today_codes), promo_base)
 
-    return {
+    out = {
         "available": True,
         "date": today,
         "as_of": china_now().strftime("%H:%M"),
@@ -136,4 +194,8 @@ def snapshot() -> dict:
         # 实时那张的"昨"是最近已收盘那场、定稿那张的"昨"是它的前一天，
         # 同一个字指两个不同的日子。把日期给出去，让界面直接写死。
         "promotion_base_date": prev_day,
+        "prev_date": prev_day,
+        "yesterday": _yesterday_slice(prev_day),
     }
+    _save_archive(today, out)
+    return out
