@@ -18,7 +18,11 @@ _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
 _LONGTOU = "https://apphq.longhuvip.com/w1/api/index.php"
-_UA = {"User-Agent": "Mozilla/5.0"}
+# 开盘啦对浏览器 UA 会返回 errcode=0 但 list 空；须用 App UA（对齐 awam longTouPost）
+_UA = {
+    "User-Agent": "lhb/5.13.7 (com.kaipanla.www; build:0; iOS 16.1.0) Alamofire/4.9.1",
+    "Accept": "*/*",
+}
 
 
 def _cached(key: str, ttl: float, build):

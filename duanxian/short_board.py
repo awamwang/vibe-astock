@@ -78,10 +78,18 @@ def _em_get(url: str, params: dict | None = None) -> Any:
     return r.json()
 
 
-def _http_get_json(url: str) -> Any:
+# 开盘啦对浏览器 UA 常返回空 payload；App UA 对齐 awam longTouPost
+_LONGTOU_UA = {
+    "User-Agent": "lhb/5.13.7 (com.kaipanla.www; build:0; iOS 16.1.0) Alamofire/4.9.1",
+    "Accept": "*/*",
+}
+
+
+def _http_get_json(url: str, *, longtou: bool = False) -> Any:
     import requests
 
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+    headers = _LONGTOU_UA if longtou else {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(url, headers=headers, timeout=12)
     r.raise_for_status()
     return r.json()
 
@@ -115,7 +123,7 @@ def _fetch_baoer() -> dict:
 def _fetch_longtou() -> dict:
     """开盘啦涨跌统计。errcode=0 但 info 空时返回 {}。"""
     try:
-        raw = _http_get_json(_LONGTOU)
+        raw = _http_get_json(_LONGTOU, longtou=True)
         info = raw.get("info")
         if not isinstance(info, dict) or not info:
             return {}
