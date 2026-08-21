@@ -546,6 +546,9 @@ export const api = {
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   portfolio: () => get<PortfolioData>("/portfolio"),
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
+  /** 按代码覆盖写入持仓（已存在则改，否则增） */
+  setHolding: (code: string, shares: number, cost: number) =>
+    request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost, upsert: true }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>

@@ -126,6 +126,7 @@ class HoldingIn(BaseModel):
     code: str
     shares: float
     cost: float
+    upsert: bool = False  # True：按代码覆盖；False：同代码加权合并加仓
 
 
 @app.get("/api/portfolio")
@@ -139,14 +140,17 @@ def portfolio_get():
 
 @app.post("/api/portfolio/holding")
 def portfolio_add(h: HoldingIn):
-    """加一笔持仓（同代码按加权平均成本合并）。存本地，不上传。"""
+    """加一笔持仓。默认同代码加权合并；upsert=true 时按代码覆盖股数与成本。"""
     code = (h.code or "").strip()
     if not code.isdigit() or len(code) != 6:
         raise HTTPException(400, "代码必须是 6 位数字")
     if h.shares <= 0:
         raise HTTPException(400, "数量必须大于 0")
     # 成本价不限正负：融券 / 返息 / 摊薄后为负成本等情形按结果计算，用户想怎么输就怎么输。
-    out = pf.add_holding(code, h.shares, h.cost)
+    if h.upsert:
+        out = pf.set_holding(code, h.shares, h.cost)
+    else:
+        out = pf.add_holding(code, h.shares, h.cost)
     watchtower.poke()  # 每日盯盘：持仓变化立即重建快照
     return {"data": out}
 

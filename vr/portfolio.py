@@ -84,6 +84,21 @@ def add_holding(code: str, shares: float, cost: float) -> dict:
     return get_portfolio()
 
 
+def set_holding(code: str, shares: float, cost: float) -> dict:
+    """按代码写入持仓：已存在则覆盖股数与成本，否则新增。"""
+    with _LOCK:
+        d = _load()
+        for h in d["holdings"]:
+            if h["code"] == code:
+                h["shares"] = shares
+                h["cost"] = cost
+                break
+        else:
+            d["holdings"].append({"code": code, "shares": shares, "cost": cost})
+        _save(d)
+    return get_portfolio()
+
+
 def remove_holding(code: str) -> dict:
     with _LOCK:
         d = _load()

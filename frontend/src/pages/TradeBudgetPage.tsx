@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Loader2, Plus, Trash2, Upload, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
-import { PortfolioScreenshotImport } from "@/components/PortfolioScreenshotImport";
+import { PortfolioJsonImport } from "@/components/PortfolioJsonImport";
 import { api, type PortfolioData, type TradeAccount, type TradeGuard, type TradePhaseRow, type TradeSizeResult } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { DOWN_TEXT, UP_TEXT } from "@/lib/colors";
@@ -42,7 +42,7 @@ export function TradeBudgetPage() {
   const [addCode, setAddCode] = useState("");
   const [addShares, setAddShares] = useState("");
   const [addCost, setAddCost] = useState("");
-  const [shotOpen, setShotOpen] = useState(false);
+  const [jsonOpen, setJsonOpen] = useState(false);
 
   const load = useCallback(async (d?: string) => {
     setBusy(true);
@@ -221,10 +221,10 @@ export function TradeBudgetPage() {
         subtitle="本地权益与仓位上限对照；不荐股、不下单。预算与 AI 复盘隔离。"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setShotOpen(true)} disabled={busy}
+            <button type="button" onClick={() => setJsonOpen(true)} disabled={busy}
               className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted">
               <Upload className="h-4 w-4" />
-              截图导入
+              导入 JSON
             </button>
             <button onClick={() => void refreshBudget()} disabled={busy}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
@@ -248,7 +248,7 @@ export function TradeBudgetPage() {
             <h3 className="text-sm font-bold">账户权益</h3>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            总权益可手改；截图导入的账户名/资金余额/可用/市值/当日盈亏等会命名写入日快照，同日覆盖。v1 不自动清仓。
+            总权益可手改；JSON 导入的账户名/资金余额/可用/市值/当日盈亏等会命名写入日快照，同日覆盖。v1 不自动清仓。
           </p>
           <div className="flex flex-wrap gap-2">
             <input value={equityInput} onChange={(e) => setEquityInput(e.target.value)}
@@ -474,9 +474,9 @@ export function TradeBudgetPage() {
         </div>
       )}
 
-      <PortfolioScreenshotImport
-        open={shotOpen}
-        onClose={() => setShotOpen(false)}
+      <PortfolioJsonImport
+        open={jsonOpen}
+        onClose={() => setJsonOpen(false)}
         onApplied={() => load(date || undefined)}
       />
 
@@ -484,14 +484,14 @@ export function TradeBudgetPage() {
       <div className="glass rounded-2xl p-5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold">本地持仓</h3>
-          <button type="button" onClick={() => setShotOpen(true)} disabled={busy}
+          <button type="button" onClick={() => setJsonOpen(true)} disabled={busy}
             className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground">
             <Upload className="h-3.5 w-3.5" />
-            截图导入
+            导入 JSON
           </button>
         </div>
         <p className="mb-3 text-[11px] text-muted-foreground">
-          数据在 ~/.vibe-research/portfolio.json，不上传、不进复盘 JSON。也可上传券商持仓截图由 AI 解析后确认写入。
+          数据在 ~/.vibe-research/portfolio.json，不上传、不进复盘 JSON。也可导入 ScreenshotDraft / 单条持仓 JSON。
         </p>
         <div className="mb-3 flex flex-wrap gap-2">
           <input value={addCode} onChange={(e) => setAddCode(e.target.value)} placeholder="代码"
