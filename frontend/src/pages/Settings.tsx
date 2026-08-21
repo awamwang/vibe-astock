@@ -3,16 +3,36 @@ import { KeyRound, Sparkles, ShieldCheck, Check, Trash2, Terminal, AlertTriangle
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { toast } from "sonner";
-import { loadLlm, saveLlm, clearLlm, staleBlockedProvider } from "@/lib/llm";
+import {
+  loadLlm, saveLlm, clearLlm, staleBlockedProvider,
+  loadSavedLlms, removeSavedLlm, activateSavedLlm, llmFingerprint,
+  renameSavedLlm, suggestSavedLabel,
+  type LlmConfig, type SavedLlmEntry,
+} from "@/lib/llm";
 import { loadAccessKey, saveAccessKey, authHeaders } from "@/lib/api";
 import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, aiModels, cliKindOf,
   primeCliAvailability, cliAvailability, cliAvailState, serverAllowsCli,
   type CliAvailability, type CliAvailState, type ProviderId } from "@/lib/ai-models";
 
+function entryLabel(entry: SavedLlmEntry): string {
+  return entry.label?.trim() || suggestSavedLabel(entry.cfg);
+}
+
+function initialSavedName(existing: LlmConfig | null, list: SavedLlmEntry[]): string {
+  if (!existing) return "";
+  const hit = list.find((e) => e.id === llmFingerprint(existing));
+  return hit?.label ?? "";
+}
+
 export function Settings() {
   const existing = loadLlm();
   const existingIsCli = existing ? isCliProvider(existing.provider) : false;
   const [staleBlocked, setStaleBlocked] = useState<string | null>(staleBlockedProvider());
+  const [savedList, setSavedList] = useState<SavedLlmEntry[]>(() => loadSavedLlms());
+  const [activeId, setActiveId] = useState<string | null>(
+    () => (existing ? llmFingerprint(existing) : null));
+  // 自定义显示名（可选）；空则保存时用建议名
+  const [savedName, setSavedName] = useState(() => initialSavedName(existing, loadSavedLlms()));
 
   const [mode, setMode] = useState<"api" | "subscription">(
     (existing && existingIsCli) || staleBlocked ? "subscription" : "api");
@@ -42,6 +62,43 @@ export function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const providerOf = (id: string): ProviderId => aiModels.find((m) => m.id === id)?.provider ?? "openai-compatible";
+
+  const draftCfgForHint = (): LlmConfig | null => {
+    if (mode === "subscription") {
+      const m = subscriptionModels.find((x) => x.id === cliId);
+      if (!m) return null;
+      return { provider: m.provider, baseURL: "", apiKey: "", model: m.id };
+    }
+    if (!modelName.trim()) return null;
+    return {
+      provider: providerOf(apiId),
+      baseURL: baseURL.trim(),
+      apiKey: apiKey.trim(),
+      model: modelName.trim(),
+    };
+  };
+
+  const nameSuggestion = (() => {
+    const draft = draftCfgForHint();
+    return draft ? suggestSavedLabel(draft) : "例如：复盘用 DeepSeek";
+  })();
+
+  const applyCfgToForm = (cfg: LlmConfig, label?: string) => {
+    setSavedName(label ?? "");
+    if (isCliProvider(cfg.provider)) {
+      setMode("subscription");
+      setCliId(cfg.model);
+      return;
+    }
+    setMode("api");
+    const preset = apiModels.find((m) => m.id === cfg.model || m.provider === cfg.provider);
+    setApiId(preset?.id ?? "custom");
+    setBaseURL(cfg.baseURL);
+    setModelName(cfg.model);
+    setApiKey(cfg.apiKey);
+  };
+
   
   // 卡片上那句"支持哪些 CLI"，直接由服务端上报的 allowed 列表生成
   const allowedCliLabel = (() => {
@@ -61,8 +118,6 @@ export function Settings() {
     return { ok: true, why: null };
   };
 
-  const providerOf = (id: string): ProviderId => aiModels.find((m) => m.id === id)?.provider ?? "openai-compatible";
-
   const pickApiModel = (id: string) => {
     const m = apiModels.find((x) => x.id === id);
     if (!m) return;
@@ -71,13 +126,29 @@ export function Settings() {
     setBaseURL(PROVIDER_BASE[m.provider] || "");
   };
 
+  const afterSave = (cfg: LlmConfig) => {
+    const list = loadSavedLlms();
+    setSavedList(list);
+    const id = llmFingerprint(cfg);
+    setActiveId(id);
+    const hit = list.find((e) => e.id === id);
+    if (hit) setSavedName(hit.label);
+  };
+
   const saveApi = () => {
     if (!baseURL.trim() || !apiKey.trim() || !modelName.trim()) {
       toast.error("请填完 Base URL、API Key、Model");
       return;
     }
-    saveLlm({ provider: providerOf(apiId), baseURL: baseURL.trim(), apiKey: apiKey.trim(), model: modelName.trim() });
     setStaleBlocked(null);   // 配置已换新 → 那条"原配置失效"的提示要收起来
+    const cfg: LlmConfig = {
+      provider: providerOf(apiId),
+      baseURL: baseURL.trim(),
+      apiKey: apiKey.trim(),
+      model: modelName.trim(),
+    };
+    saveLlm(cfg, savedName);
+    afterSave(cfg);
     toast.success("已保存到本地，全站「问 AI / 复盘」现在可用");
   };
 
@@ -92,17 +163,57 @@ export function Settings() {
       toast.error(`「${m.name}」不可用：${st.why ?? "未知原因"}`);
       return;
     }
-    saveLlm({ provider: m.provider, baseURL: "", apiKey: "", model: m.id });
     setStaleBlocked(null);
+    const cfg: LlmConfig = { provider: m.provider, baseURL: "", apiKey: "", model: m.id };
+    saveLlm(cfg, savedName);
+    afterSave(cfg);
     toast.success(`已选「${m.name}」订阅，全站「问 AI / 复盘」将调用本机 ${m.name}`);
+  };
+
+  const switchSaved = (id: string) => {
+    if (id === activeId) return;
+    const cfg = activateSavedLlm(id);
+    if (!cfg) {
+      toast.error("该配置当前不可用（CLI 未放行或缺少 key）");
+      return;
+    }
+    const entry = savedList.find((e) => e.id === id);
+    setActiveId(id);
+    applyCfgToForm(cfg, entry?.label);
+    setStaleBlocked(null);
+    toast.success(`已切换为「${entry ? entryLabel(entry) : cfg.model}」`);
+  };
+
+  const commitListName = (id: string, value: string) => {
+    const entry = savedList.find((e) => e.id === id);
+    if (!entry) return;
+    const nextLabel = value.trim() || suggestSavedLabel(entry.cfg);
+    if (nextLabel === entry.label) return;
+    setSavedList(renameSavedLlm(id, value));
+    if (activeId === id) setSavedName(nextLabel);
+  };
+
+  const deleteSaved = (id: string) => {
+    const next = removeSavedLlm(id);
+    setSavedList(next);
+    if (activeId === id) {
+      setActiveId(null);
+      setApiKey("");
+      setCliId("");
+      setSavedName("");
+      setStaleBlocked(null);
+    }
+    toast.success("已从列表移除");
   };
 
   const forget = () => {
     clearLlm();
+    setActiveId(null);
     setApiKey("");
     setCliId("");
+    setSavedName("");
     setStaleBlocked(null);   // 旧配置已被清掉，提示没有对象了
-    toast.success("已清除本地配置");
+    toast.success("已清除当前生效配置（已保存列表仍保留）");
   };
 
   const saveAccess = () => {
@@ -113,6 +224,23 @@ export function Settings() {
     void refreshAvail();
   };
 
+  const nameField = (
+    <div>
+      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+        名称 <span className="font-normal text-muted-foreground/70">（可选）</span>
+      </label>
+      <input
+        value={savedName}
+        onChange={(e) => setSavedName(e.target.value)}
+        placeholder={nameSuggestion}
+        className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+      />
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        用来区分已保存的模型；不填则使用建议名「{nameSuggestion}」。
+      </p>
+    </div>
+  );
+
   return (
     <div>
       <PageHeader title="接入 AI" subtitle="配置一次，全站的「问 AI」「复盘」都能用你自己的模型" />
@@ -121,6 +249,65 @@ export function Settings() {
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
         <span>API key <b className="text-foreground">只存在你本地浏览器</b>，仅在你提问时发给你自己的后端去调模型，不上传、不进仓库。所有分析由你的模型给出，本产品不校准。</span>
       </div>
+
+      {savedList.length > 0 && (
+        <GlassCard className="mb-4">
+          <h3 className="mb-1 text-sm font-semibold">已保存模型</h3>
+          <p className="mb-3 text-xs text-muted-foreground">
+            勾选即可切换当前使用的模型；名称可直接修改以便区分。每次点「保存」会写入本列表，重启后自动加载。
+          </p>
+          <ul className="space-y-1.5">
+            {savedList.map((entry) => {
+              const on = activeId === entry.id;
+              const isCli = isCliProvider(entry.cfg.provider);
+              return (
+                <li key={entry.id}
+                  className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    on ? "border-primary/50 bg-primary/10" : "border-border hover:bg-muted/30"
+                  }`}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => switchSaved(entry.id)}
+                    className="h-4 w-4 shrink-0 accent-primary"
+                    aria-label={`使用 ${entryLabel(entry)}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      {isCli ? <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                      <input
+                        defaultValue={entry.label}
+                        key={`${entry.id}:${entry.label}`}
+                        onBlur={(e) => commitListName(entry.id, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        }}
+                        placeholder={suggestSavedLabel(entry.cfg)}
+                        className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium outline-none hover:border-border focus:border-primary/50 focus:bg-black/20"
+                        title="修改名称"
+                      />
+                      {on && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                    </span>
+                    <span className="mt-0.5 block truncate pl-5 text-[11px] text-muted-foreground">
+                      {isCli
+                        ? `订阅 · ${entry.cfg.model}`
+                        : `${entry.cfg.model}${entry.cfg.baseURL ? ` · ${entry.cfg.baseURL}` : ""}`}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => deleteSaved(entry.id)}
+                    className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-muted/50 hover:text-destructive"
+                    title="从列表移除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </GlassCard>
+      )}
 
       {/* 两种接入方式 */}
       {staleBlocked && (
@@ -209,6 +396,7 @@ export function Settings() {
                 );
               })}
             </div>
+            {nameField}
             {}
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-muted/20 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -263,6 +451,8 @@ export function Settings() {
               <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…"
                 className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
             </div>
+
+            {nameField}
 
             <div className="flex items-center gap-2">
               <button onClick={saveApi} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25">

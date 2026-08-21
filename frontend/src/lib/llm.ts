@@ -2,8 +2,8 @@ import { apiUrl } from "./base";
 // 用户 LLM 配置（只存本地 localStorage，不上传、不进仓库）+ 系统 AI 对话调用。
 
 import { ApiError, authHeaders } from "./api";
-import { blockedReason, cliAvailability, cliKindOf, isCliProvider, serverAllowsCli,
-  type ProviderId } from "./ai-models";
+import { apiModels, blockedReason, cliAvailability, cliKindOf, isCliProvider, serverAllowsCli,
+  subscriptionModels, type ProviderId } from "./ai-models";
 
 export interface LlmConfig {
   provider: ProviderId;
@@ -54,8 +54,9 @@ export function loadLlm(): LlmConfig | null {
   }
 }
 
-export function saveLlm(cfg: LlmConfig) {
+export function saveLlm(cfg: LlmConfig, label?: string) {
   localStorage.setItem(KEY, JSON.stringify(cfg));
+  upsertSavedLlm(cfg, label);
 }
 
 export function clearLlm() {
@@ -64,6 +65,137 @@ export function clearLlm() {
 
 export function hasLlm(): boolean {
   return loadLlm() !== null;
+}
+
+const SAVED_KEY = "vr-llm-saved";
+
+/** 已保存模型条目：与当前生效配置分开存，重启后可勾选切换。 */
+export interface SavedLlmEntry {
+  id: string;
+  cfg: LlmConfig;
+  label: string;
+  savedAt: number;
+}
+
+/** 同一端点 + 同一 model 视为同一条（API key 变更时覆盖更新）。 */
+export function llmFingerprint(cfg: LlmConfig): string {
+  if (isCliProvider(cfg.provider)) return `cli:${cfg.provider}:${cfg.model}`;
+  return `api:${cfg.provider}:${cfg.baseURL}:${cfg.model}`;
+}
+
+/** 未填写自定义名称时的建议显示名（用于区分已保存条目）。 */
+export function suggestSavedLabel(cfg: LlmConfig): string {
+  if (isCliProvider(cfg.provider)) {
+    return subscriptionModels.find((m) => m.id === cfg.model)?.name ?? cfg.model;
+  }
+  const preset = apiModels.find((m) => m.id === cfg.model);
+  if (preset) return preset.name;
+  const host = (() => {
+    try { return new URL(cfg.baseURL).host; } catch { return cfg.baseURL || ""; }
+  })();
+  return host ? `${cfg.model} · ${host}` : cfg.model;
+}
+
+function readSavedRaw(): SavedLlmEntry[] {
+  try {
+    const raw = localStorage.getItem(SAVED_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as SavedLlmEntry[];
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((e) => e && e.id && e.cfg && e.cfg.model);
+  } catch {
+    return [];
+  }
+}
+
+function writeSaved(list: SavedLlmEntry[]) {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+}
+
+/** 读取已保存列表；若仅有当前生效配置、列表为空，则自动迁移进去。 */
+export function loadSavedLlms(): SavedLlmEntry[] {
+  let list = readSavedRaw();
+  if (list.length === 0) {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const c = JSON.parse(raw) as LlmConfig;
+        if (c?.model) {
+          const entry: SavedLlmEntry = {
+            id: llmFingerprint(c),
+            cfg: c,
+            label: suggestSavedLabel(c),
+            savedAt: Date.now(),
+          };
+          writeSaved([entry]);
+          list = [entry];
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return list;
+}
+
+/** 写入/覆盖一条已保存配置（按 fingerprint 去重）。 */
+export function upsertSavedLlm(cfg: LlmConfig, label?: string): SavedLlmEntry[] {
+  const id = llmFingerprint(cfg);
+  const list = readSavedRaw();
+  const trimmed = label?.trim() ?? "";
+  const prev = list.find((e) => e.id === id);
+  const next: SavedLlmEntry = {
+    id,
+    cfg,
+    // 显式传入（含空串）以传入值为准；未传则保留原名，都没有则用建议名
+    label: label !== undefined
+      ? (trimmed || suggestSavedLabel(cfg))
+      : (prev?.label || suggestSavedLabel(cfg)),
+    savedAt: Date.now(),
+  };
+  const i = list.findIndex((e) => e.id === id);
+  if (i >= 0) list[i] = next;
+  else list.unshift(next);
+  writeSaved(list);
+  return list;
+}
+
+/** 仅修改已保存条目的显示名称。 */
+export function renameSavedLlm(id: string, label: string): SavedLlmEntry[] {
+  const list = readSavedRaw();
+  const i = list.findIndex((e) => e.id === id);
+  if (i < 0) return list;
+  const trimmed = label.trim();
+  list[i] = {
+    ...list[i],
+    label: trimmed || suggestSavedLabel(list[i].cfg),
+  };
+  writeSaved(list);
+  return list;
+}
+
+/** 从已保存列表删除；若删的是当前生效项，同时清掉当前配置。 */
+export function removeSavedLlm(id: string): SavedLlmEntry[] {
+  const list = readSavedRaw().filter((e) => e.id !== id);
+  writeSaved(list);
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const c = JSON.parse(raw) as LlmConfig;
+      if (c && llmFingerprint(c) === id) localStorage.removeItem(KEY);
+    }
+  } catch { /* ignore */ }
+  return list;
+}
+
+/** 将已保存条目设为当前生效配置。 */
+export function activateSavedLlm(id: string): LlmConfig | null {
+  const entry = readSavedRaw().find((e) => e.id === id);
+  if (!entry) return null;
+  const cfg = entry.cfg;
+  const ok = cfg.model && (isCliProvider(cfg.provider) || (cfg.baseURL && cfg.apiKey));
+  if (!ok) return null;
+  if (serverAllowsCli(cfg.provider) === false) return null;
+  localStorage.setItem(KEY, JSON.stringify(cfg));
+  return cfg;
 }
 
 export interface ChatHandlers {
