@@ -1,11 +1,11 @@
 import { Fragment, useMemo, useState } from "react";
-import { Plus, X, RefreshCw, Star, Loader2, Sparkles } from "lucide-react";
+import { Plus, X, RefreshCw, Star, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
+import { loadWatch, saveWatch, addCodes, removeCodes } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,7 @@ export function Watchlist() {
   const [hint, setHint] = useState<string | null>(null);
   // 实时行情默认**关闭**——开着会持续请求，让用户自己决定要不要开。
   const [live, setLive] = useState(loadLive);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const { quotes, loading, updatedAt, polling, error, refresh } = useLiveQuotes(codes, live);
   const dd = useDeepDive("watchlist", beijingDateKey());
@@ -60,6 +61,17 @@ export function Watchlist() {
     });
   };
 
+  const persist = (next: string[]) => {
+    setCodes(next);
+    saveWatch(next);
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const keep = new Set<string>();
+      for (const c of prev) if (next.includes(c)) keep.add(c);
+      return keep;
+    });
+  };
+
   const add = () => {
     const { next, added } = addCodes(codes, input);
     if (added === 0) {
@@ -67,11 +79,43 @@ export function Watchlist() {
       setInput("");
       return;
     }
-    setCodes(next); saveWatch(next); setInput(""); setHint(`已添加 ${added} 只`);
+    persist(next);
+    setInput("");
+    setHint(`已添加 ${added} 只`);
   };
   const remove = (c: string) => {
-    const next = codes.filter((x) => x !== c);
-    setCodes(next); saveWatch(next);
+    persist(removeCodes(codes, [c]));
+  };
+
+  const allSelected = codes.length > 0 && selected.size === codes.length;
+  const someSelected = selected.size > 0;
+
+  const toggleOne = (c: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(codes));
+  };
+
+  const removeSelected = () => {
+    if (selected.size === 0) return;
+    const n = selected.size;
+    persist(removeCodes(codes, Array.from(selected)));
+    setHint(`已删除 ${n} 只`);
+  };
+
+  const clearAll = () => {
+    if (codes.length === 0) return;
+    if (!window.confirm(`确定清空全部 ${codes.length} 只自选股？此操作不可撤销。`)) return;
+    const n = codes.length;
+    persist([]);
+    setHint(`已清空 ${n} 只`);
   };
 
   const buildPrompt = (code: string, q: Quote | undefined) =>
@@ -120,7 +164,7 @@ export function Watchlist() {
     <div>
       <PageHeader
         title="自选股"
-        subtitle="批量添加、一屏总览你关注的标的。数据只存本地、不上传。每只可让 AI 深入分析。"
+        subtitle="批量添加 / 批量删除 / 一键清空。数据只存本地、不上传。每只可让 AI 深入分析。"
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -183,14 +227,38 @@ export function Watchlist() {
       </GlassCard>
 
       <GlassCard glow>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-1.5 font-semibold">
             <Star className="h-4 w-4 text-primary" /> 自选总览
             <span className="text-xs font-normal text-muted-foreground">（{codes.length}）</span>
           </h3>
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/70">
             {codes.length > 0 && (
-              <RunAllButton dd={dd} items={codes.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+              <>
+                <button
+                  onClick={removeSelected}
+                  disabled={!someSelected}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                    someSelected
+                      ? "border-destructive/40 text-destructive hover:bg-destructive/10"
+                      : "border-border/40 text-muted-foreground/40 cursor-not-allowed",
+                  )}
+                  title={someSelected ? `删除已选 ${selected.size} 只` : "先勾选要删除的标的"}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  删除所选{someSelected ? `（${selected.size}）` : ""}
+                </button>
+                <button
+                  onClick={clearAll}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                  title="清空全部自选股"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  一键清空
+                </button>
+                <RunAllButton dd={dd} items={codes.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+              </>
             )}
             {error ? (
               <span className="text-warning">{error}</span>
@@ -226,8 +294,21 @@ export function Watchlist() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">
+                  <th className="w-8 px-2 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected && !allSelected;
+                      }}
+                      onChange={toggleAll}
+                      title={allSelected ? "取消全选" : "全选"}
+                      className="h-3.5 w-3.5 accent-primary"
+                      aria-label="全选"
+                    />
+                  </th>
+                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
+                    <th key={h || `a${i}`} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
                   ))}
@@ -236,9 +317,19 @@ export function Watchlist() {
               <tbody>
                 {codes.map((c) => {
                   const q = quotes[c];
+                  const checked = selected.has(c);
                   return (
                     <Fragment key={c}>
-                      <tr className="border-b border-border/30">
+                      <tr className={cn("border-b border-border/30", checked && "bg-primary/5")}>
+                        <td className="px-2 py-2.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleOne(c)}
+                            className="h-3.5 w-3.5 accent-primary"
+                            aria-label={`选择 ${q?.name || c}`}
+                          />
+                        </td>
                         <td className="px-2 py-2.5 font-medium">{q?.name || "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-xs text-muted-foreground">{c}</td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? q.price : "—"}</td>
@@ -269,7 +360,7 @@ export function Watchlist() {
                         <DeepDivePanel
                           dd={dd}
                           stockKey={c}
-                          colSpan={9}
+                          colSpan={10}
                           noteTitle={`自选深析 · ${q?.name || c}`}
                           onRerun={() => dd.rerun(diveItem(c))}
                         />

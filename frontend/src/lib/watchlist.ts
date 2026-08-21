@@ -33,3 +33,10 @@ export function addCodes(existing: string[], raw: string): { next: string[]; add
   const incoming = parseCodes(raw).filter((c) => !existing.includes(c));
   return { next: [...existing, ...incoming], added: incoming.length };
 }
+
+// 从自选中批量移除指定代码，返回剩余列表。
+export function removeCodes(existing: string[], toRemove: string[]): string[] {
+  if (toRemove.length === 0) return existing;
+  const drop = new Set(toRemove);
+  return existing.filter((c) => !drop.has(c));
+}
