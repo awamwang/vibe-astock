@@ -71,13 +71,14 @@ function SectionHead({
 /** 今日 / 昨日对照卡。色规则对齐 awam TwoDataProp：今日相对昨日更大→红（reversed 则相反）。
  *  无昨日归档时右侧固定 `/-` 占位，避免只显示今日误以为没有对照能力。 */
 function EnvCard({
-  name, today, yesterday, format, reversed,
+  name, today, yesterday, format, reversed, className,
 }: {
   name: string;
   today: number | null | undefined;
   yesterday?: number | null;
   format: (v: number) => string;
   reversed?: boolean;
+  className?: string;
 }) {
   const hasT = today != null && Number.isFinite(today);
   const hasY = yesterday != null && Number.isFinite(yesterday);
@@ -91,7 +92,7 @@ function EnvCard({
     color = "text-success";
   }
   return (
-    <div className="min-w-[5.5rem] rounded-lg border border-border/50 bg-card/60 px-2.5 py-2 shadow-sm">
+    <div className={cn("min-w-[5.5rem] rounded-lg border border-border/50 bg-card/60 px-2.5 py-2 shadow-sm", className)}>
       <p className="truncate text-[11px] font-semibold text-foreground/80">{name}</p>
       <div className="mt-1 border-t border-border/40 pt-1 font-mono text-sm">
         <span className={cn("font-bold", hasT ? color : "text-muted-foreground/40")}>
@@ -103,6 +104,97 @@ function EnvCard({
   );
 }
 
+/** 文本类今日/昨日对照（阶段、龙头等）。 */
+function EnvTextCard({
+  name, today, yesterday, accent,
+}: {
+  name: string;
+  today?: string | null;
+  yesterday?: string | null;
+  accent?: string;
+}) {
+  const hasT = Boolean(today);
+  const hasY = Boolean(yesterday);
+  return (
+    <div className="min-w-[6.5rem] max-w-[11rem] rounded-lg border border-border/40 bg-background/50 px-2.5 py-2">
+      <p className="truncate text-[11px] font-semibold text-foreground/70">{name}</p>
+      <div className="mt-1 border-t border-border/30 pt-1 text-sm leading-snug">
+        <span className={cn("font-semibold", hasT ? (accent || "text-foreground") : "text-muted-foreground/40")}>
+          {hasT ? today : "—"}
+        </span>
+        <span className="text-muted-foreground/70">/{hasY ? yesterday : "-"}</span>
+      </div>
+    </div>
+  );
+}
+
+function EnvThemesCard({
+  today, yesterday,
+}: {
+  today?: string[] | null;
+  yesterday?: string[] | null;
+}) {
+  const t = today?.filter(Boolean) ?? [];
+  const y = yesterday?.filter(Boolean) ?? [];
+  return (
+    <div className="min-w-[12rem] flex-1 rounded-lg border border-border/40 bg-background/50 px-2.5 py-2">
+      <p className="truncate text-[11px] font-semibold text-foreground/70">主线题材</p>
+      <div className="mt-1 border-t border-border/30 pt-1.5">
+        {t.length ? (
+          <div className="flex flex-wrap gap-1">
+            {t.map((theme) => (
+              <span
+                key={theme}
+                className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-300"
+              >
+                {theme}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground/40">—</span>
+        )}
+        <p className="mt-1.5 truncate text-[10px] text-muted-foreground/60" title={y.join(" · ") || undefined}>
+          昨 {y.length ? y.join(" · ") : "-"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function EnvGroup({
+  label, hint, children, tone = "default",
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+  tone?: "default" | "qcj";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg p-2.5",
+        tone === "qcj"
+          ? "border border-amber-500/35 bg-amber-500/[0.07]"
+          : "border border-border/40 bg-muted/15",
+      )}
+    >
+      <div className="mb-2 flex items-baseline gap-2">
+        <span
+          className={cn(
+            "text-[11px] font-semibold tracking-wide",
+            tone === "qcj" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+          )}
+        >
+          {label}
+        </span>
+        {hint && <span className="text-[10px] text-muted-foreground/55">{hint}</span>}
+      </div>
+      <div className="flex flex-wrap items-stretch gap-2">{children}</div>
+    </div>
+  );
+}
+
 function PlaceholderCard({ name }: { name: string }) {
   return (
     <div className="min-w-[7rem] rounded-lg border border-dashed border-border/60 bg-muted/15 px-2.5 py-2">
@@ -110,6 +202,27 @@ function PlaceholderCard({ name }: { name: string }) {
       <p className="mt-1 border-t border-border/30 pt-1 text-xs text-muted-foreground/50">待接入</p>
     </div>
   );
+}
+
+const QCJ_LEVEL_RANK: Record<string, number> = {
+  冰点期: 0,
+  退潮期: 1,
+  降温期: 2,
+  修复期: 3,
+  升温期: 4,
+  高潮期: 5,
+};
+
+function qcjLevelAccent(level?: string | null, prev?: string | null): string | undefined {
+  if (!level) return undefined;
+  const rank = QCJ_LEVEL_RANK[level];
+  if (rank == null) return "text-amber-800 dark:text-amber-300";
+  if (prev && QCJ_LEVEL_RANK[prev] != null && rank !== QCJ_LEVEL_RANK[prev]) {
+    return rank > QCJ_LEVEL_RANK[prev] ? "text-danger" : "text-success";
+  }
+  if (rank <= 1) return "text-success";
+  if (rank >= 4) return "text-danger";
+  return "text-amber-800 dark:text-amber-300";
 }
 
 export function ShortBoard() {
@@ -298,7 +411,7 @@ export function ShortBoard() {
               {autoRefresh ? (liveNow ? `每 ${LIVE_MS / 1000} 秒自动刷新` : "自动刷新（非交易时段暂停）") : "自动刷新"}
             </button>
             <AskAiButton
-              context={`短线盘面：情绪温度 ${t.temperature ?? "—"}，上涨 ${t.n_up ?? "—"}，下跌 ${t.n_down ?? "—"}，实际涨停 ${t.n_sjzt ?? "—"}`}
+              context={`短线盘面：情绪温度 ${t.temperature ?? "—"}，上涨 ${t.n_up ?? "—"}，下跌 ${t.n_down ?? "—"}，实际涨停 ${t.n_sjzt ?? "—"}；趣财经情绪 ${t.qcj_temp != null ? `${t.qcj_temp}°` : "—"}（${t.qcj_level ?? "—"}），龙头 ${t.qcj_leader ?? "—"}，主线 ${(t.qcj_themes || []).join("、") || "—"}`}
               label="问 AI"
               suggestions={["今天短线情绪怎么样", "炸板率和涨停溢价怎么读", "资金面有什么信号"]}
             />
@@ -313,9 +426,11 @@ export function ShortBoard() {
         caliber={
           "今日 / 昨日对照：左侧今日、右侧昨日归档（无归档时显示 /-）。\n" +
           "盘中每次刷新覆盖写「今天」快照，收盘后最后一次即为次日的「昨日」。\n" +
-          "情绪温度 / 炸板率 / 涨停溢价来自选股宝；涨跌家数优先开盘啦、否则选股宝；\n" +
-          "实际涨跌停优先开盘啦、否则东财涨跌停池；成交额优先开盘啦、否则腾讯上证+深证；\n" +
-          "主力净流入 / 北向净买来自东财。颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
+          "涨跌宽度：情绪温度 / 炸板率 / 涨停溢价来自选股宝；涨跌家数优先开盘啦、否则选股宝；\n" +
+          "实际涨跌停优先开盘啦、否则东财涨跌停池。\n" +
+          "资金量能：成交额优先开盘啦、否则腾讯上证+深证；主力净流入来自东财。\n" +
+          "趣财经：情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材来自 qiniugu market API（昨日优先取历史序列）。\n" +
+          "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }
         hint={board?.updated && (
@@ -332,20 +447,62 @@ export function ShortBoard() {
         ) : !boardDone && !board ? (
           pending(false)
         ) : (
-          <div className="flex flex-wrap items-stretch gap-2">
-            <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
-            <EnvCard name="上涨数" today={t.n_up} yesterday={y.n_up} format={intFmt} />
-            <EnvCard name="下跌数" today={t.n_down} yesterday={y.n_down} format={intFmt} reversed />
-            <EnvCard name="实际涨停" today={t.n_sjzt} yesterday={y.n_sjzt} format={intFmt} />
-            <EnvCard name="实际跌停" today={t.n_sjdt} yesterday={y.n_sjdt} format={intFmt} reversed />
-            <EnvCard name="上证成交额" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
-            <EnvCard name="A股成交额" today={t.v_ca} yesterday={y.v_ca} format={yiCompact} />
-            <EnvCard name="主力净流入" today={t.m_net} yesterday={y.m_net} format={yiCompact} />
-            <EnvCard name="北向净买" today={t.net_s2n} yesterday={y.net_s2n} format={yiCompact} />
-            <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
-            <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
-            {board?.placeholders?.volume_vs_yesterday && <PlaceholderCard name="量能对比昨日" />}
-            {board?.placeholders?.volume_5d_ratio && <PlaceholderCard name="量能5日，量比" />}
+          <div className="space-y-2.5">
+            <EnvGroup label="涨跌宽度" hint="选股宝 / 开盘啦">
+              <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
+              <EnvCard name="上涨数" today={t.n_up} yesterday={y.n_up} format={intFmt} />
+              <EnvCard name="下跌数" today={t.n_down} yesterday={y.n_down} format={intFmt} reversed />
+              <EnvCard name="实际涨停" today={t.n_sjzt} yesterday={y.n_sjzt} format={intFmt} />
+              <EnvCard name="实际跌停" today={t.n_sjdt} yesterday={y.n_sjdt} format={intFmt} reversed />
+            </EnvGroup>
+            <EnvGroup label="资金量能" hint="开盘啦 / 腾讯 / 东财">
+              <EnvCard name="上证成交额" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
+              <EnvCard name="A股成交额" today={t.v_ca} yesterday={y.v_ca} format={yiCompact} />
+              <EnvCard name="主力净流入" today={t.m_net} yesterday={y.m_net} format={yiCompact} />
+              {board?.placeholders?.volume_vs_yesterday && <PlaceholderCard name="量能对比昨日" />}
+              {board?.placeholders?.volume_5d_ratio && <PlaceholderCard name="量能5日，量比" />}
+            </EnvGroup>
+            <EnvGroup label="打板质量" hint="选股宝">
+              <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
+              <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
+            </EnvGroup>
+            <EnvGroup label="趣财经" hint="情绪阶段 · 龙头 · 主线" tone="qcj">
+              <EnvCard
+                name="情绪分°"
+                today={t.qcj_temp}
+                yesterday={y.qcj_temp}
+                format={(v) => `${Math.round(v)}°`}
+                className="border-amber-500/25 bg-background/40"
+              />
+              <EnvTextCard
+                name="阶段"
+                today={t.qcj_level}
+                yesterday={y.qcj_level}
+                accent={qcjLevelAccent(t.qcj_level, y.qcj_level)}
+              />
+              <EnvCard
+                name="涨停"
+                today={t.qcj_zt}
+                yesterday={y.qcj_zt}
+                format={intFmt}
+                className="border-amber-500/25 bg-background/40"
+              />
+              <EnvCard
+                name="跌停"
+                today={t.qcj_dt}
+                yesterday={y.qcj_dt}
+                format={intFmt}
+                reversed
+                className="border-amber-500/25 bg-background/40"
+              />
+              <EnvTextCard
+                name="龙头"
+                today={t.qcj_leader_top ? `${t.qcj_leader ?? ""} · ${t.qcj_leader_top}` : t.qcj_leader}
+                yesterday={y.qcj_leader_top ? `${y.qcj_leader ?? ""} · ${y.qcj_leader_top}` : y.qcj_leader}
+                accent="text-amber-900 dark:text-amber-200"
+              />
+              <EnvThemesCard today={t.qcj_themes} yesterday={y.qcj_themes} />
+            </EnvGroup>
           </div>
         )}
       </GlassCard>

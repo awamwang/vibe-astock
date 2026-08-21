@@ -3,11 +3,13 @@
 数据源对齐 awam-stock `Environment` 合并逻辑：
   · 选股宝 Flash `market_indicator/line` → 情绪温度 / 涨跌家数 / 炸板率 / 涨停溢价
   · 开盘啦 `ZhangFuDetail` → 实际涨跌停、上证/A 股成交额（拿不到则降级）
-  · 东财 push2 → 主力净流入、北向净买
+  · 东财 push2 → 主力净流入
   · 腾讯行情 → 上证/深证成交额兜底（拼两市近似 A 股成交额）
+  · 趣财经 qiniugu `/qng/api/v1/market` → 情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材
 
 「今日 / 昨日」对比：盘中每次成功快照覆盖写本地归档，收盘后最后一次即为次日「昨日」。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
+趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
 量能对比昨日、量能 5 日/量比暂无可靠源 → 前端占位。
 """
 
@@ -17,7 +19,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from . import trade_calendar
 from .util import china_now
@@ -36,9 +38,15 @@ _LONGTOU = (
     "https://apphq.longhuvip.com/w1/api/index.php"
     "?a=ZhangFuDetail&apiv=w25&c=HomeDingPan&PhoneOSNew=1&"
 )
+_QCJ_MARKET = "https://qiniugu.com/qng/api/v1/market"
 # 与 duanxian/fetchers 资金流 ut 一致
 _UT = "b2884a393a59ad64002292a3e90d46a5"
 _UA = {"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"}
+_QCJ_UA = {
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://qiniugu.com/",
+    "Accept": "application/json",
+}
 
 
 def _cached(key: str, ttl: float, build):
@@ -148,35 +156,69 @@ def _fetch_longtou() -> dict:
         return {}
 
 
-def _parse_wan_csv(row: str | None) -> Optional[float]:
-    """东财北向分时：'时间,沪,深,北向'，单位万。"""
-    if not row or not isinstance(row, str):
-        return None
-    parts = row.split(",")
-    if len(parts) < 4 or parts[3] in ("-", ""):
-        return None
-    v = _num(parts[3])
-    return None if v is None else v * 10000  # 万 → 元
+def _qcj_row(row: dict | None) -> dict:
+    """趣财经单日情绪 → 短线指标字段。"""
+    if not isinstance(row, dict):
+        return {}
+    themes = row.get("mainThemes") or []
+    if not isinstance(themes, list):
+        themes = []
+    themes = [str(t).strip() for t in themes if str(t).strip()]
+    level = str(row.get("sentimentLevel") or "").strip() or None
+    leader = str(row.get("leaderName") or "").strip() or None
+    leader_top = str(row.get("leaderDayTop") or "").strip() or None
+    temp = _num(row.get("temperatureDegree"))
+    zt = row.get("limitUpCount")
+    dt = row.get("limitDownCount")
+    return {
+        "qcj_temp": None if temp is None else int(temp),
+        "qcj_level": level,
+        "qcj_zt": int(_num(zt, 0) or 0) if zt is not None else None,
+        "qcj_dt": int(_num(dt, 0) or 0) if dt is not None else None,
+        "qcj_leader": leader,
+        "qcj_leader_top": leader_top,
+        "qcj_themes": themes or None,
+        "qcj_date": str(row.get("date") or "") or None,
+    }
 
 
-def _fetch_north() -> dict:
-    """北向净买（分时最新非空点）。近年数据源常全 0，如实返回。"""
-    ts = int(time.time() * 1000)
-    for host in ("push2.eastmoney.com", "push2delay.eastmoney.com"):
-        try:
-            raw = _em_get(
-                f"https://{host}/api/qt/kamtbs.rtmin/get",
-                {"fields1": "f1,f3", "fields2": "f51,f54,f58,f62",
-                 "ut": _UT, "lmt": 1, "_": ts},
-            )
-            s2n = (raw.get("data") or {}).get("s2n") or []
-            for row in reversed(s2n):
-                net = _parse_wan_csv(row)
-                if net is not None:
-                    return {"net_s2n": net}
-        except Exception:  # noqa: BLE001
-            continue
-    return {}
+def _fetch_qcj(today: str, prev: str | None) -> dict:
+    """趣财经市场情绪：返回 today/yesterday 两份映射（按 date 对齐）。"""
+    try:
+        import requests
+
+        r = requests.get(_QCJ_MARKET, headers=_QCJ_UA, timeout=12)
+        r.raise_for_status()
+        raw = r.json()
+        rows = (raw.get("data") or {}).get("sentiment") or []
+        if not isinstance(rows, list) or not rows:
+            return {}
+        by_date = {
+            str(row.get("date")): row
+            for row in rows
+            if isinstance(row, dict) and row.get("date")
+        }
+        out: dict[str, Any] = {}
+        if today in by_date:
+            out["today"] = _qcj_row(by_date[today])
+        elif rows:
+            # 盘前/非交易日：取序列末条作为「最近交易日」
+            last = rows[-1]
+            if str(last.get("date") or "") <= today:
+                out["today"] = _qcj_row(last)
+        if prev and prev in by_date:
+            out["yesterday"] = _qcj_row(by_date[prev])
+        elif out.get("today") and rows:
+            # 若 prev 未命中，取 today 前一条
+            t_date = out["today"].get("qcj_date")
+            if t_date:
+                for i, row in enumerate(rows):
+                    if str(row.get("date")) == t_date and i > 0:
+                        out["yesterday"] = _qcj_row(rows[i - 1])
+                        break
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _fetch_main_fund() -> dict:
@@ -304,13 +346,13 @@ def _save_archive(date: str, env: dict) -> None:
         pass
 
 
-def _merge_today() -> dict:
+def _merge_today(today_s: str, prev: str | None) -> dict:
     baoer = _fetch_baoer()
     lt = _fetch_longtou()
-    north = _fetch_north()
     main = _fetch_main_fund()
     amounts = _fetch_index_amounts()
     ztdt = _zt_dt_fallback()
+    qcj = _fetch_qcj(today_s, prev)
 
     today: dict[str, Any] = {}
     today.update(baoer)
@@ -328,17 +370,18 @@ def _merge_today() -> dict:
         today["v_sh"] = amounts["v_sh"]
     if today.get("v_ca") is None and amounts.get("v_ca") is not None:
         today["v_ca"] = amounts["v_ca"]
-    today.update(north)
     if main.get("m_net") is not None:
         today["m_net"] = main["m_net"]
+    today.update(qcj.get("today") or {})
     today["_m_net_zr"] = main.get("m_net_zr")
     today["_v_sh_zr"] = lt.get("v_sh_zr")
     today["_v_ca_zr"] = lt.get("v_ca_zr")
+    today["_qcj_yesterday"] = qcj.get("yesterday") or {}
     return today
 
 
 def _build_yesterday(prev: str | None, today_raw: dict) -> dict:
-    """昨日环境：本地归档为主；主力/成交额可从今日响应里的 zr 字段补。"""
+    """昨日环境：本地归档为主；主力/成交额可从今日响应里的 zr 字段补；趣财经优先 API 历史。"""
     y = dict(_load_archive(prev))
     if today_raw.get("_m_net_zr") is not None and y.get("m_net") is None:
         y["m_net"] = today_raw["_m_net_zr"]
@@ -346,6 +389,10 @@ def _build_yesterday(prev: str | None, today_raw: dict) -> dict:
         y["v_sh"] = today_raw["_v_sh_zr"]
     if today_raw.get("_v_ca_zr") is not None and y.get("v_ca") is None:
         y["v_ca"] = today_raw["_v_ca_zr"]
+    qcj_y = today_raw.get("_qcj_yesterday") or {}
+    for k, v in qcj_y.items():
+        if v is not None:
+            y[k] = v
     return y
 
 
@@ -359,20 +406,25 @@ def snapshot() -> dict:
     def build():
         today_s = china_now().strftime("%Y-%m-%d")
         prev = trade_calendar.prev_trade_date(today_s)
-        raw = _merge_today()
+        raw = _merge_today(today_s, prev)
         today = _strip_meta(raw)
         yesterday = _strip_meta(_build_yesterday(prev, raw))
-        if today.get("temperature") is not None or today.get("n_up"):
+        if (
+            today.get("temperature") is not None
+            or today.get("n_up")
+            or today.get("qcj_temp") is not None
+        ):
             _save_archive(today_s, today)
         available = bool(
             today.get("temperature") is not None
             or today.get("n_up")
             or today.get("n_sjzt") is not None
             or today.get("m_net") is not None
+            or today.get("qcj_temp") is not None
         )
         return {
             "available": available,
-            "reason": None if available else "环境指标暂不可用（选股宝/东财/开盘啦均未取到）",
+            "reason": None if available else "环境指标暂不可用（选股宝/东财/开盘啦/趣财经均未取到）",
             "date": today_s,
             "prev_date": prev,
             "today": today,

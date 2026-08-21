@@ -475,7 +475,7 @@ export interface LiveEmotion {
 
 /** 短线盘面环境指标（今日 / 昨日对照，单位见各字段注释） */
 export interface ShortBoardEnv {
-  temperature?: number | null;  // 情绪温度 0-100
+  temperature?: number | null;  // 情绪温度 0-100（选股宝）
   n_up?: number | null;
   n_down?: number | null;
   n_sjzt?: number | null;       // 实际涨停
@@ -483,10 +483,19 @@ export interface ShortBoardEnv {
   v_sh?: number | null;         // 上证成交额，元
   v_ca?: number | null;         // A 股成交额，元
   m_net?: number | null;        // 主力净流入，元
-  net_s2n?: number | null;      // 北向净买，元
   broken_r?: number | null;     // 炸板率，已 *100
   zt_avg_zr?: number | null;    // 涨停溢价，已 *100
   broken_c?: number | null;
+  /** 趣财经情绪分 0–100（App「xx°」） */
+  qcj_temp?: number | null;
+  /** 趣财经阶段：冰点期 / 修复期 / 升温期 / 高潮期 / 降温期 / 退潮期 */
+  qcj_level?: string | null;
+  qcj_zt?: number | null;       // 趣财经涨停家数
+  qcj_dt?: number | null;       // 趣财经跌停家数
+  qcj_leader?: string | null;   // 龙头
+  qcj_leader_top?: string | null; // 如「3天3板」
+  qcj_themes?: string[] | null; // 主线题材
+  qcj_date?: string | null;
 }
 export interface ShortBoardSnapshot {
   available: boolean;

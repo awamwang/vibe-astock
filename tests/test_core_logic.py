@@ -3451,6 +3451,43 @@ class TestShortBoardArchive:
         assert y["m_net"] == 5e8
         assert y["v_sh"] == 1e11
 
+    def test_qcj_row_maps_fields(self):
+        from duanxian import short_board as sb
+
+        row = sb._qcj_row({
+            "date": "2026-08-21",
+            "temperatureDegree": 31,
+            "sentimentLevel": "退潮期",
+            "leaderName": "汉森制药",
+            "leaderDayTop": "3天3板",
+            "limitUpCount": 54,
+            "limitDownCount": 13,
+            "mainThemes": ["机器人", "光电共封装CPO", "医药", "黄金"],
+        })
+        assert row["qcj_temp"] == 31
+        assert row["qcj_level"] == "退潮期"
+        assert row["qcj_leader"] == "汉森制药"
+        assert row["qcj_leader_top"] == "3天3板"
+        assert row["qcj_zt"] == 54
+        assert row["qcj_dt"] == 13
+        assert row["qcj_themes"] == ["机器人", "光电共封装CPO", "医药", "黄金"]
+
+    def test_qcj_yesterday_prefers_api_history(self):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-20", {"qcj_temp": 99, "temperature": 40})
+        y = sb._build_yesterday("2026-08-20", {
+            "_qcj_yesterday": {
+                "qcj_temp": 48,
+                "qcj_level": "修复期",
+                "qcj_leader": "昨日龙头",
+            },
+        })
+        assert y["qcj_temp"] == 48
+        assert y["qcj_level"] == "修复期"
+        assert y["qcj_leader"] == "昨日龙头"
+        assert y["temperature"] == 40
+
 
 @pytest.mark.unit
 class TestMoodBlockParse:
