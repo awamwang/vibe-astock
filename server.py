@@ -1271,6 +1271,43 @@ def api_theme_aliases_reset():
     return {"data": {"aliases": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/zt-keywords")
+def api_zt_keywords_get():
+    """读取上涨关键词配置（首板深入分析闭集标签）。"""
+    from duanxian import zt_keywords as zk
+
+    return {"data": zk.export_config()}
+
+
+@app.post("/api/config/zt-keywords")
+def api_zt_keywords_save(body: dict = Body(...)):
+    """保存上涨关键词列表。"""
+    from duanxian.zt_keywords import ZtKeywordError, save_keywords
+
+    raw = (body or {}).get("keywords")
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "keywords 须为数组", "detail": "keywords 须为数组"}, status_code=400)
+    try:
+        saved = save_keywords([str(x) for x in raw])
+    except ZtKeywordError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"keywords": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/zt-keywords/reset")
+def api_zt_keywords_reset():
+    """恢复内置默认上涨关键词。"""
+    from duanxian import zt_keywords as zk
+
+    try:
+        saved = zk.reset_keywords()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"keywords": saved, "count": len(saved)}}
+
+
 @app.get("/api/experience/meta")
 def api_experience_meta():
     """经验记忆库根路径与主题列表。"""

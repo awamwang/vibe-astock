@@ -4393,7 +4393,7 @@ class TestPerStockPromptsStayAtSectorLevel:
         assert "【涨停关键字】" in s
         assert "【持续性】" in s
         assert "【题材新旧】" in s
-        assert "loadZtKeywords" in s
+        assert "api.ztKeywords" in s or "ztKeywords" in s
         assert "精确选一个" in s
         assert "无原因" in s and "其他" in s
         assert "新题材" in s and "旧题材" in s
@@ -5211,9 +5211,49 @@ class TestThemeNormalize:
         nav = Path("frontend/src/components/layout/Layout.tsx").read_text(encoding="utf-8")
         assert "/config/theme-aliases" in fe
         assert "/api/config/theme-aliases" in be
+        assert "/config/zt-keywords" in fe
+        assert "/api/config/zt-keywords" in be
         assert "题材别名" in page
+        assert "上涨关键词" in page
         assert "自定义配置" in page
         assert "自定义配置" in nav
+
+
+@pytest.mark.unit
+class TestZtKeywords:
+    """上涨关键词：首板深入分析闭集标签。"""
+
+    def test_default_keywords(self, tmp_path, monkeypatch):
+        from duanxian import zt_keywords as zk
+
+        cfg = tmp_path / "zt_keywords.json"
+        monkeypatch.setattr(zk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(zk, "_KEYWORDS", None)
+        kw = zk.load_keywords()
+        assert "无原因" in kw
+        assert "其他" in kw
+        assert kw[-2:] == ["无原因", "其他"] or all(x in kw for x in ("无原因", "其他"))
+
+    def test_save_keeps_locked(self, tmp_path, monkeypatch):
+        from duanxian import zt_keywords as zk
+
+        cfg = tmp_path / "zt_keywords.json"
+        monkeypatch.setattr(zk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(zk, "_KEYWORDS", None)
+        saved = zk.save_keywords(["并购", "重组"])
+        assert "并购" in saved
+        assert "无原因" in saved
+        assert "其他" in saved
+
+    def test_reset_restores_defaults(self, tmp_path, monkeypatch):
+        from duanxian import zt_keywords as zk
+
+        cfg = tmp_path / "zt_keywords.json"
+        monkeypatch.setattr(zk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(zk, "_KEYWORDS", None)
+        zk.save_keywords(["自定义"])
+        reset = zk.reset_keywords()
+        assert reset == zk.default_keywords()
 
 
 @pytest.mark.unit

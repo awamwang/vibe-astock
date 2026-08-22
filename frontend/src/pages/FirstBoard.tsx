@@ -7,7 +7,7 @@ import { Caliber } from "@/components/ui/Caliber";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem } from "@/components/ui/DeepDive";
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
-import { loadZtKeywords } from "@/lib/zt-keywords";
+import { DEFAULT_ZT_KEYWORDS, setZtKeywordsCache } from "@/lib/zt-keywords";
 import { StockLabel } from "@/components/stock/StockLabel";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
@@ -23,6 +23,7 @@ export function FirstBoard() {
   const [importText, setImportText] = useState("");
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState<ZtReasonPreview | null>(null);
+  const [ztKeywords, setZtKeywords] = useState<string[]>([...DEFAULT_ZT_KEYWORDS]);
   const dd = useDeepDive("firstboard", data?.date || "");
 
   const reload = () =>
@@ -30,6 +31,15 @@ export function FirstBoard() {
 
   useEffect(() => {
     reload();
+  }, []);
+
+  useEffect(() => {
+    api.ztKeywords()
+      .then((cfg) => {
+        const kw = setZtKeywordsCache(cfg.keywords || []);
+        setZtKeywords(kw);
+      })
+      .catch(() => {});
   }, []);
 
   const closeImport = () => {
@@ -75,8 +85,7 @@ export function FirstBoard() {
   };
 
   const buildPrompt = (s: FirstBoardStock) => {
-    const tags = loadZtKeywords();
-    const tagList = tags.join("、");
+    const tagList = ztKeywords.join("、");
     return (
       `今天（${dateLabel(data?.date || "")}）A 股首板涨停股「${s.name}（${s.code}）」的客观数据：\n` +
       `现价 ${s.price} 元，涨停 +${s.pct}%，首次封板时间 ${s.seal_time || "未知"}，` +
@@ -184,7 +193,7 @@ export function FirstBoard() {
               </thead>
               <tbody>
                 {stocks.map((s) => {
-                  const diveMeta = parseDiveMeta(dd.analysis[s.code] || "");
+                  const diveMeta = parseDiveMeta(dd.analysis[s.code] || "", ztKeywords);
                   return (
                   <Fragment key={s.code}>
                     <tr className="border-b border-border/30">

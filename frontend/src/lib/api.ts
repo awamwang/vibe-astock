@@ -666,6 +666,11 @@ export const api = {
     request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases", "POST", { aliases }),
   resetThemeAliases: () =>
     request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases/reset", "POST", {}),
+  ztKeywords: () => get<ZtKeywordConfig>("/config/zt-keywords"),
+  saveZtKeywords: (keywords: string[]) =>
+    request<{ keywords: string[]; count: number }>("/config/zt-keywords", "POST", { keywords }),
+  resetZtKeywords: () =>
+    request<{ keywords: string[]; count: number }>("/config/zt-keywords/reset", "POST", {}),
   experienceMeta: () => get<ExperienceMeta>("/experience/meta"),
   experienceTopic: (name: string) =>
     get<ExperienceTopic>(`/experience/topic?name=${encodeURIComponent(name)}`),
@@ -679,6 +684,13 @@ export interface ExperienceTopicMeta {
   filename: string;
   title: string;
   summary: string;
+}
+export interface ZtKeywordConfig {
+  schema: number;
+  keywords: string[];
+  locked: string[];
+  path: string;
+  defaults: string[];
 }
 export interface ThemeAliasEntry {
   alias: string;

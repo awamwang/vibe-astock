@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import {
-  loadZtKeywords, addZtKeyword, removeZtKeyword, resetZtKeywords,
+  addZtKeyword, removeZtKeyword, setZtKeywordsCache,
   LOCKED_ZT_KEYWORDS,
 } from "@/lib/zt-keywords";
 import { api, type ThemeAliasEntry } from "@/lib/api";
@@ -24,13 +24,35 @@ function entriesFromAliases(aliases: Record<string, string>): ThemeAliasEntry[] 
 }
 
 export function ZtKeywordsSettings() {
-  const [tags, setTags] = useState<string[]>(() => loadZtKeywords());
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(true);
+  const [tagsSaving, setTagsSaving] = useState(false);
   const [draft, setDraft] = useState("");
 
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
   const [aliasLoading, setAliasLoading] = useState(true);
   const [aliasDraft, setAliasDraft] = useState({ alias: "", canonical: "" });
   const [aliasSaving, setAliasSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.ztKeywords();
+        if (!cancelled) {
+          const kw = setZtKeywordsCache(cfg.keywords || []);
+          setTags(kw);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取上涨关键词失败");
+        }
+      } finally {
+        if (!cancelled) setTagsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +71,19 @@ export function ZtKeywordsSettings() {
     return () => { cancelled = true; };
   }, []);
 
+  const persistKeywords = async (next: string[]) => {
+    setTagsSaving(true);
+    try {
+      const r = await api.saveZtKeywords(next);
+      const kw = setZtKeywordsCache(r.keywords);
+      setTags(kw);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setTagsSaving(false);
+    }
+  };
+
   const persistAliases = async (next: ThemeAliasEntry[]) => {
     const aliases = Object.fromEntries(next.map((e) => [e.alias, e.canonical]));
     setAliasSaving(true);
@@ -63,31 +98,40 @@ export function ZtKeywordsSettings() {
     }
   };
 
-  const addKeyword = () => {
+  const addKeyword = async () => {
     const label = draft.replace(/\s+/g, "").trim();
     const r = addZtKeyword(tags, draft);
     if (!r.ok) {
       toast.error(r.reason || "添加失败");
       return;
     }
-    setTags(r.next);
     setDraft("");
+    await persistKeywords(r.next);
     toast.success(`已添加「${label}」`);
   };
 
-  const removeKeyword = (tag: string) => {
+  const removeKeyword = async (tag: string) => {
     const r = removeZtKeyword(tags, tag);
     if (!r.ok) {
       toast.error(r.reason || "删除失败");
       return;
     }
-    setTags(r.next);
+    await persistKeywords(r.next);
     toast.success(`已移除「${tag}」`);
   };
 
-  const resetKeywords = () => {
-    setTags(resetZtKeywords());
-    toast.success("已恢复默认上涨关键词列表");
+  const resetKeywords = async () => {
+    setTagsSaving(true);
+    try {
+      const r = await api.resetZtKeywords();
+      const kw = setZtKeywordsCache(r.keywords);
+      setTags(kw);
+      toast.success("已恢复默认上涨关键词列表");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setTagsSaving(false);
+    }
   };
 
   const addAlias = async () => {
@@ -144,38 +188,43 @@ export function ZtKeywordsSettings() {
           <Tags className="h-4 w-4 text-primary" /> 上涨关键词
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          只存本地浏览器。深入分析时模型必须原样抄写其中一个标签；
+          存于本机后端数据目录。深入分析时模型必须原样抄写其中一个标签；
           看不出明显原因用「无原因」，都不属于用「其他」。
         </p>
 
-        <div className="mb-4 flex flex-wrap gap-2">
-          {tags.map((tag) => {
-            const locked = LOCKED_ZT_KEYWORDS.includes(tag);
-            return (
-              <span
-                key={tag}
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${
-                  locked
-                    ? "border-border/60 bg-muted/40 text-muted-foreground"
-                    : "border-primary/30 bg-primary/10 text-primary"
-                }`}
-              >
-                {locked && <Lock className="h-3 w-3 opacity-70" />}
-                {tag}
-                {!locked && (
-                  <button
-                    type="button"
-                    onClick={() => removeKeyword(tag)}
-                    className="rounded p-0.5 hover:bg-primary/20 hover:text-destructive"
-                    title={`删除「${tag}」`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                )}
-              </span>
-            );
-          })}
-        </div>
+        {tagsLoading ? (
+          <p className="text-xs text-muted-foreground">正在读取上涨关键词…</p>
+        ) : (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {tags.map((tag) => {
+              const locked = LOCKED_ZT_KEYWORDS.includes(tag);
+              return (
+                <span
+                  key={tag}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${
+                    locked
+                      ? "border-border/60 bg-muted/40 text-muted-foreground"
+                      : "border-primary/30 bg-primary/10 text-primary"
+                  }`}
+                >
+                  {locked && <Lock className="h-3 w-3 opacity-70" />}
+                  {tag}
+                  {!locked && (
+                    <button
+                      type="button"
+                      disabled={tagsSaving}
+                      onClick={() => void removeKeyword(tag)}
+                      className="rounded p-0.5 hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
+                      title={`删除「${tag}」`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -184,24 +233,27 @@ export function ZtKeywordsSettings() {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                addKeyword();
+                void addKeyword();
               }
             }}
             maxLength={10}
             placeholder="新标签，最多 10 字"
-            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+            disabled={tagsSaving || tagsLoading}
+            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
           />
           <button
             type="button"
-            onClick={addKeyword}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25"
+            onClick={() => void addKeyword()}
+            disabled={tagsSaving || tagsLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
           >
             <Plus className="h-4 w-4" /> 添加
           </button>
           <button
             type="button"
-            onClick={resetKeywords}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            onClick={() => void resetKeywords()}
+            disabled={tagsSaving || tagsLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认
           </button>

@@ -1,7 +1,5 @@
-// 上涨/涨停原因关键词标签 —— 只存本地 localStorage，不上传、不进仓库。
+// 上涨/涨停原因关键词标签 —— 存于本机后端配置（~/.duanxian-agents/config/zt_keywords.json）。
 // 首板深入分析必须从该列表中选一个；「无原因」「其他」为兜底标签，不可删除。
-
-const KEY = "vr-zt-keywords";
 
 /** 内置默认标签（含兜底） */
 export const DEFAULT_ZT_KEYWORDS: readonly string[] = [
@@ -12,11 +10,13 @@ export const DEFAULT_ZT_KEYWORDS: readonly string[] = [
 /** 语义兜底：无明确驱动 / 列表未覆盖，不允许从配置里删掉 */
 export const LOCKED_ZT_KEYWORDS: readonly string[] = ["无原因", "其他"];
 
+let _cache: string[] = [...DEFAULT_ZT_KEYWORDS];
+
 function normalizeTag(raw: string): string {
   return raw.replace(/\s+/g, "").trim();
 }
 
-function sanitizeList(list: unknown): string[] {
+export function sanitizeZtKeywords(list: unknown): string[] {
   if (!Array.isArray(list)) return [...DEFAULT_ZT_KEYWORDS];
   const out: string[] = [];
   const seen = new Set<string>();
@@ -27,7 +27,6 @@ function sanitizeList(list: unknown): string[] {
     seen.add(t);
     out.push(t);
   }
-  // 兜底标签始终保留在末尾（若用户曾挪到中间则按已有顺序，缺则补上）
   for (const locked of LOCKED_ZT_KEYWORDS) {
     if (!seen.has(locked)) {
       out.push(locked);
@@ -37,25 +36,14 @@ function sanitizeList(list: unknown): string[] {
   return out.length ? out : [...DEFAULT_ZT_KEYWORDS];
 }
 
-/** 读取当前上涨关键词列表；未配置或损坏时回落默认 */
+/** 同步读取进程内缓存；页面加载后应通过 API 刷新 */
 export function loadZtKeywords(): string[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [...DEFAULT_ZT_KEYWORDS];
-    return sanitizeList(JSON.parse(raw));
-  } catch {
-    return [...DEFAULT_ZT_KEYWORDS];
-  }
+  return [..._cache];
 }
 
-export function saveZtKeywords(tags: string[]): string[] {
-  const next = sanitizeList(tags);
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    /* 隐私模式等：本次会话仍可用，关掉页面后不保留 */
-  }
-  return next;
+export function setZtKeywordsCache(tags: string[]): string[] {
+  _cache = sanitizeZtKeywords(tags);
+  return [..._cache];
 }
 
 export function addZtKeyword(list: string[], raw: string): { next: string[]; ok: boolean; reason?: string } {
@@ -63,9 +51,8 @@ export function addZtKeyword(list: string[], raw: string): { next: string[]; ok:
   if (!t) return { next: list, ok: false, reason: "标签不能为空" };
   if (t.length > 10) return { next: list, ok: false, reason: "标签不超过 10 个字" };
   if (list.includes(t)) return { next: list, ok: false, reason: "已存在" };
-  // 新标签插在兜底标签之前
   const head = list.filter((x) => !LOCKED_ZT_KEYWORDS.includes(x));
-  const next = saveZtKeywords([...head, t, ...LOCKED_ZT_KEYWORDS]);
+  const next = sanitizeZtKeywords([...head, t, ...LOCKED_ZT_KEYWORDS]);
   return { next, ok: true };
 }
 
@@ -74,11 +61,7 @@ export function removeZtKeyword(list: string[], tag: string): { next: string[]; 
     return { next: list, ok: false, reason: `「${tag}」为兜底标签，不可删除` };
   }
   if (!list.includes(tag)) return { next: list, ok: false, reason: "不在列表中" };
-  return { next: saveZtKeywords(list.filter((x) => x !== tag)), ok: true };
-}
-
-export function resetZtKeywords(): string[] {
-  return saveZtKeywords([...DEFAULT_ZT_KEYWORDS]);
+  return { next: sanitizeZtKeywords(list.filter((x) => x !== tag)), ok: true };
 }
 
 /**
