@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,7 @@ const REVIEW_NAV = [
 
 const SETTINGS_NAV = [
   { to: "/settings", icon: Cog, label: "接入 AI" },
+  { to: "/settings/keywords", icon: Tags, label: "上涨关键词" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
 ];
 

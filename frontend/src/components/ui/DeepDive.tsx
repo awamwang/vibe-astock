@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { hasLlm, chatStream } from "@/lib/llm";
+import { resolveZtKeyword } from "@/lib/zt-keywords";
 
 const TOOL_LABEL: Record<string, string> = {
   query_quote: "查行情",
@@ -17,6 +18,41 @@ const TOOL_LABEL: Record<string, string> = {
   query_news: "查新闻",
   query_global_stock: "查外盘",
 };
+
+/** 深入分析摘要：涨停关键字 + 原因持续性（首板等页面约定的固定行） */
+export interface DiveMeta {
+  keyword: string | null;
+  duration: string | null;
+  body: string;
+}
+
+const _clip10 = (s: string) => s.replace(/\s+/g, "").slice(0, 10);
+
+/** 从分析正文顶部抽出【涨停关键字】/【持续性】，其余留给 Markdown */
+export function parseDiveMeta(text: string, allowedKeywords?: string[]): DiveMeta {
+  let keyword: string | null = null;
+  let duration: string | null = null;
+  const kept: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const kw = line.match(/^(?:[-*]\s*)?(?:\*\*)?涨停关键字(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【涨停关键字】\s*(.+)$/);
+    if (kw) {
+      const v = resolveZtKeyword(kw[1], allowedKeywords);
+      if (v) keyword = v;
+      continue;
+    }
+    const dur = line.match(/^(?:[-*]\s*)?(?:\*\*)?持续性(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【持续性】\s*(.+)$/);
+    if (dur) {
+      const v = _clip10(dur[1]);
+      if (v) duration = v;
+      continue;
+    }
+    kept.push(raw);
+  }
+  return { keyword, duration, body: kept.join("\n").replace(/^\n+/, "") };
+}
 
 // ---------- 本地存档 ----------
 const STORE_KEY = "vr-deepdive";
@@ -221,6 +257,7 @@ interface PanelProps {
 
 export function DeepDivePanel({ dd, stockKey, colSpan, noteTitle, onRerun }: PanelProps) {
   const text = dd.analysis[stockKey] || "";
+  const meta = parseDiveMeta(text);
   const isRunning = dd.running === stockKey;
   return (
     <tr className="border-b border-border/30 bg-primary/[0.03]">
@@ -250,10 +287,26 @@ export function DeepDivePanel({ dd, stockKey, colSpan, noteTitle, onRerun }: Pan
                 </>
               )}
             </div>
+            {(meta.keyword || meta.duration) && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                {meta.keyword && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary">
+                    <span className="text-[10px] font-normal text-muted-foreground">涨停关键字</span>
+                    {meta.keyword}
+                  </span>
+                )}
+                {meta.duration && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+                    <span className="text-[10px] font-normal text-muted-foreground">持续性</span>
+                    {meta.duration}
+                  </span>
+                )}
+              </div>
+            )}
             {dd.aiErr && dd.open === stockKey && <p className="mb-1 text-xs text-danger">{dd.aiErr}</p>}
             <div className="prose prose-sm prose-invert max-w-none text-foreground">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {text || (isRunning ? "正在调工具、组织分析…" : "")}
+                {meta.body || (isRunning ? "正在调工具、组织分析…" : "")}
               </ReactMarkdown>
             </div>
           </div>

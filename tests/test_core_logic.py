@@ -4104,6 +4104,15 @@ class TestPerStockPromptsStayAtSectorLevel:
                        "不推荐任何标的", "不构成投资建议"):
             assert clause in s, f"{rel}：少了合规约束「{clause}」"
 
+    def test_first_board_prompt_asks_keyword_and_duration(self):
+        """首板深入分析须先抽涨停关键字与原因持续性；关键字限闭集标签。"""
+        s = self._src("pages/FirstBoard.tsx")
+        assert "【涨停关键字】" in s
+        assert "【持续性】" in s
+        assert "loadZtKeywords" in s
+        assert "精确选一个" in s
+        assert "无原因" in s and "其他" in s
+
 
 class TestUpDownColorIsOneSource:
     """涨跌配色全站只能有**一份**口径：红涨绿跌。
