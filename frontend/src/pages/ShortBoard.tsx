@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment, type ReactNode } from "react";
 import { pctColor } from "@/lib/colors";
 import {
-  Sparkles, Loader2, RefreshCw, Gauge, TrendingUp, TrendingDown,
+  Sparkles, Loader2, RefreshCw, TrendingUp, TrendingDown,
   Flame, BarChart3, Radar,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -336,17 +336,10 @@ export function ShortBoard() {
   );
 
   const sentiment = overview?.sentiment;
+  const sentY = sentiment?.yesterday || {};
   const sectors = overview?.sectors || [];
-  const sentCells = sentiment ? [
-    { k: "上涨家数", v: sentiment.up, up: true },
-    { k: "下跌家数", v: sentiment.down, up: false },
-    { k: "平盘", v: sentiment.flat, up: null as boolean | null },
-    { k: "涨停", v: sentiment.zt, up: true },
-    { k: "真实涨停", v: sentiment.zt_real, up: true },
-    { k: "跌停", v: sentiment.dt, up: false },
-    { k: "真实跌停", v: sentiment.dt_real, up: false },
-    { k: "活跃度", v: sentiment.active, up: null as boolean | null },
-  ] : [];
+  const ley = liveEmo?.yesterday || {};
+  const pctEmo = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   const dd = useDeepDive("lianban", emotion?.date || "");
   const lianbanPrompt = (s: LianbanStock) =>
@@ -393,13 +386,13 @@ export function ShortBoard() {
     <div>
       <PageHeader
         title="短线盘面"
-        subtitle={`${session?.label ?? today} · 情绪温度 / 涨跌停 / 资金一屏盯盘`}
+        subtitle={`${session?.label ?? today} · 情绪温度 / 打板质量 / 资金一屏盯盘`}
         actions={
           <div className="flex items-center gap-2">
             <button
               onClick={toggleAuto}
               title={autoRefresh
-                ? `已开：指标条与打板情绪每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
+                ? `已开：短线指标每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
                 : "开启后在交易时段自动刷新"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -427,28 +420,36 @@ export function ShortBoard() {
         caliber={
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "归档只在「日历今天就是这场」时写入，不会把周五数据存成周六文件。\n" +
-          "涨跌宽度：情绪温度 / 炸板率 / 涨停溢价来自选股宝；涨跌家数优先开盘啦、否则选股宝；\n" +
-          "实际涨跌停优先开盘啦、否则东财涨跌停池。\n" +
+          "涨跌宽度：情绪温度来自选股宝；大盘宽度 / 题材投机 / 平盘 / 活跃度来自乐咕乐股，按日归档作昨日对照。\n" +
           "资金量能：成交额优先开盘啦、否则腾讯上证+深证；主力净流入来自东财。\n" +
+          "实时打板：最高连板 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
           "趣财经：情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材来自 qiniugu market API（昨日优先取历史序列）。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }
-        hint={(board?.date || board?.updated) && (
+        hint={
           <span className="text-[11px] text-muted-foreground/50">
-            {board.date && (
+            {board?.date && (
               <>
                 {board.date}
                 {board.prev_date && <> · 对照 {board.prev_date}</>}
                 {board.is_live === false && <> · 非实时场次</>}
-                {board.updated && " · "}
               </>
             )}
-            {board.updated && <>更新于 {board.updated}</>}
+            {liveEmo?.available && (
+              <>
+                {(board?.date || board?.updated) && " · "}
+                <span className="text-warning">
+                  打板 {liveEmo.date} {liveEmo.as_of}
+                  {liveEmo.is_live === false ? "（定稿）" : "（随盘）"}
+                </span>
+              </>
+            )}
+            {board?.updated && <> · 更新于 {board.updated}</>}
           </span>
-        )}
-        onRefresh={loadBoard}
-        refreshing={busy.board}
+        }
+        onRefresh={() => { loadBoard(); loadLiveEmo(); loadSentiment(); }}
+        refreshing={busy.board || busy.liveEmo || busy.sentiment}
       />
       <GlassCard className="mb-6 !p-3">
         {!board?.available && boardDone ? (
@@ -459,12 +460,12 @@ export function ShortBoard() {
           pending(false)
         ) : (
           <div className="space-y-2.5">
-            <EnvGroup label="涨跌宽度" hint="选股宝 / 开盘啦">
+            <EnvGroup label="涨跌宽度" hint="选股宝 / 乐咕乐股">
               <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
-              <EnvCard name="上涨数" today={t.n_up} yesterday={y.n_up} format={intFmt} />
-              <EnvCard name="下跌数" today={t.n_down} yesterday={y.n_down} format={intFmt} reversed />
-              <EnvCard name="实际涨停" today={t.n_sjzt} yesterday={y.n_sjzt} format={intFmt} />
-              <EnvCard name="实际跌停" today={t.n_sjdt} yesterday={y.n_sjdt} format={intFmt} reversed />
+              <EnvTextCard name="大盘宽度" today={sentiment?.breadth} yesterday={sentY.breadth} />
+              <EnvTextCard name="题材投机" today={sentiment?.speculation} yesterday={sentY.speculation} />
+              <EnvCard name="平盘" today={sentiment?.flat} yesterday={sentY.flat} format={intFmt} />
+              <EnvTextCard name="活跃度" today={sentiment?.active} yesterday={sentY.active} />
             </EnvGroup>
             <EnvGroup label="资金量能" hint="开盘啦 / 腾讯 / 东财">
               <EnvCard name="上证成交额" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
@@ -473,9 +474,34 @@ export function ShortBoard() {
               {board?.placeholders?.volume_vs_yesterday && <PlaceholderCard name="量能对比昨日" />}
               {board?.placeholders?.volume_5d_ratio && <PlaceholderCard name="量能5日，量比" />}
             </EnvGroup>
-            <EnvGroup label="打板质量" hint="选股宝">
+            <EnvGroup label="打板质量" hint="选股宝 · 实时">
               <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
               <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
+              <EnvCard
+                name="最高连板"
+                today={liveEmo?.max_boards}
+                yesterday={ley.max_boards}
+                format={(v) => `${Math.round(v)} 板`}
+              />
+              <EnvCard
+                name="连板（2板+）"
+                today={liveEmo?.lianban_count}
+                yesterday={ley.lianban_count}
+                format={(v) => `${Math.round(v)} 家`}
+              />
+              <EnvCard
+                name="晋级率"
+                today={liveEmo?.promotion_rate}
+                yesterday={ley.promotion_rate}
+                format={pctEmo}
+              />
+              <EnvCard
+                name="炸板家数"
+                today={liveEmo?.zb_count}
+                yesterday={ley.zb_count}
+                format={intFmt}
+                reversed
+              />
             </EnvGroup>
             <EnvGroup label="趣财经" hint="情绪阶段 · 龙头 · 主线" tone="qcj">
               <EnvCard
@@ -518,143 +544,7 @@ export function ShortBoard() {
         )}
       </GlassCard>
 
-      {/* 2. 市场情绪 */}
-      <SectionHead
-        title="市场情绪"
-        icon={<Gauge className="h-4 w-4" />}
-        caliber={
-          "涨停 / 真实涨停 / 跌停 / 真实跌停 / 活跃度这几个数取自乐咕乐股，不是我们算的。\n" +
-          "「真实」与普通涨跌停的差额由它自己的口径决定，具体算法未公开。\n" +
-          "活跃度同样是它的算法，**不能按上涨家数占比来理解**。\n" +
-          "大盘宽度按涨跌家数机械分档：上涨不足 600 家为冰点，其余看 上涨÷下跌 的比值\n" +
-          "（<0.7 偏弱 / 0.7-1.2 中性 / 1.2-2.5 偏强 / ≥2.5 普涨）。\n" +
-          "题材投机只按真实涨停家数分档：<30 冰点 / 30-59 普通 / 60-99 活跃 / ≥100 亢奋。"
-        }
-        hint={sentiment?.date && <span className="text-[11px] text-muted-foreground/50">{sentiment.date}</span>}
-        onRefresh={loadSentiment}
-        refreshing={busy.sentiment}
-      />
-      <GlassCard className="mb-6">
-        {!sentiment?.breadth ? (
-          pending(ovDone)
-        ) : (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                { k: "大盘宽度", v: sentiment.breadth, hint: "冰点 / 偏弱 / 中性 / 偏强 / 普涨" },
-                { k: "题材投机", v: sentiment.speculation, hint: "冰点 / 普通 / 活跃 / 亢奋" },
-              ].map((m) => (
-                <div key={m.k} className="rounded-lg bg-muted/25 p-4">
-                  <p className="text-xs text-muted-foreground">{m.k}</p>
-                  <p className="mt-1 text-2xl font-bold text-primary">{m.v}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground/60">{m.hint}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {sentCells.map((c) => (
-                <div key={c.k} className="rounded-lg bg-muted/20 p-2 text-center">
-                  <p className="truncate text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold",
-                    c.up === null ? "text-foreground" : c.up ? "text-danger" : "text-success")}>{c.v}</p>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </GlassCard>
-
-      {/* 3. 今日实时打板情绪 */}
-      <SectionHead
-        title="今日实时打板情绪"
-        icon={<Flame className="h-4 w-4" />}
-        caliber={
-          "场次对照：有今日池用今天；周末/盘前回退最近场次，对照其前一交易日（如周五 vs 周四）。\n" +
-          "归档只在日历今天这场写入，不会把周五数据存成周六文件。\n" +
-          "封板率 = 最终封住家数 ÷ 摸板家数；炸板率 = 炸板未回封家数 ÷ 摸板家数。\n" +
-          "摸板家数 = 涨停 + 炸板，**按家数算，不按炸板次数算**。\n" +
-          "最高连板只给板数，具体是哪只票看下方「昨日短线情绪」标签里的连板股表。"
-        }
-        hint={liveEmo?.available ? (
-          <span className="text-[11px] text-warning">
-            {liveEmo.date} {liveEmo.as_of} · {liveEmo.phase}
-            {liveEmo.is_live === false ? "（定稿回看）" : "（随盘变化）"}
-            {liveEmo.prev_date && (
-              <span className="text-muted-foreground/60"> · 对照 {liveEmo.prev_date}</span>
-            )}
-          </span>
-        ) : liveEmo ? (
-          <span className="text-[11px] text-muted-foreground/50">{liveEmo.reason}</span>
-        ) : null}
-        onRefresh={loadLiveEmo}
-        refreshing={busy.liveEmo}
-      />
-      <GlassCard className="mb-6">
-        {!liveEmo ? pending(false) : !liveEmo.available ? (
-          <p className="py-4 text-center text-sm text-muted-foreground/60">
-            {liveEmo.reason || "今日暂无数据"}
-          </p>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {(() => {
-              const y = liveEmo.yesterday || {};
-              /** 今日值 / 昨日值；无昨日固定 `/-` */
-              const Dual = ({
-                label, today, yesterday, format, up, sub,
-              }: {
-                label: string;
-                today: number | null | undefined;
-                yesterday: number | null | undefined;
-                format: (n: number) => string;
-                up: boolean;
-                sub?: string;
-              }) => {
-                const hasT = today != null && Number.isFinite(today);
-                const hasY = yesterday != null && Number.isFinite(yesterday);
-                return (
-                  <div className="rounded-lg bg-muted/30 p-3 text-center">
-                    <p className="text-xs text-muted-foreground">{label}</p>
-                    <p className={cn("mt-1 font-mono text-xl font-bold",
-                      !hasT ? "text-muted-foreground/40" : up ? "text-danger" : "text-success")}>
-                      {hasT ? format(today as number) : "—"}
-                      <span className="text-sm font-normal text-muted-foreground">
-                        /{hasY ? format(yesterday as number) : "-"}
-                      </span>
-                    </p>
-                    {sub && <p className="mt-0.5 text-[10px] text-muted-foreground/50">{sub}</p>}
-                  </div>
-                );
-              };
-              const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-              return (
-                <>
-                  <Dual label="涨停" today={liveEmo.zt_count} yesterday={y.zt_count}
-                    format={(n) => String(n)} up />
-                  <Dual label="跌停" today={liveEmo.dt_count} yesterday={y.dt_count}
-                    format={(n) => String(n)} up={false} />
-                  <Dual label="最高连板" today={liveEmo.max_boards} yesterday={y.max_boards}
-                    format={(n) => `${n} 板`} up />
-                  <Dual label="连板（2板+）" today={liveEmo.lianban_count} yesterday={y.lianban_count}
-                    format={(n) => `${n} 家`} up />
-                  <Dual label="封板率" today={liveEmo.seal_rate} yesterday={y.seal_rate}
-                    format={pct} up sub="封住 / 尝试涨停" />
-                  <Dual label="炸板率" today={liveEmo.break_rate} yesterday={y.break_rate}
-                    format={pct} up={false} sub="炸板 / 尝试涨停" />
-                  <Dual label="晋级率" today={liveEmo.promotion_rate} yesterday={y.promotion_rate}
-                    format={pct} up
-                    sub={liveEmo.promotion_base != null
-                      ? `${liveEmo.promotion_base_date || "上一场"} 涨停 ${liveEmo.promotion_base} 家，今天又封住`
-                      : "上一场涨停的票，今天又封住"} />
-                  <Dual label="炸板家数" today={liveEmo.zb_count} yesterday={y.zb_count}
-                    format={(n) => String(n)} up={false} sub="炸板未回封" />
-                </>
-              );
-            })()}
-          </div>
-        )}
-      </GlassCard>
-
-      {/* 4. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 资金轮动 */}
+      {/* 2. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 资金轮动 */}
       <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border/50 pb-0">
         {tabs.map((tItem) => (
           <button

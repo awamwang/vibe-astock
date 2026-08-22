@@ -130,9 +130,19 @@ export interface IndexQuote {
   name: string; price: number; change_pct: number; change_amt: number;
 }
 
+export interface MarketSentimentYesterday {
+  breadth?: string;
+  speculation?: string;
+  flat?: number;
+  active?: string;
+}
+
 export interface MarketSentiment {
   up: number; down: number; flat: number; zt: number; zt_real: number; dt: number; dt_real: number;
   active: string; breadth: string; speculation: string; date: string;
+  prev_date?: string | null;
+  is_live?: boolean;
+  yesterday?: MarketSentimentYesterday;
 }
 export interface SectorFlow {
   name: string; pct: number; net: number; inflow: number; outflow: number; firms: number;

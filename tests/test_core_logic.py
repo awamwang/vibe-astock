@@ -3583,6 +3583,81 @@ class TestShortBoardArchive:
 
 
 @pytest.mark.unit
+class TestMarketSentimentArchive:
+    """乐咕市场情绪按日归档：收盘后最后一次覆盖 = 次日昨日对照。"""
+
+    @pytest.fixture(autouse=True)
+    def _iso(self, tmp_path, monkeypatch):
+        import sys
+        from pathlib import Path
+
+        vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import vr.market as m
+
+        monkeypatch.setattr(m, "_CACHE_DIR", str(tmp_path))
+        self.m = m
+        yield
+
+    def test_yesterday_from_archive(self, tmp_path):
+        m = self.m
+
+        m._save_archive("2026-08-21", {
+            "breadth": "偏强",
+            "speculation": "活跃",
+            "flat": 150,
+            "active": "62% 涨家占比",
+        })
+        y = m._yesterday_slice("2026-08-21")
+        assert y["breadth"] == "偏强"
+        assert y["speculation"] == "活跃"
+        assert y["flat"] == 150
+        assert y["active"] == "62% 涨家占比"
+
+    def test_attach_compare_writes_only_on_live_day(self, monkeypatch):
+        m = self.m
+
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date",
+            lambda d: {"2026-08-22": "2026-08-21"}[d])
+        monkeypatch.setattr(
+            "duanxian.util.china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 22, 15, 0))
+        raw = {
+            "flat": 171,
+            "breadth": "中性",
+            "speculation": "普通",
+            "active": "",
+            "date": "2026-08-22",
+        }
+        out = m._attach_sentiment_compare(dict(raw))
+        assert out["prev_date"] == "2026-08-21"
+        assert out["is_live"] is True
+        assert m._load_archive("2026-08-22")["breadth"] == "中性"
+
+    def test_weekend_does_not_write_saturday_archive(self, monkeypatch):
+        m = self.m
+
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date",
+            lambda d: {"2026-08-21": "2026-08-20"}[d])
+        monkeypatch.setattr(
+            "duanxian.util.china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 23, 10, 0))
+        raw = {
+            "flat": 180,
+            "breadth": "中性",
+            "speculation": "普通",
+            "active": "55%",
+            "date": "2026-08-21",
+        }
+        out = m._attach_sentiment_compare(dict(raw))
+        assert out["is_live"] is False
+        assert not __import__("os").path.isfile(m._archive_path("2026-08-23"))
+
+
+@pytest.mark.unit
 class TestMoodBlockParse:
     """开盘啦 RealRankingInfo 行解析（对齐 awam moodBlockItemMap）。"""
 

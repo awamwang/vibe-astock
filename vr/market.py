@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
 import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -16,6 +19,8 @@ import gstock
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
+_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_sentiment")
+_ARCHIVE_KEYS = ("breadth", "speculation", "flat", "active")
 
 
 def _cached(key: str, fn, valid=bool):
@@ -37,7 +42,84 @@ def _num(v) -> int:
         return 0
 
 
-def _sentiment() -> dict:
+def _normalize_session_date(raw: str) -> str:
+    """乐咕统计日期 → YYYY-MM-DD。"""
+    s = str(raw or "").strip()
+    if not s:
+        from duanxian.util import china_now
+
+        return china_now().strftime("%Y-%m-%d")
+    s = re.sub(r"[年月]", "-", s).replace("日", "").strip()
+    digits = re.sub(r"\D", "", s)
+    if len(digits) >= 8:
+        d = digits[:8]
+        return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+    return s[:10]
+
+
+def _archive_path(date: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date}.json")
+
+
+def _load_archive(date: str | None) -> dict:
+    if not date:
+        return {}
+    path = _archive_path(date)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_archive(date: str, env: dict) -> None:
+    """盘中也写：收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        path = _archive_path(date)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        payload = {k: env[k] for k in _ARCHIVE_KEYS if k in env and env[k] is not None}
+        payload["date"] = date
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _yesterday_slice(prev: str | None) -> dict:
+    raw = _load_archive(prev)
+    return {k: raw[k] for k in _ARCHIVE_KEYS if k in raw and raw[k] is not None}
+
+
+def _attach_sentiment_compare(raw: dict) -> dict:
+    """为涨跌宽度类指标补上昨日对照（本地按日归档）。"""
+    if not raw:
+        return raw
+    from duanxian import trade_calendar
+    from duanxian.util import china_now
+
+    as_of = _normalize_session_date(raw.get("date", ""))
+    calendar_today = china_now().strftime("%Y-%m-%d")
+    is_live = as_of == calendar_today
+    slice_today = {k: raw[k] for k in _ARCHIVE_KEYS if k in raw}
+    if is_live and slice_today.get("breadth"):
+        _save_archive(as_of, slice_today)
+    prev = trade_calendar.prev_trade_date(as_of)
+    out = dict(raw)
+    out["date"] = as_of
+    out["prev_date"] = prev
+    out["is_live"] = is_live
+    out["yesterday"] = _yesterday_slice(prev)
+    return out
+
+
+def _sentiment_raw() -> dict:
     """市场情绪：涨跌家数/涨停跌停/活跃度 + 大盘宽度、题材投机（客观数据机械分档）。"""
     try:
         # akshare 惰性导入（同 astock 模式）：未装时降级返回空，不挡整个服务启动
@@ -67,6 +149,10 @@ def _sentiment() -> dict:
         "breadth": breadth, "speculation": speculation,
         "date": str(d.get("统计日期", "")),
     }
+
+
+def _sentiment() -> dict:
+    return _attach_sentiment_compare(_sentiment_raw())
 
 
 def _sectors() -> list[dict]:
