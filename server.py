@@ -1222,6 +1222,65 @@ def _backup_guard(request: Request):
     return None
 
 
+@app.get("/api/experience/meta")
+def api_experience_meta():
+    """经验记忆库根路径与主题列表。"""
+    from duanxian import experience as exp
+
+    return {"data": exp.get_meta()}
+
+
+@app.get("/api/experience/topic")
+def api_experience_topic(name: str = ""):
+    """读取单个主题 Markdown。"""
+    from duanxian import experience as exp
+
+    filename = (name or "").strip()
+    if not filename:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    try:
+        return {"data": exp.read_topic(filename)}
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/experience/retrieve")
+def api_experience_retrieve(body: dict = Body(...)):
+    """按问题关键词检索 Top-K 主题，供问答 / 全局问 AI 注入。"""
+    from duanxian import experience as exp
+
+    query = str((body or {}).get("query") or "").strip()
+    try:
+        k = int((body or {}).get("k") or 3)
+    except (TypeError, ValueError):
+        k = 3
+    hits = exp.retrieve(query, k=k)
+    return {"data": {
+        "hits": hits,
+        "context": exp.format_context(hits),
+        "k": k,
+    }}
+
+
+@app.post("/api/experience/commit")
+def api_experience_commit(request: Request, body: dict = Body(...)):
+    """确认写入归纳后的主题文件，并刷新 index.md。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import experience as exp
+
+    files = (body or {}).get("files")
+    try:
+        result = exp.commit_files(files if isinstance(files, list) else [])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": result}
+
+
 @app.get("/api/backup/status")
 def api_backup_status():
     """当前可备份数据规模（~/.duanxian-agents 非日志文件）。"""

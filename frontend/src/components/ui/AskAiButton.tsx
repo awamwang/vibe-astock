@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { Sparkles, X, Settings, Send, Loader2, Wrench, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
+import { loadUseExperienceMemory, saveUseExperienceMemory } from "@/lib/experience";
 
 interface Props {
   // 本分栏/本页要喂给用户 AI 的上下文，作为对话的系统上下文。
@@ -38,6 +39,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [useMemory, setUseMemory] = useState(() => loadUseExperienceMemory());
   const scrollRef = useRef<HTMLDivElement>(null);
   // 在跑的流式请求：关面板/换问题时中止，省用户的订阅/API 额度，也防迟到 chunk 写进新气泡
   const abortRef = useRef<AbortController | null>(null);
@@ -45,6 +47,10 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
   useEffect(() => {
     if (open) setConfigured(hasLlm());
   }, [open]);
+
+  useEffect(() => {
+    saveUseExperienceMemory(useMemory);
+  }, [useMemory]);
 
   useEffect(() => () => abortRef.current?.abort(), []); // 组件卸载兜底
 
@@ -77,7 +83,16 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
     // 只有仍是「当前这次请求」才允许写 UI——旧请求的迟到 chunk 直接丢弃
     const alive = () => abortRef.current === ac && !ac.signal.aborted;
     try {
-      await chatStream(history, context, {
+      let ctx = context;
+      if (useMemory) {
+        try {
+          const r = await api.experienceRetrieve(q, 3);
+          if (r.context) ctx = `${context}\n\n${r.context}`;
+        } catch {
+          /* 记忆检索失败时仍用本页上下文 */
+        }
+      }
+      await chatStream(history, ctx, {
         onTool: (tool, args) => { if (alive()) patchLast((msg) => ({ ...msg, tools: [...(msg.tools || []), { name: tool, arg: argStr(args) }] })); },
         onDelta: (t) => { if (alive()) patchLast((msg) => ({ ...msg, content: msg.content + t })); },
       }, ac.signal);
@@ -188,6 +203,18 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
                 </div>
 
                 <div className="border-t border-border/60 p-3">
+                  <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={useMemory}
+                      onChange={(e) => setUseMemory(e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    使用经验记忆
+                    <Link to="/experience" className="text-primary/80 hover:text-primary" onClick={close}>
+                      管理
+                    </Link>
+                  </label>
                   <div className="flex items-end gap-2">
                     <textarea
                       value={input}

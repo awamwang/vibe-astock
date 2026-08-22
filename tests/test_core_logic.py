@@ -3398,6 +3398,10 @@ class TestLiveEmotionArchive:
             "duanxian.trade_calendar.prev_trade_date", lambda d: "2026-08-19")
         monkeypatch.setattr(
             "duanxian.trade_calendar.is_settled", lambda d: False)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-20")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session", lambda: "2026-08-19")
 
         def fake_pool(kind, ymd):
             if kind == "getTopicZTPool" and ymd == "20260820":
@@ -3418,6 +3422,52 @@ class TestLiveEmotionArchive:
         assert snap["yesterday"]["promotion_rate"] == 0.25
         # 今日快照已落盘，供明天对照
         assert le._load_archive("2026-08-20").get("zt_count") == 2
+
+    def test_weekend_shows_friday_vs_thursday_without_saturday_archive(
+            self, tmp_path, monkeypatch):
+        """周六仍展示周五 vs 周四，且不得把周五数据写成周六.json。"""
+        from duanxian import live_emotion as le
+
+        le._save_archive("2026-08-20", {  # 周四
+            "zt_count": 40, "seal_rate": 0.7, "promotion_rate": 0.2,
+        })
+        monkeypatch.setattr(
+            le, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 22, 12, 30))  # 周六
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date",
+            lambda d: {"2026-08-22": "2026-08-21", "2026-08-21": "2026-08-20"}.get(d))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: d == "2026-08-21")
+
+        def fake_pool(kind, ymd):
+            if ymd == "20260822":
+                return []  # 周六无池
+            if kind == "getTopicZTPool" and ymd == "20260821":
+                return [{"c": "000001", "lbc": 3}, {"c": "000002", "lbc": 1}]
+            if kind == "getTopicZTPool" and ymd == "20260820":
+                return [{"c": "000001"}, {"c": "000003"}, {"c": "000004"}]
+            if kind == "getTopicZBPool" and ymd == "20260821":
+                return [{"c": "000009"}]
+            if kind == "getTopicDTPool":
+                return []
+            return []
+
+        monkeypatch.setattr(le, "_pool", fake_pool)
+        snap = le.snapshot()
+        assert snap["available"] is True
+        assert snap["date"] == "2026-08-21"
+        assert snap["prev_date"] == "2026-08-20"
+        assert snap["is_live"] is False
+        assert snap["phase"] == "非交易日"
+        assert snap["zt_count"] == 2
+        assert snap["yesterday"]["zt_count"] == 40
+        assert not (tmp_path / "2026-08-22.json").exists()
+        assert not (tmp_path / "2026-08-21.json").exists()  # 非 live 不覆盖写
 
 
 @pytest.mark.unit
@@ -3487,6 +3537,45 @@ class TestShortBoardArchive:
         assert y["qcj_level"] == "修复期"
         assert y["qcj_leader"] == "昨日龙头"
         assert y["temperature"] == 40
+
+    def test_resolve_as_of_weekend_is_friday_vs_thursday(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date",
+            lambda d: {"2026-08-22": "2026-08-21", "2026-08-21": "2026-08-20"}[d])
+        as_of, prev, is_live = sb._resolve_as_of("2026-08-22")
+        assert as_of == "2026-08-21"
+        assert prev == "2026-08-20"
+        assert is_live is False
+
+    def test_weekend_snapshot_keeps_two_sessions_no_saturday_file(
+            self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-20", {
+            "temperature": 40, "n_up": 1800, "qcj_temp": 28,
+        })
+        monkeypatch.setattr(
+            sb, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 22, 12, 30))
+        monkeypatch.setattr(sb, "_resolve_as_of",
+                            lambda _t: ("2026-08-21", "2026-08-20", False))
+        monkeypatch.setattr(sb, "_merge_today", lambda as_of, prev: {
+            "temperature": 48, "n_up": 2505, "qcj_temp": 31,
+            "_qcj_yesterday": {},
+        })
+        snap = sb.snapshot()
+        assert snap["date"] == "2026-08-21"
+        assert snap["prev_date"] == "2026-08-20"
+        assert snap["is_live"] is False
+        assert snap["today"]["temperature"] == 48
+        assert snap["yesterday"]["temperature"] == 40
+        assert not (tmp_path / "2026-08-22.json").exists()
 
 
 @pytest.mark.unit
@@ -4938,6 +5027,61 @@ class TestDataBackup:
         assert opened
         with pytest.raises(BackupError, match="只能打开"):
             backup.open_data_dir("tmp", root=str(tmp_path / "duanxian-agents"))
+
+
+@pytest.mark.unit
+class TestExperienceMemory:
+    """经验记忆库：主题落盘、index、关键词检索。"""
+
+    def test_sanitize_and_commit_updates_index(self, tmp_path):
+        from duanxian import experience as exp
+
+        root = str(tmp_path / "experience")
+        out = exp.commit_files(
+            [{
+                "title": "情绪周期",
+                "summary": "低吸优于追高",
+                "content": "# 情绪周期\n\n低吸优于追高，忌接力。\n",
+            }],
+            root,
+        )
+        assert out["ok"]
+        assert out["written"][0]["filename"] == "情绪周期.md"
+        idx = (tmp_path / "experience" / "index.md").read_text(encoding="utf-8")
+        assert "情绪周期.md" in idx
+        assert "低吸优于追高" in idx
+        meta = exp.get_meta(root)
+        assert meta["root"] == str((tmp_path / "experience").resolve()) or meta["root"].endswith("experience")
+        assert any(t["filename"] == "情绪周期.md" for t in meta["topics"])
+
+    def test_retrieve_keyword_topk(self, tmp_path):
+        from duanxian import experience as exp
+
+        root = str(tmp_path / "experience")
+        exp.commit_files([
+            {"title": "情绪周期", "summary": "低吸", "content": "低吸优于追高\n"},
+            {"title": "仓位管理", "summary": "半仓", "content": "单笔不超过半仓\n"},
+        ], root)
+        hits = exp.retrieve("追高怎么办", k=3, root=root)
+        assert hits
+        assert hits[0]["filename"] == "情绪周期.md"
+        ctx = exp.format_context(hits)
+        assert "经验记忆" in ctx
+        assert "情绪周期" in ctx
+
+    def test_reject_invalid_topic_name(self, tmp_path):
+        from duanxian import experience as exp
+
+        root = str(tmp_path / "experience")
+        with pytest.raises((ValueError, FileNotFoundError)):
+            exp.read_topic("index.md", root)
+
+    def test_parse_index_lines(self):
+        from duanxian import experience as exp
+
+        text = "# 索引\n\n- **仓位** | `仓位管理.md` — 半仓纪律\n"
+        topics = exp.parse_index(text)
+        assert topics == [{"filename": "仓位管理.md", "title": "仓位", "summary": "半仓纪律"}]
 
 
 

@@ -460,10 +460,13 @@ export interface LiveEmotionYesterday {
 export interface LiveEmotion {
   available: boolean;
   reason?: string;
+  /** 左侧对照所属场次（周末/盘前为最近已收盘日，非日历今天） */
   date?: string;
   /** 快照时刻 HH:MM */
   as_of?: string;
   phase?: string;
+  /** 日历今天是否就是这场（仅此时后端写归档） */
+  is_live?: boolean;
   zt_count?: number;
   dt_count?: number | null;
   zb_count?: number | null;
@@ -509,8 +512,12 @@ export interface ShortBoardEnv {
 export interface ShortBoardSnapshot {
   available: boolean;
   reason?: string | null;
+  /** 左侧对照所属场次（周末为周五） */
   date?: string;
+  /** 右侧对照场次（周末为周四） */
   prev_date?: string | null;
+  /** 日历今天是否就是这场（仅此时后端写归档） */
+  is_live?: boolean;
   today: ShortBoardEnv;
   yesterday: ShortBoardEnv;
   updated?: string;
@@ -644,7 +651,50 @@ export const api = {
     request<BackupImportResult>("/backup/import", "POST", { path }),
   backupImportZip: (contentB64: string) =>
     request<BackupImportResult>("/backup/import", "POST", { content_b64: contentB64 }),
+  experienceMeta: () => get<ExperienceMeta>("/experience/meta"),
+  experienceTopic: (name: string) =>
+    get<ExperienceTopic>(`/experience/topic?name=${encodeURIComponent(name)}`),
+  experienceRetrieve: (query: string, k = 3) =>
+    request<ExperienceRetrieveResult>("/experience/retrieve", "POST", { query, k }),
+  experienceCommit: (files: ExperienceDraftFile[]) =>
+    request<ExperienceCommitResult>("/experience/commit", "POST", { files }),
 };
+
+export interface ExperienceTopicMeta {
+  filename: string;
+  title: string;
+  summary: string;
+}
+export interface ExperienceMeta {
+  root: string;
+  index_path: string;
+  topics: ExperienceTopicMeta[];
+}
+export interface ExperienceTopic extends ExperienceTopicMeta {
+  content: string;
+  path: string;
+}
+export interface ExperienceHit extends ExperienceTopicMeta {
+  content: string;
+  score: number;
+}
+export interface ExperienceRetrieveResult {
+  hits: ExperienceHit[];
+  context: string;
+  k: number;
+}
+export interface ExperienceDraftFile {
+  filename?: string;
+  title: string;
+  summary: string;
+  content: string;
+}
+export interface ExperienceCommitResult {
+  ok: boolean;
+  root: string;
+  written: (ExperienceTopicMeta & { path: string })[];
+  topics: ExperienceTopicMeta[];
+}
 
 export interface BackupFolder {
   name: string; files: number; bytes: number;
