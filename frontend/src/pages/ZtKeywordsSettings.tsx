@@ -9,10 +9,18 @@ import {
 } from "@/lib/zt-keywords";
 import { api, type ThemeAliasEntry } from "@/lib/api";
 
+function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
+  return [...entries].sort((a, b) => {
+    const byCanonical = a.canonical.localeCompare(b.canonical, "zh-CN");
+    if (byCanonical !== 0) return byCanonical;
+    return a.alias.localeCompare(b.alias, "zh-CN");
+  });
+}
+
 function entriesFromAliases(aliases: Record<string, string>): ThemeAliasEntry[] {
-  return Object.entries(aliases)
-    .map(([alias, canonical]) => ({ alias, canonical }))
-    .sort((a, b) => a.alias.localeCompare(b.alias, "zh-CN"));
+  return sortAliasEntries(
+    Object.entries(aliases).map(([alias, canonical]) => ({ alias, canonical })),
+  );
 }
 
 export function ZtKeywordsSettings() {
@@ -101,8 +109,7 @@ export function ZtKeywordsSettings() {
       toast.error("该别名已存在");
       return;
     }
-    const next = [...aliasEntries, { alias, canonical }].sort((a, b) =>
-      a.alias.localeCompare(b.alias, "zh-CN"));
+    const next = sortAliasEntries([...aliasEntries, { alias, canonical }]);
     setAliasDraft({ alias: "", canonical: "" });
     await persistAliases(next);
   };
@@ -215,27 +222,27 @@ export function ZtKeywordsSettings() {
         ) : aliasEntries.length === 0 ? (
           <p className="mb-3 text-xs text-muted-foreground">暂无别名，可在下方添加。</p>
         ) : (
-          <ul className="mb-4 space-y-1.5">
+          <div className="mb-4 flex flex-wrap gap-2">
             {aliasEntries.map((row) => (
-              <li
+              <span
                 key={row.alias}
-                className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/10 px-3 py-2 text-sm"
+                className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium"
               >
-                <span className="font-medium text-foreground">{row.alias}</span>
-                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-primary">{row.canonical}</span>
+                <span className="text-foreground">{row.alias}</span>
+                <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="text-primary">{row.canonical}</span>
                 <button
                   type="button"
                   disabled={aliasSaving}
                   onClick={() => void removeAlias(row.alias)}
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted/50 hover:text-destructive disabled:opacity-50"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
                   title={`删除「${row.alias}」`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3 w-3" />
                 </button>
-              </li>
+              </span>
             ))}
-          </ul>
+          </div>
         )}
 
         <div className="flex flex-wrap items-end gap-2">
