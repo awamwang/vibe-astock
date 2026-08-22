@@ -10,9 +10,11 @@ import threading
 import time
 from typing import Any, Optional
 
+from . import trade_calendar
 from .util import china_now
 
 _TTL = 20.0
+_OFFSESSION_TTL = 86400.0
 _LIMIT = 30
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
@@ -150,7 +152,11 @@ def snapshot(limit: int = _LIMIT) -> dict:
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
         }
 
-    return _cached("mood_block", _TTL, build) or {
+    live = trade_calendar.is_calendar_session_live()
+    ttl = _TTL if live else _OFFSESSION_TTL
+    key = "mood_block:live" if live else f"mood_block:off:{trade_calendar.latest_session() or 'na'}"
+
+    return _cached(key, ttl, build) or {
         "available": False,
         "reason": "板块人气取数失败",
         "blocks": [],

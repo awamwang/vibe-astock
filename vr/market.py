@@ -19,15 +19,17 @@ import gstock
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
+_OFFSESSION_TTL = 86400.0
 _CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_sentiment")
 _ARCHIVE_KEYS = ("breadth", "speculation", "flat", "active")
 
 
-def _cached(key: str, fn, valid=bool):
+def _cached(key: str, fn, valid=bool, ttl: float | None = None):
     """TTL 缓存。数据源故障的空结果不缓存（valid 判否），下次请求直接重试。"""
+    effective_ttl = ttl if ttl is not None else _TTL
     now = time.time()
     hit = _CACHE.get(key)
-    if hit and now - hit[0] < _TTL:
+    if hit and now - hit[0] < effective_ttl:
         return hit[1]
     val = fn()
     if valid(val):
@@ -125,6 +127,16 @@ def _attach_sentiment_compare(raw: dict) -> dict:
 
 def _sentiment_raw() -> dict:
     """市场情绪：涨跌家数/涨停跌停/活跃度 + 大盘宽度、题材投机（客观数据机械分档）。"""
+    from duanxian import trade_calendar
+
+    if not trade_calendar.is_calendar_session_live():
+        as_of = trade_calendar.latest_session()
+        if as_of:
+            archived = _load_archive(as_of)
+            if archived.get("breadth"):
+                raw = {k: archived[k] for k in _ARCHIVE_KEYS if k in archived}
+                raw["date"] = as_of
+                return raw
     try:
         # akshare 惰性导入（同 astock 模式）：未装时降级返回空，不挡整个服务启动
         df = astock._akshare().stock_market_activity_legu()
@@ -181,13 +193,19 @@ def _sectors() -> list[dict]:
 
 def get_overview() -> dict:
     """市场情绪 + 板块资金（含缓存）。资金轮动由前端从 sectors 头尾取。"""
+    from duanxian import trade_calendar
+
+    live = trade_calendar.is_calendar_session_live()
+    ttl = _TTL if live else _OFFSESSION_TTL
+    key = "overview:live" if live else f"overview:off:{trade_calendar.latest_session() or 'na'}"
+
     def build():
         return {
             "sentiment": _sentiment(),
             "sectors": _sectors(),
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
-    return _cached("overview", build, valid=lambda v: bool(v.get("sentiment") or v.get("sectors")))
+    return _cached(key, build, valid=lambda v: bool(v.get("sentiment") or v.get("sectors")), ttl=ttl)
 
 
 def _emotion() -> dict:
@@ -266,17 +284,28 @@ def _emotion() -> dict:
 
 def get_short_term_emotion() -> dict:
     """短线情绪（含缓存，5 分钟）。"""
-    return _cached("emotion", _emotion)
+    from duanxian import trade_calendar
+
+    live = trade_calendar.is_calendar_session_live()
+    ttl = _TTL if live else _OFFSESSION_TTL
+    key = "emotion:live" if live else f"emotion:off:{trade_calendar.latest_session() or 'na'}"
+    return _cached(key, _emotion, ttl=ttl)
 
 
 def get_turnover_top() -> dict:
     """全市场成交额榜 Top20（客观公开榜单，含缓存 5 分钟）。"""
+    from duanxian import trade_calendar
+
+    live = trade_calendar.is_calendar_session_live()
+    ttl = _TTL if live else _OFFSESSION_TTL
+    key = "turnover_top:live" if live else f"turnover_top:off:{trade_calendar.latest_session() or 'na'}"
+
     def build():
         return {
             "stocks": astock.market_turnover_rank(20),
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
-    return _cached("turnover_top", build, valid=lambda v: bool(v.get("stocks")))
+    return _cached(key, build, valid=lambda v: bool(v.get("stocks")), ttl=ttl)
 
 
 def get_global_indices() -> list[dict]:

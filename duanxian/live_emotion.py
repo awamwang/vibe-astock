@@ -43,6 +43,7 @@ from .util import china_now
 _TODAY_TTL = 15.0
 _PREV_TTL = 3600.0
 _CAL_TTL = 3600.0
+_OFFSESSION_TTL = 86400.0
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
@@ -203,6 +204,27 @@ def snapshot() -> dict:
     prev_day = _prev_of(as_of)
     if prev_day and prev_day >= as_of:
         prev_day = None
+
+    # 非实时场次：有归档则直接读盘，避免周末东财仍返回上一场池子而反复打四个池
+    if not is_live:
+        archived = _load_archive(as_of)
+        if archived and any(k in archived for k in _ARCHIVE_KEYS):
+            out = {
+                "available": True,
+                "date": as_of,
+                "as_of": china_now().strftime("%H:%M"),
+                "phase": "非交易日",
+                "is_live": False,
+                "prev_date": prev_day,
+                "promotion_base_date": prev_day,
+                "yesterday": _yesterday_slice(prev_day),
+                "from_archive": True,
+            }
+            for k in _ARCHIVE_KEYS:
+                if k in archived:
+                    out[k] = archived[k]
+            ttl = _OFFSESSION_TTL
+            return _cached(f"live_emo:arch:{as_of}", ttl, lambda: out)
 
     # 取池：live 用日历今天；否则强制按 as_of 取（忽略「周末请求日仍非空」的假今日池）
     pool_day = calendar_today if is_live else as_of

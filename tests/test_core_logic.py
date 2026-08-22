@@ -3649,6 +3649,29 @@ class TestShortBoardArchive:
         assert prev == "2026-08-20"
         assert is_live is False
 
+    def test_short_board_reads_archive_off_session(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-21", {
+            "temperature": 48, "n_up": 2505, "qcj_temp": 31,
+        })
+        monkeypatch.setattr(
+            sb, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 22, 12, 30))
+        monkeypatch.setattr(sb, "_resolve_as_of",
+                            lambda _t: ("2026-08-21", "2026-08-20", False))
+        calls = {"merge": 0}
+
+        def track_merge(as_of, prev):
+            calls["merge"] += 1
+            return {"temperature": 99}
+
+        monkeypatch.setattr(sb, "_merge_today", track_merge)
+        snap = sb.snapshot()
+        assert snap.get("from_archive") is True
+        assert snap["today"]["temperature"] == 48
+        assert calls["merge"] == 0
+
     def test_weekend_snapshot_keeps_two_sessions_no_saturday_file(
             self, tmp_path, monkeypatch):
         from duanxian import short_board as sb

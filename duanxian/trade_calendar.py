@@ -189,6 +189,23 @@ def is_latest_closed_session(date: str) -> bool:
     return date == latest_session()
 
 
+def is_calendar_session_live() -> bool:
+    """日历「今天」是否就是左侧实时场次（周末 / 盘前 / 展示上一场时为 False）。
+
+    与 short_board / live_emotion 的 is_live 同口径，供 TTL、归档优先读等全站复用。
+    """
+    today = china_today()
+    qd = quote_trade_day()
+    latest = latest_session()
+    if qd and qd <= today:
+        as_of = qd
+    elif latest and latest <= today:
+        as_of = latest
+    else:
+        as_of = today
+    return as_of == today
+
+
 def live_quotes_are_close_of(date: str) -> tuple[bool, str]:
     """现在去拉实时行情，拿到的值能不能当作 `date` 的**收盘**涨跌幅？
 

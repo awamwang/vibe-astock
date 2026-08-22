@@ -29,6 +29,7 @@ from .util import china_now
 
 _CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
 _TTL = 20.0  # 盘中指标条刷新间隔略长于 5 秒轮询，挡住叠请求
+_OFFSESSION_TTL = 86400.0  # 非实时场次：已定稿，日内刷新不打上游
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
@@ -429,15 +430,59 @@ def _strip_meta(env: dict) -> dict:
     return {k: v for k, v in env.items() if not k.startswith("_") and k != "date"}
 
 
+def _archive_displayable(env: dict) -> bool:
+    """归档是否足以撑起左侧对照（非实时场次优先读盘、免打上游）。"""
+    return bool(
+        env.get("temperature") is not None
+        or env.get("n_up")
+        or env.get("n_sjzt") is not None
+        or env.get("m_net") is not None
+        or env.get("qcj_temp") is not None
+    )
+
+
+def _snapshot_from_archive(
+    as_of: str,
+    prev: str | None,
+    is_live: bool,
+    today: dict,
+    yesterday: dict,
+) -> dict:
+    available = _archive_displayable(today)
+    return {
+        "available": available,
+        "reason": None if available else "环境指标暂不可用（归档损坏或缺失）",
+        "date": as_of,
+        "prev_date": prev,
+        "is_live": is_live,
+        "today": today,
+        "yesterday": yesterday,
+        "updated": china_now().strftime("%Y-%m-%d %H:%M"),
+        "placeholders": {
+            "volume_vs_yesterday": True,
+            "volume_5d_ratio": True,
+        },
+        "from_archive": True,
+    }
+
+
 def snapshot() -> dict:
     """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。
 
     `date` = 左侧对照场次（周末为周五），`prev_date` = 其前一交易日（周末为周四）。
     """
 
+    calendar_today = china_now().strftime("%Y-%m-%d")
+    as_of, prev, is_live = _resolve_as_of(calendar_today)
+    ttl = _TTL if is_live else _OFFSESSION_TTL
+
     def build():
-        calendar_today = china_now().strftime("%Y-%m-%d")
-        as_of, prev, is_live = _resolve_as_of(calendar_today)
+        if not is_live:
+            archived = _load_archive(as_of)
+            if _archive_displayable(archived):
+                today = _strip_meta(archived)
+                yesterday = _strip_meta(_build_yesterday(prev, {})) if prev else {}
+                return _snapshot_from_archive(as_of, prev, is_live, today, yesterday)
         raw = _merge_today(as_of, prev)
         today = _strip_meta(raw)
         yesterday = _strip_meta(_build_yesterday(prev, raw)) if prev else {}
@@ -474,7 +519,7 @@ def snapshot() -> dict:
             },
         }
 
-    return _cached("short_board", _TTL, build) or {
+    return _cached(f"short_board:{as_of}", ttl, build) or {
         "available": False,
         "reason": "环境指标取数失败",
         "today": {},
