@@ -14,8 +14,11 @@ from .util import atomic_write_json
 from . import fetchers as dr
 
 _TENCENT = "http://qt.gtimg.cn/q="
+_TENCENT_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 _BATCH = 50          # 腾讯批量行情单次上限，取保守值
 _F_PCT = 32
+_F_LAST_CLOSE = 4
+_F_OPEN = 5
 
 
 def _tx_symbol(code: str) -> str:
@@ -49,6 +52,113 @@ def batch_pct(codes: list[str]) -> dict[str, float]:
             except (ValueError, IndexError):
                 continue
     return out
+
+
+def _batch_open_gap_live(codes: list[str]) -> dict[str, float]:
+    """批量取开盘相对昨收的涨幅 {code: %}（腾讯 L1：今开 vs 昨收）。"""
+    out: dict[str, float] = {}
+    uniq = list(dict.fromkeys(str(c).zfill(6) for c in codes if c))
+    for i in range(0, len(uniq), _BATCH):
+        chunk = uniq[i : i + _BATCH]
+        try:
+            url = _TENCENT + ",".join(_tx_symbol(c) for c in chunk)
+            raw = urllib.request.urlopen(url, timeout=10).read().decode("gbk", "ignore")
+        except Exception:  # noqa: BLE001
+            continue
+        for line in raw.split(";"):
+            if "~" not in line:
+                continue
+            f = line.split("~")
+            if len(f) <= _F_PCT:
+                continue
+            code = f[0].split("=")[0].strip().strip('"')[-6:]
+            try:
+                last = float(f[_F_LAST_CLOSE])
+                open_p = float(f[_F_OPEN])
+            except (ValueError, IndexError):
+                continue
+            if last > 0:
+                out[code] = round((open_p - last) / last * 100, 2)
+    return out
+
+
+def _open_gap_kline(code: str, date: str) -> Optional[float]:
+    """定稿日：腾讯日 K 取目标日开盘相对前一交易日收盘的涨幅 %。"""
+    import urllib.parse
+
+    sym = _tx_symbol(code)
+    param = urllib.parse.quote(f"{sym},day,,,12,qfq", safe="")
+    url = f"{_TENCENT_KLINE}?param={param}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        raw = urllib.request.urlopen(req, timeout=12).read().decode("utf-8", "ignore")
+        data = json.loads(raw).get("data") or {}
+        bucket = data.get(sym) or {}
+        rows = bucket.get("qfqday") or bucket.get("day") or []
+    except Exception:  # noqa: BLE001
+        return None
+    for i, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) < 3:
+            continue
+        if str(row[0]) != date:
+            continue
+        if i == 0:
+            return None
+        try:
+            prev_close = float(rows[i - 1][2])
+            open_p = float(row[1])
+        except (ValueError, TypeError, IndexError):
+            return None
+        if prev_close <= 0:
+            return None
+        return round((open_p - prev_close) / prev_close * 100, 2)
+    return None
+
+
+def _batch_open_gap_kline(codes: list[str], date: str) -> dict[str, float]:
+    """定稿日批量开盘涨幅。单只失败不拖累整体。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    uniq = list(dict.fromkeys(str(c).zfill(6) for c in codes if c))
+    out: dict[str, float] = {}
+    if not uniq:
+        return out
+    workers = min(12, max(4, len(uniq)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_open_gap_kline, c, date): c for c in uniq}
+        for fut in as_completed(futs):
+            code = futs[fut]
+            try:
+                gap = fut.result()
+                if gap is not None:
+                    out[code] = gap
+            except Exception:  # noqa: BLE001
+                pass
+    return out
+
+
+def batch_open_gap(codes: list[str], date: str) -> dict[str, float]:
+    """昨日涨停股在目标日的开盘溢价 {code: %}（今开相对昨收）。"""
+    if trade_calendar.is_settled(date):
+        return _batch_open_gap_kline(codes, date)
+    ok, _ = trade_calendar.live_quotes_are_close_of(date)
+    if ok:
+        live = _batch_open_gap_live(codes)
+        if live:
+            return live
+    return _batch_open_gap_kline(codes, date)
+
+
+def _success_rates(close_vals: list[float], open_vals: list[float]) -> dict:
+    """打板成功率：收盘收涨占比 + 开盘红盘占比（平盘不算成功）。"""
+    close_rate = round(sum(1 for v in close_vals if v > 0) / len(close_vals), 3) if close_vals else None
+    open_rate = round(sum(1 for v in open_vals if v > 0) / len(open_vals), 3) if open_vals else None
+    return {
+        "close_success_rate": close_rate,
+        "open_success_rate": open_rate,
+        "positive_rate": close_rate,
+        "open_sample": len(open_vals),
+    }
 
 
 _POOL_CACHE: dict[str, dict] = {}
@@ -170,7 +280,7 @@ def _settled_pool(date: str) -> Optional[list[dict]]:
         return None
 
 
-def _stats_from_pool(rows: list[dict], today_codes: Optional[set]) -> dict:
+def _stats_from_pool(rows: list[dict], date: str, today_codes: Optional[set]) -> dict:
     """从定稿记录算赚钱效应。样本就是记录本身，无所谓"覆盖率"。"""
     from .data import is_limit_up
 
@@ -178,6 +288,15 @@ def _stats_from_pool(rows: list[dict], today_codes: Optional[set]) -> dict:
     if not vals:
         return {}
     again = [r for r in rows if r.get("ret") is not None and is_limit_up(r)]
+    codes = [str(r["code"]).zfill(6) for r in rows if r.get("ret") is not None and r.get("code")]
+    open_gaps: dict[str, float] = {}
+    for r in rows:
+        if r.get("open_gap") is not None and r.get("code"):
+            open_gaps[str(r["code"]).zfill(6)] = float(r["open_gap"])
+    missing = [c for c in codes if c not in open_gaps]
+    if missing:
+        open_gaps.update(batch_open_gap(missing, date))
+    open_vals = [open_gaps[c] for c in codes if open_gaps.get(c) is not None]
     return {
         "available": True,
         "sample": len(vals),
@@ -186,7 +305,7 @@ def _stats_from_pool(rows: list[dict], today_codes: Optional[set]) -> dict:
         "partial": False,
         "avg": round(mean(vals), 2),
         "median": round(median(vals), 2),
-        "positive_rate": round(sum(1 for v in vals if v > 0) / len(vals), 3),
+        **_success_rates(vals, open_vals),
         # 定稿记录里有涨停价，直接判"今天又封住了没"，比比对今日池子更可靠
         "limit_up_again_rate": round(len(again) / len(vals), 3),
         "source": "settled",
@@ -201,7 +320,7 @@ def money_effect(date: str, prev: Optional[str] = None) -> dict:
     prev = prev or trade_calendar.prev_trade_date(date)
     rows = _settled_pool(date)
     if rows:
-        stats = _stats_from_pool(rows, None)
+        stats = _stats_from_pool(rows, date, None)
         if stats:
             return {**stats, "prev_date": prev}
 
@@ -229,13 +348,15 @@ def money_effect(date: str, prev: Optional[str] = None) -> dict:
                 "reason": f"批量行情只取到 {len(vals)}/{len(codes)} 只"
                           f"（{cov['coverage_rate']:.0%}），样本不足以代表全体",
                 **cov}
+    open_gaps = batch_open_gap(codes, date)
+    open_vals = [open_gaps[c] for c in pct if open_gaps.get(c) is not None]
     return {
         "available": True,
         "prev_date": prev,
         **cov,
         "avg": round(mean(vals), 2),
         "median": round(median(vals), 2),
-        "positive_rate": round(sum(1 for v in vals if v > 0) / len(vals), 3),
+        **_success_rates(vals, open_vals),
         # 涨停池取不到时宁可给 None 也不用涨幅阈值糊弄（阈值会高估，见上）
         "limit_up_again_rate": (
             round(sum(1 for c in pct if c in today_codes) / len(vals), 3)
@@ -489,9 +610,15 @@ def render_metrics(m: dict) -> str:
 
     me = m.get("money_effect", {})
     if me.get("available"):
+        open_sr = me.get("open_success_rate")
+        close_sr = me.get("close_success_rate") or me.get("positive_rate")
+        open_note = (
+            f"开盘成功率 {_pct(open_sr)}（{me.get('open_sample', '—')} 只）"
+            if open_sr is not None else "开盘成功率不可用"
+        )
         lines.append(
             f"· 赚钱效应：{prev} 涨停 {me['sample']} 家，在 {date} 平均 {me['avg']:+.2f}%、"
-            f"中位 {me['median']:+.2f}%；翻红率 {_pct(me['positive_rate'])}、"
+            f"中位 {me['median']:+.2f}%；收盘成功率 {_pct(close_sr)}、{open_note}、"
             f"再度涨停 {_pct(me['limit_up_again_rate'])}" + _cov_note(me)
         )
     else:

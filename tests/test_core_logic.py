@@ -3200,6 +3200,21 @@ class TestPastSessionsStayViewable:
         # 丙收在涨停价 → 又封住了
         assert r["limit_up_again_rate"] == round(1 / 3, 3)
 
+    def test_money_effect_success_rates_open_and_close(self, _settled, monkeypatch):
+        from duanxian import emotion_metrics as em
+
+        monkeypatch.setattr(
+            em, "batch_open_gap",
+            lambda codes, date: {
+                "000001": 2.0, "000002": -1.0, "000003": 5.0,
+            },
+        )
+        r = em.money_effect("2026-07-29")
+        assert r["close_success_rate"] == round(2 / 3, 3)
+        assert r["open_success_rate"] == round(2 / 3, 3)
+        assert r["positive_rate"] == r["close_success_rate"]
+        assert r["open_sample"] == 3
+
     def test_consec_premium_only_counts_two_boards_and_up(self, _settled):
         from duanxian import emotion_metrics as em
 

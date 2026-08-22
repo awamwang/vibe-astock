@@ -61,9 +61,9 @@ export function MoneyEffectCard({ me }: { me: MoneyEffect }) {
       icon={Flame} title="赚钱效应"
       hint="昨日涨停股今天的表现。中位数代表「多数人的体感」，均值会被少数大涨拉高"
       caliber={"样本 = 昨日涨停池全部个股（含一字板、含各涨跌幅制度，连板与首板同权）。\n" +
-        "涨跌幅 = 今日收盘价相对昨日收盘价，不是相对今日开盘。\n" +
+        "打板成功率-收盘 = 今日收盘相对昨收涨的比例（平盘不算）。\n" +
+        "打板成功率-开盘 = 今日开盘相对昨收红盘的比例（今开 > 昨收，平开不算）。\n" +
         "⚠️ 一字板次日多半买不进，所以这个数是「昨天那批票的整体去向」，不等于「你能拿到的收益」。\n" +
-        "翻红率 = 今天收涨的占比，**平盘不算翻红**；分母是这批票里今天算得出涨跌幅的。\n" +
         "再度涨停 = 今天收盘仍封死在涨停价，盘中摸板后炸开的不算。\n" +
         "⚠️ 需要今日收盘价 → 只有最近一个已收盘交易日算得出，盘中会标不可用。"}
       available={me.available} reason={me.reason}
@@ -74,7 +74,8 @@ export function MoneyEffectCard({ me }: { me: MoneyEffect }) {
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-dashed border-border pt-2 text-[12px] text-muted-foreground">
         <span>样本 {me.sample ?? "—"} 只</span>
-        <span>翻红率 <b className="text-foreground">{rate(me.positive_rate)}</b></span>
+        <span>打板成功率-开盘 <b className="text-foreground">{rate(me.open_success_rate)}</b></span>
+        <span>打板成功率-收盘 <b className="text-foreground">{rate(me.close_success_rate ?? me.positive_rate)}</b></span>
         <span>再度涨停 <b className="text-foreground">{rate(me.limit_up_again_rate)}</b></span>
       </div>
     </Card>

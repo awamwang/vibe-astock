@@ -145,6 +145,11 @@ interface MetricBase { available: boolean; reason?: string; prev_date?: string; 
 export interface MoneyEffect extends MetricBase {
   sample?: number; avg?: number; median?: number;
   positive_rate?: number; limit_up_again_rate?: number;
+  /** 昨日涨停股今日收盘收涨占比（平盘不算） */
+  close_success_rate?: number;
+  /** 昨日涨停股今日开盘红盘占比（今开 > 昨收，平开不算） */
+  open_success_rate?: number;
+  open_sample?: number;
 }
 export interface PromotionTier { base: number; promoted: number; rate: number | null; }
 export interface Promotion extends MetricBase {
