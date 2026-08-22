@@ -30,7 +30,7 @@ const REVIEW_NAV = [
   { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/first-board", icon: Flame, label: "首板分析" },
-  { to: "/heat", icon: CalendarRange, label: "近5天热度" },
+  { to: "/heat", icon: CalendarRange, label: "多日情绪" },
   { to: "/trade", icon: Wallet, label: "持仓与预算" },
   { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/experience", icon: BookMarked, label: "经验记忆" },
@@ -45,11 +45,13 @@ const SETTINGS_NAV = [
 function MainShell() {
   const panel = useStockPanelOptional();
   const open = !!panel?.target;
+  const { pathname } = useLocation();
+  const widePage = pathname === "/heat";
 
   return (
     <main className="flex min-w-0 flex-1 overflow-hidden">
       <div className="min-w-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-6xl px-6 py-6">
+        <div className={cn("mx-auto px-6 py-6", widePage ? "max-w-none w-full" : "max-w-6xl")}>
           <Outlet />
         </div>
       </div>

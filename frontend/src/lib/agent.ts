@@ -379,14 +379,43 @@ export interface ReviewData {
   analysts?: AnalystReport[];
 }
 
-// ---------- 近5天热度 ----------
+// ---------- 多日情绪 ----------
 export interface HeatDay {
   date: string;
   limit_up: number | null;
   broken_rate: number | null;
   highest_consec: number | null;
+  limit_down: number | null;
   leader: { code: string; name: string; boards: number; sector: string } | null;
   unavailable?: boolean;
+}
+export interface ThemeMatrixRow {
+  tag: string;
+  limit_up: number;
+  state: string;
+  highest: number;
+  limit_down: number;
+  rank: number;
+}
+export interface ThemeMatrixDay {
+  available: boolean;
+  reason?: string;
+  themes: ThemeMatrixRow[];
+  tag_count?: number;
+  source?: "review" | "live";
+}
+export interface ThemeMatrixRank {
+  tag: string;
+  score: number;
+}
+export interface ThemeMatrix {
+  days: string[];
+  by_day: Record<string, ThemeMatrixDay>;
+  rank_3d: ThemeMatrixRank[];
+  rank_window: ThemeMatrixRank[];
+  available_days?: number;
+  total_days?: number;
+  review_days?: number;
 }
 export interface LineageLeader {
   code: string;
@@ -404,8 +433,10 @@ export interface WeeklyData {
   generated_at?: string;
   error?: string;
   stale?: boolean;
+  window_days?: number;
   days: HeatDay[];
   leader_lineage: LineageLeader[];
+  theme_matrix?: ThemeMatrix;
 }
 
 export interface JobStatus { running: boolean; elapsed?: number; error?: string | null; stock?: string; busy?: boolean; }

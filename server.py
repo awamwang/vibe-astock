@@ -590,12 +590,18 @@ def _wk_load():
 
 def _wk_fresh(cached: dict) -> bool:
     """缓存是否仍是最新已收盘交易日窗口（ #3）。判不了(网络失败)→按新鲜处理不硬刷"""
-    from duanxian.weekly import LINEAGE_SCHEMA
+    from duanxian.weekly import LINEAGE_SCHEMA, WINDOW_DAYS_MAX
 
     days = cached.get("days") or []
     if not days:
         return False
     if cached.get("lineage_schema") != LINEAGE_SCHEMA:
+        return False
+    if int(cached.get("window_days") or 0) < WINDOW_DAYS_MAX:
+        return False
+    matrix = cached.get("theme_matrix") or {}
+    by_day = matrix.get("by_day") if isinstance(matrix.get("by_day"), dict) else {}
+    if not by_day:
         return False
     try:
         from duanxian.weekly import _last_trade_dates
@@ -613,51 +619,57 @@ def _wk_good(w: dict) -> bool:
 
 
 @app.get("/api/weekly")
-def api_weekly(request: Request, refresh: int = 0):
-    """近 5 交易日热度 + 龙头谱系。缓存按交易日过期；单飞锁防并发重复计算（~40s）"""
-    return _weekly(force=False)
+def api_weekly(request: Request, days: int = 10):
+    """多日情绪 + 龙头谱系。`days` 控制展示窗口（7~15 个交易日）。"""
+    return _weekly(force=False, days=days)
 
 
 @app.post("/api/weekly/refresh")
-def api_weekly_refresh(request: Request):
-    """强制重算近 5 天热度。写操作走 POST + Origin 校验（见 api_weekly 的说明）。"""
+def api_weekly_refresh(request: Request, days: int = 10):
+    """强制重算多日情绪。写操作走 POST + Origin 校验（见 api_weekly 的说明）。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
-    return _weekly(force=True)
+    return _weekly(force=True, days=days)
 
 
-def _weekly(force: bool):
-    """近 5 天热度的真正实现。`force` **只能由 POST 处理器传入**，不接受查询参数。"""
-    from duanxian.weekly import build_weekly
+def _weekly(force: bool, days: int = 10):
+    """多日情绪的真正实现。`force` **只能由 POST 处理器传入**，不接受查询参数。"""
+    from duanxian.weekly import build_weekly, ensure_theme_matrix, slice_weekly, WINDOW_DAYS_MAX, _clamp_window
+
+    want = _clamp_window(days)
+
+    def _respond(payload: dict) -> JSONResponse:
+        enriched = ensure_theme_matrix(payload)
+        return JSONResponse(slice_weekly(enriched, want))
 
     cached = _wk_load()
     if not force and cached and _wk_fresh(cached):
-        return JSONResponse(cached)
+        return _respond(cached)
 
     if not _wk_lock.acquire(blocking=False):
         if cached:
-            return JSONResponse({**cached, "busy": True})
+            return _respond({**cached, "busy": True})
         return JSONResponse({"error": "正在计算中，请稍后重试", "busy": True}, status_code=409)
     try:
         cached2 = _wk_load()
         if not force and cached2 and _wk_fresh(cached2):
-            return JSONResponse(cached2)
-        w = build_weekly(5)
+            return _respond(cached2)
+        w = build_weekly(WINDOW_DAYS_MAX)
         w["generated_at"] = china_now().strftime("%Y-%m-%d %H:%M")
-        days = w.get("days") or []
-        w["last_trade_date"] = days[-1].get("date") if days else None
+        days_list = w.get("days") or []
+        w["last_trade_date"] = days_list[-1].get("date") if days_list else None
         if _wk_good(w):
             try:
                 _atomic_write(safe_join(_WK_DIR, "latest.json"), w)
             except Exception:  # noqa: BLE001
                 pass
-            return JSONResponse(w)
+            return _respond(w)
         if cached2 and (cached2.get("days")):
             stale = dict(cached2)
             stale["stale"] = True
             stale["warnings"] = (stale.get("warnings") or []) + ["刷新失败，展示上一份有效数据"]
-            return JSONResponse(stale)
-        return JSONResponse(w)
+            return _respond(stale)
+        return _respond(w)
     finally:
         _wk_lock.release()
 

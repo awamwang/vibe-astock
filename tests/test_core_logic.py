@@ -4784,6 +4784,57 @@ class TestVerificationItemsCarryBaseline:
 
 
 @pytest.mark.unit
+class TestWeeklyThemeMatrixFromReviews:
+    def test_prefers_review_theme_tree_over_live_build(self, monkeypatch):
+        from duanxian import weekly as wk
+
+        review_tree = {
+            "available": True,
+            "themes": [{"tag": "麒麟OS", "limit_up": 5, "state": "扩散中", "highest": 3, "limit_down": 0}],
+            "tag_count": 1,
+        }
+
+        def _load(date):
+            if date == "2026-08-18":
+                return {"market_facts": {"theme_tree": review_tree}}
+            return None
+
+        monkeypatch.setattr("duanxian.review_store.load", _load)
+        monkeypatch.setattr("duanxian.theme_tree.build", lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("不应现场 build")))
+
+        day, tree = wk._day_theme_tree("2026-08-18")
+        assert day["available"] is True
+        assert day["source"] == "review"
+        assert day["themes"][0]["tag"] == "麒麟OS"
+        assert tree is review_tree
+
+    def test_build_matrix_uses_partial_review_days(self, monkeypatch):
+        from duanxian import weekly as wk
+
+        def _load(date):
+            if date == "2026-08-17":
+                return {"market_facts": {"theme_tree": {
+                    "available": True,
+                    "themes": [{"tag": "芯片", "limit_up": 2, "state": "延续", "highest": 2, "limit_down": 0}],
+                }}}
+            return None
+
+        monkeypatch.setattr("duanxian.review_store.load", _load)
+        monkeypatch.setattr("duanxian.theme_tree.build", lambda d, **kw: {
+            "available": True,
+            "themes": [{"tag": "医药", "limit_up": 1, "state": "维持", "highest": 1, "limit_down": 0}],
+            "tag_count": 1,
+        })
+
+        out = wk.build_theme_matrix(["2026-08-17", "2026-08-18"])
+        assert out["available_days"] == 2
+        assert out["review_days"] == 1
+        assert out["by_day"]["2026-08-17"]["source"] == "review"
+        assert out["by_day"]["2026-08-18"]["source"] == "live"
+
+
+@pytest.mark.unit
 class TestThsZtReasonImport:
     """同花顺涨停池 txt → 题材串。日期必须认导出场次，不能用「涨停原因类别」上的模板日期。"""
 
