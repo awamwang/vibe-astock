@@ -149,8 +149,38 @@ def latest_session() -> Optional[str]:
     return latest[-1] if latest else None
 
 
+# 当日落盘写入：盘中不写，仅收盘前 5 秒与收盘后（A 股 15:00 收盘）
+_ARCHIVE_CLOSE_HM = (15, 0)
+_ARCHIVE_PRE_CLOSE_SEC = 5
+
+
+def is_daily_archive_window() -> bool:
+    """当前是否允许写入「当日」落盘缓存（盘中不落盘）。"""
+    today = china_today()
+    if is_weekend(today):
+        return True
+    n = china_now()
+    now_s = n.hour * 3600 + n.minute * 60 + n.second + n.microsecond / 1e6
+    close_s = _ARCHIVE_CLOSE_HM[0] * 3600 + _ARCHIVE_CLOSE_HM[1] * 60
+    pre_start = close_s - _ARCHIVE_PRE_CLOSE_SEC
+    if pre_start <= now_s < close_s:
+        return True
+    if now_s >= close_s:
+        return True
+    return False
+
+
+def should_write_daily_cache(date: str) -> bool:
+    """该交易日的落盘缓存是否允许写入。历史日随时可补写；当日仅收盘窗内写。"""
+    if date < china_today():
+        return True
+    if date > china_today():
+        return False
+    return is_daily_archive_window()
+
+
 def is_settled(date: str) -> bool:
-    """date 的盘面数据是否已定稿、不会再变 —— 落盘缓存的唯一判据"""
+    """date 的盘面数据是否已定稿、不会再变 —— 读缓存与指标口径的判据（写入另看 should_write_daily_cache）"""
     return date < china_today() or date == latest_session()
 
 

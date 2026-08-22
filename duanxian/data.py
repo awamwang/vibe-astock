@@ -415,6 +415,6 @@ def fetch_prev_pool(date: str) -> "Optional[list[dict]]":
             continue
     if not rows:
         return None
-    if is_past:
+    if trade_calendar.should_write_daily_cache(date):
         atomic_write_json(path, rows)
     return rows

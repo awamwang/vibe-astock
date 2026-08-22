@@ -199,8 +199,16 @@ def _turnover_yesterday() -> tuple[str, list[dict]]:
 
 
 def _save_turnover_snapshot() -> None:
-    """收盘后存当日成交前十快照，供次日作「昨日前十」。每天存一次。"""
+    """收盘窗内存当日成交前十快照，供次日作「昨日前十」。每天存一次。"""
     global _turnover_saved_date
+    try:
+        from duanxian import trade_calendar
+        from duanxian.util import china_today
+
+        if not trade_calendar.should_write_daily_cache(china_today()):
+            return
+    except Exception:  # noqa: BLE001
+        return
     today = datetime.now(BEIJING).strftime("%Y%m%d")
     if _turnover_saved_date == today:
         return
@@ -336,8 +344,7 @@ def _loop() -> None:
     global _snapshot
     while True:
         phase = _market_phase()
-        if phase == "closed":
-            _save_turnover_snapshot()
+        _save_turnover_snapshot()
 
         # 非交易时段也低频全量重建（收盘后录入持仓/加自选立刻可见），只是不做异动检测
         try:

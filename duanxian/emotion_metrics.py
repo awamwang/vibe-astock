@@ -489,7 +489,7 @@ def day_summary(date: str) -> Optional[dict]:
 
     zt = _zt_pool(date)
     s = _summarize(zt) if zt is not None else None
-    if s and is_past:
+    if s and trade_calendar.should_write_daily_cache(date):
         atomic_write_json(
             path,
             {"schema": _SUMMARY_SCHEMA, "source": _SUMMARY_SOURCE, "date": date, "summary": s},

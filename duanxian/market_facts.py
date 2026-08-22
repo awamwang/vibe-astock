@@ -161,7 +161,7 @@ def pools(date: str) -> Optional[dict]:
         return None
 
     out = {"zt": zt, "zb": zb, "dt": dt, "raw": raw}
-    if settled:
+    if trade_calendar.should_write_daily_cache(date):
         atomic_write_json(path, {"schema": _FACTS_SCHEMA, "date": date, "pools": out})
     return out
 

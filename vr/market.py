@@ -76,7 +76,7 @@ def _load_archive(date: str | None) -> dict:
 
 
 def _save_archive(date: str, env: dict) -> None:
-    """盘中也写：收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    """收盘窗内写入；收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = _archive_path(date)
@@ -108,7 +108,11 @@ def _attach_sentiment_compare(raw: dict) -> dict:
     calendar_today = china_now().strftime("%Y-%m-%d")
     is_live = as_of == calendar_today
     slice_today = {k: raw[k] for k in _ARCHIVE_KEYS if k in raw}
-    if is_live and slice_today.get("breadth"):
+    if (
+        is_live
+        and slice_today.get("breadth")
+        and trade_calendar.should_write_daily_cache(as_of)
+    ):
         _save_archive(as_of, slice_today)
     prev = trade_calendar.prev_trade_date(as_of)
     out = dict(raw)

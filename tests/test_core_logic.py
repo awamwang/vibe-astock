@@ -111,6 +111,83 @@ class TestIsSettled:
         assert not tc.is_settled("2026-07-25")
 
 
+@pytest.mark.unit
+class TestDailyArchiveWindow:
+    """当日落盘：盘中不写，收盘前 5 秒与收盘后才写。"""
+
+    def test_intraday_blocked(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-20")
+        monkeypatch.setattr(tc, "is_weekend", lambda d: False)
+        monkeypatch.setattr(
+            tc, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 10, 30))
+        assert not tc.is_daily_archive_window()
+        assert not tc.should_write_daily_cache("2026-08-20")
+
+    def test_pre_close_five_seconds_allowed(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-20")
+        monkeypatch.setattr(tc, "is_weekend", lambda d: False)
+        monkeypatch.setattr(
+            tc, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 14, 59, 56))
+        assert tc.is_daily_archive_window()
+        assert tc.should_write_daily_cache("2026-08-20")
+
+    def test_after_close_allowed(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-20")
+        monkeypatch.setattr(tc, "is_weekend", lambda d: False)
+        monkeypatch.setattr(
+            tc, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 15, 30))
+        assert tc.is_daily_archive_window()
+        assert tc.should_write_daily_cache("2026-08-20")
+
+    def test_past_date_always_allowed(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            tc, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 21, 10, 0))
+        assert tc.should_write_daily_cache("2026-08-20")
+
+    def test_intraday_no_archive_write(self, tmp_path, monkeypatch):
+        from duanxian import live_emotion as le
+
+        le._cache.clear()
+        monkeypatch.setattr(le, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-20")
+        monkeypatch.setattr(tc, "is_weekend", lambda d: False)
+        monkeypatch.setattr(
+            tc, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 10, 0))
+        monkeypatch.setattr(
+            le, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 10, 0))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date", lambda d: "2026-08-19")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: False)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-20")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session", lambda: "2026-08-19")
+        assert not tc.should_write_daily_cache("2026-08-20")
+
+        def fake_pool(kind, ymd):
+            if kind == "getTopicZTPool" and ymd == "20260820":
+                return [{"c": "000001", "lbc": 2}]
+            if kind == "getTopicZBPool":
+                return []
+            if kind == "getTopicDTPool":
+                return []
+            return []
+
+        monkeypatch.setattr(le, "_pool", fake_pool)
+        snap = le.snapshot()
+        assert snap["available"] is True
+        assert not (tmp_path / "2026-08-20.json").exists()
+        le._cache.clear()
+
+
 # ---------------------------------------------------------------- render_metrics
 @pytest.mark.unit
 class TestRenderMetrics:
@@ -3408,7 +3485,7 @@ class TestLiveEmotionArchive:
         le._save_archive("2026-08-19", {
             "zt_count": 36, "promotion_rate": 0.25, "seal_rate": 0.8,
         })
-        monkeypatch.setattr(le, "china_now", lambda: __import__("datetime").datetime(2026, 8, 20, 12, 0))
+        monkeypatch.setattr(le, "china_now", lambda: __import__("datetime").datetime(2026, 8, 20, 15, 30))
         monkeypatch.setattr(
             "duanxian.trade_calendar.prev_trade_date", lambda d: "2026-08-19")
         monkeypatch.setattr(

@@ -118,8 +118,7 @@ def reasons_of(date: str) -> tuple[dict[str, str], Optional[str]]:
         return {}, f"{type(exc).__name__}: {exc}"
     if not reasons:
         return {}, err or "涨停原因未返回题材串"
-    # 只有定稿的日子才落盘（同 emotion_metrics 的判据）
-    if trade_calendar.is_settled(date):
+    if trade_calendar.should_write_daily_cache(date):
         try:
             save_reasons(date, reasons, source="online")
         except OSError:

@@ -15,7 +15,7 @@
   · 有今日涨停池 → 左侧=今天，右侧=前一交易日归档；
   · 无今日池（周末 / 盘前）→ 回退到行情所属场次（如周五），对照其前一交易日（周四），
     仍展示「最近两场」对比，而不是空卡或自己比自己。
-  · 归档只在「日历今天 == 场次」时写入；禁止把周五数据存成周六.json。
+  · 归档只在「日历今天 == 场次」且处于收盘落盘窗时写入。
 晋级率一并归档，便于与封板率 / 炸板率等同屏对照。
 """
 
@@ -114,7 +114,7 @@ def _load_archive(date: str | None) -> dict:
 
 
 def _save_archive(date: str, env: dict) -> None:
-    """盘中也写：收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    """收盘窗内写入；收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = _archive_path(date)
@@ -273,7 +273,7 @@ def snapshot() -> dict:
         "prev_date": prev_day,
         "yesterday": _yesterday_slice(prev_day),
     }
-    # 只有日历今天这场才写归档，禁止周末把周五存成周六.json
-    if is_live:
+    # 只有日历今天这场且在收盘落盘窗内才写归档
+    if is_live and trade_calendar.should_write_daily_cache(as_of):
         _save_archive(as_of, out)
     return out

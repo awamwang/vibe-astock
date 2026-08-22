@@ -235,7 +235,7 @@ def market_breadth(date: str) -> dict:
         "dist_partial": any(v is None for v in (up5, down5)),
         "requests": calls[0],
     }
-    if trade_calendar.is_settled(date):
+    if trade_calendar.should_write_daily_cache(date):
         atomic_write_json(path, {"schema": _SCHEMA, "date": date, "data": out})
     return out
 

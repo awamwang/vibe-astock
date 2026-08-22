@@ -10,7 +10,7 @@
 「今日 / 昨日」对比按**数据场次**，不是日历今天：
   · 左侧 = as_of（行情所属场次 / 最近已收盘日）；右侧 = as_of 的前一交易日。
   · 周末 / 盘前：展示「周五 vs 周四」，不会拿同一场跟自己比。
-  · 归档只写在 as_of == 日历今天时；禁止把周五数据存成周六的 json。
+  · 归档只在 as_of == 日历今天且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
 趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
 量能对比昨日、量能 5 日/量比暂无可靠源 → 前端占位。
@@ -335,7 +335,7 @@ def _load_archive(date: str | None) -> dict:
 
 
 def _save_archive(date: str, env: dict) -> None:
-    """盘中也写：收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    """收盘窗内写入；收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = _archive_path(date)
@@ -441,11 +441,15 @@ def snapshot() -> dict:
         raw = _merge_today(as_of, prev)
         today = _strip_meta(raw)
         yesterday = _strip_meta(_build_yesterday(prev, raw)) if prev else {}
-        # 只有「日历今天就是这场」才写归档，禁止周末把周五存成周六.json
-        if is_live and (
-            today.get("temperature") is not None
-            or today.get("n_up")
-            or today.get("qcj_temp") is not None
+        # 只有「日历今天就是这场」且在收盘落盘窗内才写归档
+        if (
+            is_live
+            and trade_calendar.should_write_daily_cache(as_of)
+            and (
+                today.get("temperature") is not None
+                or today.get("n_up")
+                or today.get("qcj_temp") is not None
+            )
         ):
             _save_archive(as_of, today)
         available = bool(
