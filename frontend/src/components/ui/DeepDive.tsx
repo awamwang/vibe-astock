@@ -19,19 +19,37 @@ const TOOL_LABEL: Record<string, string> = {
   query_global_stock: "查外盘",
 };
 
-/** 深入分析摘要：涨停关键字 + 原因持续性（首板等页面约定的固定行） */
+/** 题材新旧闭集标签：该题材近期是否已在市场被炒作过 */
+export const THEME_FRESHNESS_TAGS = ["新题材", "旧题材", "不明"] as const;
+export type ThemeFreshness = (typeof THEME_FRESHNESS_TAGS)[number];
+
+/** 深入分析摘要：涨停关键字 + 持续性 + 题材新旧 */
 export interface DiveMeta {
   keyword: string | null;
   duration: string | null;
+  themeFreshness: ThemeFreshness | null;
   body: string;
 }
 
 const _clip10 = (s: string) => s.replace(/\s+/g, "").slice(0, 10);
 
-/** 从分析正文顶部抽出【涨停关键字】/【持续性】，其余留给 Markdown */
+/** 把模型输出归一到 新题材 / 旧题材 / 不明 */
+export function resolveThemeFreshness(raw: string | null | undefined): ThemeFreshness | null {
+  if (raw == null) return null;
+  const v = raw.replace(/\s+/g, "").trim();
+  if (!v) return null;
+  if (THEME_FRESHNESS_TAGS.includes(v as ThemeFreshness)) return v as ThemeFreshness;
+  if (/^(新题材|新炒|全新|首次|新)$/.test(v) || v.includes("新题材")) return "新题材";
+  if (/^(旧题材|老题材|旧炒|回流|旧)$/.test(v) || v.includes("旧题材") || v.includes("老题材")) return "旧题材";
+  if (/^(不明|未知|待核|不详)$/.test(v) || v.includes("不明")) return "不明";
+  return "不明";
+}
+
+/** 从分析正文顶部抽出固定摘要行，其余留给 Markdown */
 export function parseDiveMeta(text: string, allowedKeywords?: string[]): DiveMeta {
   let keyword: string | null = null;
   let duration: string | null = null;
+  let themeFreshness: ThemeFreshness | null = null;
   const kept: string[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trim();
@@ -49,9 +67,15 @@ export function parseDiveMeta(text: string, allowedKeywords?: string[]): DiveMet
       if (v) duration = v;
       continue;
     }
+    const fresh = line.match(/^(?:[-*]\s*)?(?:\*\*)?题材新旧(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【题材新旧】\s*(.+)$/);
+    if (fresh) {
+      themeFreshness = resolveThemeFreshness(fresh[1]);
+      continue;
+    }
     kept.push(raw);
   }
-  return { keyword, duration, body: kept.join("\n").replace(/^\n+/, "") };
+  return { keyword, duration, themeFreshness, body: kept.join("\n").replace(/^\n+/, "") };
 }
 
 // ---------- 本地存档 ----------
@@ -287,7 +311,7 @@ export function DeepDivePanel({ dd, stockKey, colSpan, noteTitle, onRerun }: Pan
                 </>
               )}
             </div>
-            {(meta.keyword || meta.duration) && (
+            {(meta.keyword || meta.duration || meta.themeFreshness) && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
                 {meta.keyword && (
                   <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary">
@@ -299,6 +323,18 @@ export function DeepDivePanel({ dd, stockKey, colSpan, noteTitle, onRerun }: Pan
                   <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 font-medium text-foreground">
                     <span className="text-[10px] font-normal text-muted-foreground">持续性</span>
                     {meta.duration}
+                  </span>
+                )}
+                {meta.themeFreshness && (
+                  <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-medium ${
+                    meta.themeFreshness === "新题材"
+                      ? "border-success/40 bg-success/10 text-success"
+                      : meta.themeFreshness === "旧题材"
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        : "border-border/60 bg-muted/40 text-muted-foreground"
+                  }`}>
+                    <span className="text-[10px] font-normal text-muted-foreground">题材新旧</span>
+                    {meta.themeFreshness}
                   </span>
                 )}
               </div>

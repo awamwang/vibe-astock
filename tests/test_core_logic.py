@@ -4105,13 +4105,16 @@ class TestPerStockPromptsStayAtSectorLevel:
             assert clause in s, f"{rel}：少了合规约束「{clause}」"
 
     def test_first_board_prompt_asks_keyword_and_duration(self):
-        """首板深入分析须先抽涨停关键字与原因持续性；关键字限闭集标签。"""
+        """首板深入分析须先抽涨停关键字、持续性与题材新旧；关键字限闭集标签。"""
         s = self._src("pages/FirstBoard.tsx")
         assert "【涨停关键字】" in s
         assert "【持续性】" in s
+        assert "【题材新旧】" in s
         assert "loadZtKeywords" in s
         assert "精确选一个" in s
         assert "无原因" in s and "其他" in s
+        assert "新题材" in s and "旧题材" in s
+        assert "有没有被炒作过" in s
 
 
 class TestUpDownColorIsOneSource:

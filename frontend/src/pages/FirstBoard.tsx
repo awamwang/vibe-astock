@@ -81,18 +81,24 @@ export function FirstBoard() {
       `现价 ${s.price} 元，涨停 +${s.pct}%，首次封板时间 ${s.seal_time || "未知"}，` +
       `炸板 ${s.break_count} 次，成交额 ${yi(s.amount)}，流通市值 ${yi(s.float_cap)}，` +
       `所属行业 ${s.industry || "未知"}，涨停原因题材：${s.reason || "（暂缺，需要自查）"}。\n\n` +
-      "请深入分析这只股票今天涨停的原因。输出必须先两行固定摘要，再写正文：\n" +
+      "请深入分析这只股票今天涨停的原因。输出必须先三行固定摘要，再写正文：\n" +
       "【涨停关键字】xxx\n" +
       "【持续性】xxx\n" +
+      "【题材新旧】xxx\n" +
       `涨停关键字：必须从下列标签中**精确选一个并原样抄写**（不要自造、不要组合）：${tagList}。` +
       "看不出明显原因选「无原因」；都不属于选「其他」。\n" +
       "持续性：仅就该原因/题材本身的发酵时长作极简判断（不超过 10 个汉字），例如日内、短期、到利好出尽——" +
       "不要据此推断个股涨跌。\n" +
+      "题材新旧：必须从「新题材、旧题材、不明」中**精确选一个并原样抄写**。" +
+      "依据是该涨停对应题材近期在市场里有没有被炒作过：近几周未见明显炒作选「新题材」；" +
+      "明显被炒过/回流再起选「旧题材」；证据不足选「不明」——只判题材层面，不推断个股。\n" +
       "正文要求：\n" +
       "1. 先调用工具查询这只股票的近期新闻与研报，结合上面的题材串，说清今天涨停最可能的驱动因素（消息面 / 题材面 / 资金面）；\n" +
       "2. 就**这个题材板块整体**说清它的强度与所处阶段（情绪性的一日游 / 有产业逻辑或业绩支撑），" +
       "并给出依据 —— 只讲题材板块层面，不要由此推断这只个股接下来会怎样；\n" +
-      "3. 客观列出值得注意的点（炸板情况、封板时间早晚、流通盘大小、题材扩散位置）。\n" +
+      "3. 单独说明：该题材近期在市场中有没有被炒作过（有无相似高潮、回流再起、还是相对新鲜），" +
+      "并与上方「题材新旧」标签对应，给出简要依据；\n" +
+      "4. 客观列出值得注意的点（炸板情况、封板时间早晚、流通盘大小、题材扩散位置）。\n" +
       "个股层面只陈述已经发生的客观数据与事实，方向与强弱判断做到题材板块层面为止：" +
       "不预测个股涨跌、不给个股参与倾向、不推荐任何标的、不构成投资建议。" +
       "输出用纯 Markdown（不要在表格或正文里使用 <br> 等 HTML 标签）。"
@@ -170,13 +176,15 @@ export function FirstBoard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "首封", "炸板", "现价", "当日涨幅", "成交额", "流通市值", "涨停原因", "关键字", "行业", ""].map((h) => (
+                  {["名称", "首封", "炸板", "现价", "流通市值", "涨停原因", "关键字", "题材新旧", "持续性", "行业", ""].map((h) => (
                     <th key={h || "action"} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {stocks.map((s) => (
+                {stocks.map((s) => {
+                  const diveMeta = parseDiveMeta(dd.analysis[s.code] || "");
+                  return (
                   <Fragment key={s.code}>
                     <tr className="border-b border-border/30">
                       <td className="whitespace-nowrap px-2 py-2">
@@ -188,19 +196,32 @@ export function FirstBoard() {
                         {s.break_count > 0 ? <span className="text-primary">{s.break_count} 次</span> : <span className="text-muted-foreground/50">0</span>}
                       </td>
                       <td className="px-2 py-2 font-mono">{s.price}</td>
-                      <td className="px-2 py-2 font-mono text-danger">+{s.pct}%</td>
-                      <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.amount)}</td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.float_cap)}</td>
                       <td className="max-w-56 px-2 py-2 text-xs">
                         {s.reason ? <span className="text-foreground">{s.reason}</span> : <span className="text-muted-foreground/50">—</span>}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-xs">
-                        {(() => {
-                          const kw = parseDiveMeta(dd.analysis[s.code] || "").keyword;
-                          return kw
-                            ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-medium text-primary">{kw}</span>
-                            : <span className="text-muted-foreground/50">—</span>;
-                        })()}
+                        {diveMeta.keyword
+                          ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-medium text-primary">{diveMeta.keyword}</span>
+                          : <span className="text-muted-foreground/50">—</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 text-xs">
+                        {diveMeta.themeFreshness ? (
+                          <span className={`rounded border px-1.5 py-0.5 font-medium ${
+                            diveMeta.themeFreshness === "新题材"
+                              ? "border-success/30 bg-success/10 text-success"
+                              : diveMeta.themeFreshness === "旧题材"
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "border-border/50 bg-muted/30 text-muted-foreground"
+                          }`}>{diveMeta.themeFreshness}</span>
+                        ) : (
+                          <span className="text-muted-foreground/50">—</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 text-xs">
+                        {diveMeta.duration
+                          ? <span className="rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 font-medium text-foreground">{diveMeta.duration}</span>
+                          : <span className="text-muted-foreground/50">—</span>}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
                       <td className="whitespace-nowrap px-2 py-2 text-right">
@@ -223,7 +244,8 @@ export function FirstBoard() {
                       />
                     )}
                   </Fragment>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
