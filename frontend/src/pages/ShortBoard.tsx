@@ -425,8 +425,8 @@ export function ShortBoard() {
         title="短线指标"
         icon={<Radar className="h-4 w-4" />}
         caliber={
-          "今日 / 昨日对照：左侧今日、右侧昨日归档（无归档时显示 /-）。\n" +
-          "盘中每次刷新覆盖写「今天」快照，收盘后最后一次即为次日的「昨日」。\n" +
+          "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
+          "归档只在「日历今天就是这场」时写入，不会把周五数据存成周六文件。\n" +
           "涨跌宽度：情绪温度 / 炸板率 / 涨停溢价来自选股宝；涨跌家数优先开盘啦、否则选股宝；\n" +
           "实际涨跌停优先开盘啦、否则东财涨跌停池。\n" +
           "资金量能：成交额优先开盘啦、否则腾讯上证+深证；主力净流入来自东财。\n" +
@@ -434,8 +434,18 @@ export function ShortBoard() {
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }
-        hint={board?.updated && (
-          <span className="text-[11px] text-muted-foreground/50">更新于 {board.updated}</span>
+        hint={(board?.date || board?.updated) && (
+          <span className="text-[11px] text-muted-foreground/50">
+            {board.date && (
+              <>
+                {board.date}
+                {board.prev_date && <> · 对照 {board.prev_date}</>}
+                {board.is_live === false && <> · 非实时场次</>}
+                {board.updated && " · "}
+              </>
+            )}
+            {board.updated && <>更新于 {board.updated}</>}
+          </span>
         )}
         onRefresh={loadBoard}
         refreshing={busy.board}
@@ -559,14 +569,16 @@ export function ShortBoard() {
         title="今日实时打板情绪"
         icon={<Flame className="h-4 w-4" />}
         caliber={
+          "场次对照：有今日池用今天；周末/盘前回退最近场次，对照其前一交易日（如周五 vs 周四）。\n" +
+          "归档只在日历今天这场写入，不会把周五数据存成周六文件。\n" +
           "封板率 = 最终封住家数 ÷ 摸板家数；炸板率 = 炸板未回封家数 ÷ 摸板家数。\n" +
           "摸板家数 = 涨停 + 炸板，**按家数算，不按炸板次数算**。\n" +
-          "晋级率 / 封板率等同屏指标盘中写入本地归档，收盘后最后一次即为次日「昨日」对照；无归档显示 /-。\n" +
           "最高连板只给板数，具体是哪只票看下方「昨日短线情绪」标签里的连板股表。"
         }
         hint={liveEmo?.available ? (
           <span className="text-[11px] text-warning">
-            {liveEmo.date} {liveEmo.as_of} · {liveEmo.phase}（随盘变化）
+            {liveEmo.date} {liveEmo.as_of} · {liveEmo.phase}
+            {liveEmo.is_live === false ? "（定稿回看）" : "（随盘变化）"}
             {liveEmo.prev_date && (
               <span className="text-muted-foreground/60"> · 对照 {liveEmo.prev_date}</span>
             )}

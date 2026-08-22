@@ -11,7 +11,11 @@
 ⚠️ 炸板率必须**另取炸板池**：涨停池里的 `zbc` 只是"这一只炸过几次"，
    全市场炸了多少家它答不了。分母 = 最终封住 + 炸板未回封 = 尝试过涨停的家数。
 
-「今日 / 昨日」对照：盘中每次成功快照写入本地归档，收盘后最后一次覆盖即为次日的「昨日」。
+「今日 / 昨日」对照按**数据场次**锚定：
+  · 有今日涨停池 → 左侧=今天，右侧=前一交易日归档；
+  · 无今日池（周末 / 盘前）→ 回退到行情所属场次（如周五），对照其前一交易日（周四），
+    仍展示「最近两场」对比，而不是空卡或自己比自己。
+  · 归档只在「日历今天 == 场次」时写入；禁止把周五数据存成周六.json。
 晋级率一并归档，便于与封板率 / 炸板率等同屏对照。
 """
 
@@ -132,55 +136,23 @@ def _yesterday_slice(prev: str | None) -> dict[str, Any]:
     return {k: raw[k] for k in _ARCHIVE_KEYS if k in raw and raw[k] is not None}
 
 
-def snapshot() -> dict:
-    """今日实时打板情绪。非交易时段 / 取不到数据 → available=False 并说明原因。
-
-    成功时附带 `yesterday`（上一交易日收盘归档）与 `prev_date`，供界面今日/昨日对照。
-    """
-    today = china_now().strftime("%Y-%m-%d")
-    ymd = today.replace("-", "")
-    prev_day = _cached(f"prevday:{today}", _CAL_TTL,
-                       lambda: trade_calendar.prev_trade_date(today))
-
-    settled = _cached(f"settled:{today}", _CAL_TTL,
-                      lambda: ("Y" if trade_calendar.is_settled(today) else "N")) == "Y"
-
-    zt = _cached(f"zt:{ymd}", _TODAY_TTL, lambda: _pool("getTopicZTPool", ymd))
-    if zt is None:
-        return {"available": False, "reason": "涨停池取数失败",
-                "prev_date": prev_day, "yesterday": _yesterday_slice(prev_day)}
-    if not zt:
-        return {"available": False, "date": today,
-                "reason": "今日还没有涨停池（未开盘 / 非交易日）",
-                "prev_date": prev_day, "yesterday": _yesterday_slice(prev_day)}
-
-    zb = _cached(f"zb:{ymd}", _TODAY_TTL, lambda: _pool("getTopicZBPool", ymd))   # 炸板未回封
-    dt = _cached(f"dt:{ymd}", _TODAY_TTL, lambda: _pool("getTopicDTPool", ymd))   # 跌停
-
+def _metrics_from_pools(
+    zt: list[dict],
+    zb: Optional[list[dict]],
+    dt: Optional[list[dict]],
+    prev_zt: Optional[list[dict]],
+) -> dict[str, Any]:
+    """由涨停/炸板/跌停池算出对照用指标（不含日期元数据）。"""
     boards = [int(p.get("lbc") or 1) for p in zt]
     zt_n, zb_n = len(zt), (len(zb) if zb is not None else None)
-    tried = zt_n + zb_n if zb_n is not None else None   # 尝试过涨停的家数
-
-    # 晋级率：昨日涨停的票今天又封住的比例（= 界面上那句"昨涨停今又停"）。
-    # **不需要行情**，只比两天的池子成员，所以盘中也算得出
-    # （`emotion_metrics` 那份要收盘价，盘中给不了）。
-    # ⚠️ 别用东财的 `getYesterdayZTPool` —— 实测它对任何日期都返回 0 条。
-    #    直接取「上一交易日」的涨停池自己比。
-    prev = (_cached(f"zt:{prev_day}", _PREV_TTL,
-                    lambda: _pool("getTopicZTPool", prev_day.replace("-", "")))
-            if prev_day else None)
+    tried = zt_n + zb_n if zb_n is not None else None
     today_codes = {str(p.get("c")) for p in zt}
     promo: Optional[float] = None
     promo_base: Optional[int] = None
-    if prev:
-        promo_base = len(prev)
-        promo = _rate(sum(1 for p in prev if str(p.get("c")) in today_codes), promo_base)
-
-    out = {
-        "available": True,
-        "date": today,
-        "as_of": china_now().strftime("%H:%M"),
-        "phase": "盘中" if not settled else "已收盘",
+    if prev_zt:
+        promo_base = len(prev_zt)
+        promo = _rate(sum(1 for p in prev_zt if str(p.get("c")) in today_codes), promo_base)
+    return {
         "zt_count": zt_n,
         "dt_count": len(dt) if dt is not None else None,
         "zb_count": zb_n,
@@ -190,12 +162,118 @@ def snapshot() -> dict:
         "break_rate": _rate(zb_n, tried) if (tried and zb_n is not None) else None,
         "promotion_rate": promo,
         "promotion_base": promo_base,
-        # 分母是哪一场 —— 界面上两张卡都叫「晋级率」，如果只写"昨"，
-        # 实时那张的"昨"是最近已收盘那场、定稿那张的"昨"是它的前一天，
-        # 同一个字指两个不同的日子。把日期给出去，让界面直接写死。
+    }
+
+
+def _resolve_as_of(calendar_today: str) -> tuple[str, bool]:
+    """锚定左侧场次。
+
+    返回 (as_of, is_live)。`is_live` 仅当行情所属场次就是日历今天 ——
+    周末/盘前东财常把上一场涨停池填进「今天」的请求日，池非空也不算 live。
+    """
+    from .util import is_weekend
+
+    qd = trade_calendar.quote_trade_day()
+    latest = trade_calendar.latest_session()
+    if qd and qd <= calendar_today:
+        return qd, qd == calendar_today
+    if latest and latest <= calendar_today:
+        return latest, latest == calendar_today
+    if is_weekend(calendar_today):
+        return (latest or calendar_today), False
+    return calendar_today, True
+
+
+def snapshot() -> dict:
+    """打板情绪快照。非交易时段回退到最近场次，仍给出「最近两场」对照。
+
+    成功时附带 `yesterday`（对照场次归档）与 `prev_date`。
+    """
+    calendar_today = china_now().strftime("%Y-%m-%d")
+
+    def _as_of_pair() -> tuple[str, bool]:
+        return _cached(f"asof:{calendar_today}", _CAL_TTL,
+                       lambda: _resolve_as_of(calendar_today))
+
+    def _prev_of(day: str) -> str | None:
+        return _cached(f"prevday:{day}", _CAL_TTL,
+                       lambda: trade_calendar.prev_trade_date(day))
+
+    as_of, is_live = _as_of_pair()
+    prev_day = _prev_of(as_of)
+    if prev_day and prev_day >= as_of:
+        prev_day = None
+
+    # 取池：live 用日历今天；否则强制按 as_of 取（忽略「周末请求日仍非空」的假今日池）
+    pool_day = calendar_today if is_live else as_of
+    pool_ymd = pool_day.replace("-", "")
+    pool_ttl = _TODAY_TTL if is_live else _PREV_TTL
+
+    zt = _cached(f"zt:{pool_ymd}", pool_ttl, lambda: _pool("getTopicZTPool", pool_ymd))
+    if zt is None:
+        return {"available": False, "reason": "涨停池取数失败",
+                "date": as_of, "prev_date": prev_day,
+                "is_live": is_live, "yesterday": _yesterday_slice(prev_day)}
+
+    if not zt:
+        if is_live:
+            return {"available": False, "date": calendar_today,
+                    "reason": "今日还没有涨停池（未开盘 / 非交易日）",
+                    "prev_date": prev_day, "is_live": False,
+                    "yesterday": _yesterday_slice(prev_day)}
+        # 非 live 且 as_of 池空 → 试本地归档撑左侧
+        archived = _load_archive(as_of)
+        if not archived:
+            return {"available": False, "date": as_of,
+                    "reason": "最近场次无涨停池也无归档",
+                    "prev_date": prev_day, "is_live": False,
+                    "yesterday": _yesterday_slice(prev_day)}
+        out = {
+            "available": True,
+            "date": as_of,
+            "as_of": china_now().strftime("%H:%M"),
+            "phase": "非交易日",
+            "is_live": False,
+            "prev_date": prev_day,
+            "promotion_base_date": prev_day,
+            "yesterday": _yesterday_slice(prev_day),
+        }
+        for k in _ARCHIVE_KEYS:
+            if k in archived:
+                out[k] = archived[k]
+        return out
+
+    settled = _cached(f"settled:{as_of}", _CAL_TTL,
+                      lambda: ("Y" if trade_calendar.is_settled(as_of) else "N")) == "Y"
+
+    zb = _cached(f"zb:{pool_ymd}", pool_ttl, lambda: _pool("getTopicZBPool", pool_ymd))
+    dt = _cached(f"dt:{pool_ymd}", pool_ttl, lambda: _pool("getTopicDTPool", pool_ymd))
+    prev_zt = (_cached(f"zt:{prev_day}", _PREV_TTL,
+                       lambda: _pool("getTopicZTPool", prev_day.replace("-", "")))
+               if prev_day else None)
+
+    metrics = _metrics_from_pools(zt, zb, dt, prev_zt)
+
+    if not is_live:
+        phase = "非交易日"
+    elif settled:
+        phase = "已收盘"
+    else:
+        phase = "盘中"
+
+    out = {
+        "available": True,
+        "date": as_of,
+        "as_of": china_now().strftime("%H:%M"),
+        "phase": phase,
+        "is_live": is_live,
+        **metrics,
+        # 分母是哪一场 —— 界面上两张卡都叫「晋级率」，把日期写死以免混淆
         "promotion_base_date": prev_day,
         "prev_date": prev_day,
         "yesterday": _yesterday_slice(prev_day),
     }
-    _save_archive(today, out)
+    # 只有日历今天这场才写归档，禁止周末把周五存成周六.json
+    if is_live:
+        _save_archive(as_of, out)
     return out

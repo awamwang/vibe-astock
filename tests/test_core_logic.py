@@ -3425,7 +3425,10 @@ class TestLiveEmotionArchive:
 
     def test_weekend_shows_friday_vs_thursday_without_saturday_archive(
             self, tmp_path, monkeypatch):
-        """周六仍展示周五 vs 周四，且不得把周五数据写成周六.json。"""
+        """周六仍展示周五 vs 周四，且不得把周五数据写成周六.json。
+
+        🔴 东财周末请求「今天」常仍返回上一场非空涨停池 —— 绝不能因此当成 live。
+        """
         from duanxian import live_emotion as le
 
         le._save_archive("2026-08-20", {  # 周四
@@ -3445,8 +3448,9 @@ class TestLiveEmotionArchive:
             "duanxian.trade_calendar.is_settled", lambda d: d == "2026-08-21")
 
         def fake_pool(kind, ymd):
+            # 周末请求周六仍非空（东财假今日）—— 若误信会得到 22 vs 21 同数对照
             if ymd == "20260822":
-                return []  # 周六无池
+                return [{"c": "000001", "lbc": 3}, {"c": "000002", "lbc": 1}]
             if kind == "getTopicZTPool" and ymd == "20260821":
                 return [{"c": "000001", "lbc": 3}, {"c": "000002", "lbc": 1}]
             if kind == "getTopicZTPool" and ymd == "20260820":

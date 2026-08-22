@@ -7,7 +7,10 @@
   · 腾讯行情 → 上证/深证成交额兜底（拼两市近似 A 股成交额）
   · 趣财经 qiniugu `/qng/api/v1/market` → 情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材
 
-「今日 / 昨日」对比：盘中每次成功快照覆盖写本地归档，收盘后最后一次即为次日「昨日」。
+「今日 / 昨日」对比按**数据场次**，不是日历今天：
+  · 左侧 = as_of（行情所属场次 / 最近已收盘日）；右侧 = as_of 的前一交易日。
+  · 周末 / 盘前：展示「周五 vs 周四」，不会拿同一场跟自己比。
+  · 归档只写在 as_of == 日历今天时；禁止把周五数据存成周六的 json。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
 趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
 量能对比昨日、量能 5 日/量比暂无可靠源 → 前端占位。
@@ -182,8 +185,12 @@ def _qcj_row(row: dict | None) -> dict:
     }
 
 
-def _fetch_qcj(today: str, prev: str | None) -> dict:
-    """趣财经市场情绪：返回 today/yesterday 两份映射（按 date 对齐）。"""
+def _fetch_qcj(as_of: str, prev: str | None) -> dict:
+    """趣财经市场情绪：按场次 date 对齐 today/yesterday。
+
+    `as_of` 必须是左侧对照所属交易日（不是日历周末）。盘前/非交易日由调用方
+    先把 as_of 钉到最近一场，这里只按日期取行，不再把「序列末条」冒充日历今天。
+    """
     try:
         import requests
 
@@ -199,22 +206,20 @@ def _fetch_qcj(today: str, prev: str | None) -> dict:
             if isinstance(row, dict) and row.get("date")
         }
         out: dict[str, Any] = {}
-        if today in by_date:
-            out["today"] = _qcj_row(by_date[today])
-        elif rows:
-            # 盘前/非交易日：取序列末条作为「最近交易日」
-            last = rows[-1]
-            if str(last.get("date") or "") <= today:
-                out["today"] = _qcj_row(last)
+        if as_of in by_date:
+            out["today"] = _qcj_row(by_date[as_of])
         if prev and prev in by_date:
             out["yesterday"] = _qcj_row(by_date[prev])
         elif out.get("today") and rows:
-            # 若 prev 未命中，取 today 前一条
+            # prev 未命中时：取 as_of 在序列里的前一条（仍要求日期严格早于 as_of）
             t_date = out["today"].get("qcj_date")
             if t_date:
                 for i, row in enumerate(rows):
                     if str(row.get("date")) == t_date and i > 0:
-                        out["yesterday"] = _qcj_row(rows[i - 1])
+                        earlier = _qcj_row(rows[i - 1])
+                        earlier_d = earlier.get("qcj_date")
+                        if earlier_d and earlier_d < t_date:
+                            out["yesterday"] = earlier
                         break
         return out
     except Exception:  # noqa: BLE001
@@ -346,13 +351,37 @@ def _save_archive(date: str, env: dict) -> None:
         pass
 
 
-def _merge_today(today_s: str, prev: str | None) -> dict:
+def _resolve_as_of(calendar_today: str) -> tuple[str, str | None, bool]:
+    """锚定左侧对照场次。
+
+    返回 (as_of, prev, is_live)：
+      · as_of：左侧数字所属交易日（周末/盘前 = 最近有行情的那一场）
+      · prev：as_of 的前一交易日（周末即周四，用来对照）
+      · is_live：日历今天就是这场 —— 只有这时才允许写归档
+    """
+    qd = trade_calendar.quote_trade_day()
+    latest = trade_calendar.latest_session()
+    as_of = None
+    if qd and qd <= calendar_today:
+        as_of = qd
+    elif latest and latest <= calendar_today:
+        as_of = latest
+    else:
+        as_of = calendar_today
+    prev = trade_calendar.prev_trade_date(as_of)
+    # 场次与对照撞车（极端兜底失败）→ 清掉对照，避免自己比自己
+    if prev and prev >= as_of:
+        prev = None
+    return as_of, prev, as_of == calendar_today
+
+
+def _merge_today(as_of: str, prev: str | None) -> dict:
     baoer = _fetch_baoer()
     lt = _fetch_longtou()
     main = _fetch_main_fund()
     amounts = _fetch_index_amounts()
     ztdt = _zt_dt_fallback()
-    qcj = _fetch_qcj(today_s, prev)
+    qcj = _fetch_qcj(as_of, prev)
 
     today: dict[str, Any] = {}
     today.update(baoer)
@@ -401,20 +430,24 @@ def _strip_meta(env: dict) -> dict:
 
 
 def snapshot() -> dict:
-    """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。"""
+    """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。
+
+    `date` = 左侧对照场次（周末为周五），`prev_date` = 其前一交易日（周末为周四）。
+    """
 
     def build():
-        today_s = china_now().strftime("%Y-%m-%d")
-        prev = trade_calendar.prev_trade_date(today_s)
-        raw = _merge_today(today_s, prev)
+        calendar_today = china_now().strftime("%Y-%m-%d")
+        as_of, prev, is_live = _resolve_as_of(calendar_today)
+        raw = _merge_today(as_of, prev)
         today = _strip_meta(raw)
-        yesterday = _strip_meta(_build_yesterday(prev, raw))
-        if (
+        yesterday = _strip_meta(_build_yesterday(prev, raw)) if prev else {}
+        # 只有「日历今天就是这场」才写归档，禁止周末把周五存成周六.json
+        if is_live and (
             today.get("temperature") is not None
             or today.get("n_up")
             or today.get("qcj_temp") is not None
         ):
-            _save_archive(today_s, today)
+            _save_archive(as_of, today)
         available = bool(
             today.get("temperature") is not None
             or today.get("n_up")
@@ -425,8 +458,9 @@ def snapshot() -> dict:
         return {
             "available": available,
             "reason": None if available else "环境指标暂不可用（选股宝/东财/开盘啦/趣财经均未取到）",
-            "date": today_s,
+            "date": as_of,
             "prev_date": prev,
+            "is_live": is_live,
             "today": today,
             "yesterday": yesterday,
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
