@@ -68,14 +68,17 @@ export function MoneyEffectCard({ me }: { me: MoneyEffect }) {
         "⚠️ 需要今日收盘价 → 只有最近一个已收盘交易日算得出，盘中会标不可用。"}
       available={me.available} reason={me.reason}
     >
-      <div className="flex items-end gap-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Stat label="打板成功率-开盘" value={rate(me.open_success_rate)} />
+        <Stat label="打板成功率-收盘" value={rate(me.close_success_rate ?? me.positive_rate)} />
         <Stat label="中位数" value={signed(me.median)} valueClass={tone(me.median)} />
         <Stat label="均值" value={signed(me.avg)} valueClass={tone(me.avg)} />
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-dashed border-border pt-2 text-[12px] text-muted-foreground">
         <span>样本 {me.sample ?? "—"} 只</span>
-        <span>打板成功率-开盘 <b className="text-foreground">{rate(me.open_success_rate)}</b></span>
-        <span>打板成功率-收盘 <b className="text-foreground">{rate(me.close_success_rate ?? me.positive_rate)}</b></span>
+        {me.open_sample != null && me.open_sample !== me.sample && (
+          <span>开盘样本 {me.open_sample} 只</span>
+        )}
         <span>再度涨停 <b className="text-foreground">{rate(me.limit_up_again_rate)}</b></span>
       </div>
     </Card>
