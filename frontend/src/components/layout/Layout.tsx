@@ -26,19 +26,19 @@ const AUTHOR = "Simon 林";
 // 产品主体 = 复盘看板：打开就看清今天的短线情绪。
 // 复盘看板本身由 agent 驱动（带 🤖 角标），其余是它的分项数据。
 const REVIEW_NAV = [
-  { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
   { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
+  { to: "/watchlist", icon: Star, label: "自选股" },
+  { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
   { to: "/first-board", icon: Flame, label: "首板分析" },
   { to: "/heat", icon: CalendarRange, label: "多日情绪" },
   { to: "/trade", icon: Wallet, label: "持仓与预算" },
-  { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/experience", icon: BookMarked, label: "经验记忆" },
 ];
 
 const SETTINGS_NAV = [
   { to: "/settings", icon: Cog, label: "接入 AI" },
-  { to: "/settings/keywords", icon: Tags, label: "上涨关键词" },
+  { to: "/settings/keywords", icon: Tags, label: "自定义配置" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
 ];
 
@@ -117,12 +117,12 @@ export function Layout() {
               {!collapsed && <span className="text-lg font-extrabold tracking-tight">Vibe-<span className="text-primary">Astock</span></span>}
             </Link>
             {}
-            {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线复盘</p>}
+            {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线工具</p>}
           </div>
 
           {/* Nav */}
           <nav className={cn("flex-1 space-y-0.5 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
-            {groupLabel("复盘")}
+            {groupLabel("短线")}
             {REVIEW_NAV.map((n) => item(n, "agent" in n && n.agent))}
 
             {!collapsed && <div className="my-2 border-t border-border/40" />}

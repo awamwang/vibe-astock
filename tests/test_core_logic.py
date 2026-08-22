@@ -4833,6 +4833,28 @@ class TestWeeklyThemeMatrixFromReviews:
         assert out["by_day"]["2026-08-17"]["source"] == "review"
         assert out["by_day"]["2026-08-18"]["source"] == "live"
 
+    def test_matrix_merges_alias_tags(self, tmp_path, monkeypatch):
+        from duanxian import theme_normalize as tn, weekly as wk
+
+        cfg = tmp_path / "theme_aliases.json"
+        monkeypatch.setattr(tn, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(tn, "_ALIASES", None)
+
+        day = wk._matrix_day_from_tree({
+            "available": True,
+            "themes": [
+                {"tag": "半年报增长", "limit_up": 8, "state": "延续", "highest": 3, "limit_down": 0},
+                {"tag": "中报预增", "limit_up": 5, "state": "扩散中", "highest": 2, "limit_down": 0},
+                {"tag": "人形机器人", "limit_up": 3, "state": "维持", "highest": 2, "limit_down": 0},
+                {"tag": "机器人", "limit_up": 4, "state": "维持", "highest": 2, "limit_down": 0},
+            ],
+        })
+        tags = {t["tag"]: t["limit_up"] for t in day["themes"]}
+        assert tags.get("中报增长") == 13
+        assert tags.get("机器人") == 7
+        assert "半年报增长" not in tags
+        assert "人形机器人" not in tags
+
 
 @pytest.mark.unit
 class TestThsZtReasonImport:
@@ -4952,6 +4974,56 @@ class TestThsZtReasonImport:
         reasons, _ = tt.load_cached_reasons("2026-08-18")
         assert "600536" not in reasons
         assert reasons["000001"] == "银行+国企改革"
+
+
+@pytest.mark.unit
+class TestThemeNormalize:
+    """题材别名：显式映射，统计时合并等价写法。"""
+
+    def test_default_aliases(self, tmp_path, monkeypatch):
+        from duanxian import theme_normalize as tn
+
+        cfg = tmp_path / "theme_aliases.json"
+        monkeypatch.setattr(tn, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(tn, "_ALIASES", None)
+        assert tn.canonicalize_tag("中报预增") == "中报增长"
+        assert tn.canonicalize_tag("半年报增长") == "中报增长"
+        assert tn.canonicalize_tag("半年报预增") == "中报增长"
+        assert tn.canonicalize_tag("中报增长") == "中报增长"
+        assert tn.canonicalize_tag("人形机器人") == "机器人"
+        assert tn.canonicalize_tag("创新药") == "创新药"
+        assert tn.canonicalize_tag("中药") == "中药"
+
+    def test_tags_dedupes_after_canonicalize(self, tmp_path, monkeypatch):
+        from duanxian import theme_normalize as tn, theme_tree as tt
+
+        cfg = tmp_path / "theme_aliases.json"
+        monkeypatch.setattr(tn, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(tn, "_ALIASES", None)
+        assert tt._tags("中报预增+半年报增长") == ["中报增长"]
+        assert tt._tags("人形机器人+机器人") == ["机器人"]
+
+    def test_save_rejects_cycle(self, tmp_path, monkeypatch):
+        from duanxian.theme_normalize import ThemeAliasError, save_aliases
+
+        cfg = tmp_path / "theme_aliases.json"
+        monkeypatch.setattr("duanxian.theme_normalize._CONFIG_PATH", str(cfg))
+        monkeypatch.setattr("duanxian.theme_normalize._ALIASES", None)
+        with pytest.raises(ThemeAliasError, match="环"):
+            save_aliases({"A": "B", "B": "A"})
+
+    def test_config_api_wired(self):
+        from pathlib import Path
+
+        fe = Path("frontend/src/lib/api.ts").read_text(encoding="utf-8")
+        be = Path("server.py").read_text(encoding="utf-8")
+        page = Path("frontend/src/pages/ZtKeywordsSettings.tsx").read_text(encoding="utf-8")
+        nav = Path("frontend/src/components/layout/Layout.tsx").read_text(encoding="utf-8")
+        assert "/config/theme-aliases" in fe
+        assert "/api/config/theme-aliases" in be
+        assert "题材别名" in page
+        assert "自定义配置" in page
+        assert "自定义配置" in nav
 
 
 @pytest.mark.unit

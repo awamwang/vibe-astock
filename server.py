@@ -1234,6 +1234,43 @@ def _backup_guard(request: Request):
     return None
 
 
+@app.get("/api/config/theme-aliases")
+def api_theme_aliases_get():
+    """读取题材别名配置（涨停统计归一用）。"""
+    from duanxian import theme_normalize as tn
+
+    return {"data": tn.export_config()}
+
+
+@app.post("/api/config/theme-aliases")
+def api_theme_aliases_save(body: dict = Body(...)):
+    """保存题材别名表。"""
+    from duanxian.theme_normalize import ThemeAliasError, save_aliases
+
+    raw = (body or {}).get("aliases")
+    if not isinstance(raw, dict):
+        return JSONResponse({"error": "aliases 须为对象", "detail": "aliases 须为对象"}, status_code=400)
+    try:
+        saved = save_aliases({str(k): str(v) for k, v in raw.items()})
+    except ThemeAliasError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"aliases": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/theme-aliases/reset")
+def api_theme_aliases_reset():
+    """恢复内置默认题材别名。"""
+    from duanxian import theme_normalize as tn
+
+    try:
+        saved = tn.reset_aliases()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"aliases": saved, "count": len(saved)}}
+
+
 @app.get("/api/experience/meta")
 def api_experience_meta():
     """经验记忆库根路径与主题列表。"""

@@ -57,6 +57,40 @@ def _clamp_window(n: int) -> int:
     return max(WINDOW_DAYS_MIN, min(WINDOW_DAYS_MAX, int(n or 10)))
 
 
+def _canon_theme_tag(tag: str) -> str:
+    """题材矩阵统计用 canonical 名（复盘快照里的旧写法也会归一）。"""
+    from .theme_normalize import canonicalize_tag
+
+    return canonicalize_tag(str(tag or "").strip())
+
+
+def _merge_matrix_theme_rows(rows: list[dict]) -> list[dict]:
+    """按 canonical 题材合并行（涨停数累加，最高板取 max）。"""
+    merged: dict[str, dict] = {}
+    for row in rows or []:
+        tag = _canon_theme_tag(str(row.get("tag") or ""))
+        if not tag:
+            continue
+        lu = int(row.get("limit_up") or 0)
+        hi = int(row.get("highest") or 0)
+        ld = int(row.get("limit_down") or 0)
+        if tag not in merged:
+            merged[tag] = {
+                "tag": tag,
+                "limit_up": 0,
+                "highest": 0,
+                "limit_down": 0,
+                "state": str(row.get("state") or ""),
+            }
+        m = merged[tag]
+        m["limit_up"] += lu
+        m["highest"] = max(m["highest"], hi)
+        m["limit_down"] += ld
+    out = list(merged.values())
+    out.sort(key=lambda x: (-x["limit_up"], -x["highest"], x["tag"]))
+    return out
+
+
 def _day_theme_tree(date: str, top_per_day: int = 12) -> tuple[dict, dict]:
     """(matrix_day, raw_tree) —— 复盘落盘 theme_tree 优先，没有再现场 build。"""
     try:
@@ -85,7 +119,7 @@ def _matrix_day_from_tree(tree: dict, top_per_day: int = 12, source: str = "live
             "source": source,
         }
     themes = []
-    for i, row in enumerate(tree.get("themes") or []):
+    for row in tree.get("themes") or []:
         tag = str(row.get("tag") or "").strip()
         if not tag:
             continue
@@ -95,10 +129,10 @@ def _matrix_day_from_tree(tree: dict, top_per_day: int = 12, source: str = "live
             "state": str(row.get("state") or ""),
             "highest": int(row.get("highest") or 0),
             "limit_down": int(row.get("limit_down") or 0),
-            "rank": i + 1,
         })
-        if len(themes) >= top_per_day:
-            break
+    themes = _merge_matrix_theme_rows(themes)[:top_per_day]
+    for i, row in enumerate(themes):
+        row["rank"] = i + 1
     return {
         "available": True,
         "themes": themes,
@@ -120,7 +154,7 @@ def build_theme_matrix(dates: list[str], top_per_day: int = 12) -> dict:
         if not day.get("available"):
             continue
         for row in day.get("themes") or []:
-            tag = str(row.get("tag") or "").strip()
+            tag = _canon_theme_tag(str(row.get("tag") or ""))
             if not tag:
                 continue
             lu = int(row.get("limit_up") or 0)
@@ -169,6 +203,33 @@ def merge_theme_matrix(dates: list[str], existing: dict | None = None, top_per_d
     }
 
 
+def _normalize_matrix_by_day(by_day: dict[str, dict]) -> dict[str, dict]:
+    """旧缓存里的题材名按当前别名表重算并合并。"""
+    out: dict[str, dict] = {}
+    for d, day in (by_day or {}).items():
+        if not isinstance(day, dict):
+            out[d] = day
+            continue
+        themes = _merge_matrix_theme_rows(day.get("themes") or [])
+        out[d] = {**day, "themes": themes}
+    return out
+
+
+def _matrix_with_normalized_ranks(by_day: dict[str, dict], dates: list[str]) -> dict:
+    """归一 by_day 后重算窗口 / 3 日排名。"""
+    norm = _normalize_matrix_by_day(by_day)
+    last_3 = dates[-3:] if len(dates) >= 3 else list(dates)
+    avail = sum(1 for d in dates if (norm.get(d) or {}).get("available"))
+    return {
+        "days": list(dates),
+        "by_day": norm,
+        "rank_3d": _rank_from_by_day(norm, last_3),
+        "rank_window": _rank_from_by_day(norm, dates),
+        "available_days": avail,
+        "total_days": len(dates),
+    }
+
+
 def ensure_theme_matrix(payload: dict) -> dict:
     """读缓存时补题材矩阵：旧版 weekly 没有该字段，或日期列与矩阵不同步。"""
     dates = [str(d.get("date") or "") for d in (payload.get("days") or []) if d.get("date")]
@@ -177,25 +238,26 @@ def ensure_theme_matrix(payload: dict) -> dict:
     matrix = payload.get("theme_matrix") or {}
     by_day = matrix.get("by_day") if isinstance(matrix.get("by_day"), dict) else {}
     if not by_day:
-        return {**payload, "theme_matrix": merge_theme_matrix(dates, None)}
+        merged = merge_theme_matrix(dates, None)
+        return {**payload, "theme_matrix": {
+            **merged,
+            **_matrix_with_normalized_ranks(merged.get("by_day") or {}, dates),
+            "review_days": merged.get("review_days"),
+        }}
     missing = [d for d in dates if d not in by_day]
     if missing:
-        return {**payload, "theme_matrix": merge_theme_matrix(dates, matrix)}
-    # 矩阵日期与窗口对齐
-    if list(matrix.get("days") or []) != dates:
-        last_3 = dates[-3:] if len(dates) >= 3 else list(dates)
-        avail = sum(1 for d in dates if (by_day.get(d) or {}).get("available"))
-        aligned = {
-            **matrix,
-            "days": dates,
-            "by_day": {d: by_day[d] for d in dates if d in by_day},
-            "rank_3d": _rank_from_by_day(by_day, last_3),
-            "rank_window": _rank_from_by_day(by_day, dates),
-            "available_days": avail,
-            "total_days": len(dates),
-        }
-        return {**payload, "theme_matrix": aligned}
-    return payload
+        merged = merge_theme_matrix(dates, matrix)
+        return {**payload, "theme_matrix": {
+            **merged,
+            **_matrix_with_normalized_ranks(merged.get("by_day") or {}, dates),
+            "review_days": merged.get("review_days"),
+        }}
+    aligned = _matrix_with_normalized_ranks(by_day, dates)
+    return {**payload, "theme_matrix": {
+        **matrix,
+        **aligned,
+        "review_days": matrix.get("review_days"),
+    }}
 
 
 def peak_drawdown(series: list[dict]) -> tuple[Optional[float], Optional[float]]:
@@ -294,7 +356,7 @@ def _rank_from_by_day(by_day: dict[str, dict], dates_subset: list[str], limit: i
         if not day.get("available"):
             continue
         for row in day.get("themes") or []:
-            tag = str(row.get("tag") or "").strip()
+            tag = _canon_theme_tag(str(row.get("tag") or ""))
             if tag:
                 scores[tag] = scores.get(tag, 0) + int(row.get("limit_up") or 0)
     return [
@@ -316,17 +378,14 @@ def slice_weekly(payload: dict, days: int) -> dict:
     matrix = payload.get("theme_matrix") or {}
     if isinstance(matrix, dict) and matrix.get("by_day"):
         by_day = {d: matrix["by_day"][d] for d in dates if d in matrix["by_day"]}
-        last_3 = dates[-3:] if len(dates) >= 3 else list(dates)
-        avail = sum(1 for d in dates if (by_day.get(d) or {}).get("available"))
         out["theme_matrix"] = {
             **matrix,
-            "days": dates,
-            "by_day": by_day,
-            "rank_3d": _rank_from_by_day(by_day, last_3),
-            "rank_window": _rank_from_by_day(by_day, dates),
-            "available_days": avail,
-            "total_days": len(dates),
+            **_matrix_with_normalized_ranks(by_day, dates),
         }
     elif dates:
-        out["theme_matrix"] = merge_theme_matrix(dates)
+        merged = merge_theme_matrix(dates)
+        out["theme_matrix"] = {
+            **merged,
+            **_matrix_with_normalized_ranks(merged.get("by_day") or {}, dates),
+        }
     return out

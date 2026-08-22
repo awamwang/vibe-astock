@@ -651,6 +651,11 @@ export const api = {
     request<BackupImportResult>("/backup/import", "POST", { path }),
   backupImportZip: (contentB64: string) =>
     request<BackupImportResult>("/backup/import", "POST", { content_b64: contentB64 }),
+  themeAliases: () => get<ThemeAliasConfig>("/config/theme-aliases"),
+  saveThemeAliases: (aliases: Record<string, string>) =>
+    request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases", "POST", { aliases }),
+  resetThemeAliases: () =>
+    request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases/reset", "POST", {}),
   experienceMeta: () => get<ExperienceMeta>("/experience/meta"),
   experienceTopic: (name: string) =>
     get<ExperienceTopic>(`/experience/topic?name=${encodeURIComponent(name)}`),
@@ -664,6 +669,17 @@ export interface ExperienceTopicMeta {
   filename: string;
   title: string;
   summary: string;
+}
+export interface ThemeAliasEntry {
+  alias: string;
+  canonical: string;
+}
+export interface ThemeAliasConfig {
+  schema: number;
+  aliases: Record<string, string>;
+  entries: ThemeAliasEntry[];
+  path: string;
+  defaults: Record<string, string>;
 }
 export interface ExperienceMeta {
   root: string;

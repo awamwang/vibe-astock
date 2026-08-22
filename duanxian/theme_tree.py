@@ -137,11 +137,18 @@ def capture(date: Optional[str] = None) -> dict:
 
 
 def _tags(reason: str) -> list[str]:
-    """题材串 → tag 列表。过滤纯属性词，保留事件词。"""
-    out = []
+    """题材串 → tag 列表。过滤纯属性词，保留事件词；等价别名合并后去重。"""
+    from .theme_normalize import canonicalize_tag
+
+    out: list[str] = []
+    seen: set[str] = set()
     for t in str(reason or "").split("+"):
         t = t.strip()
-        if t and not _is_generic(t):
+        if not t or _is_generic(t):
+            continue
+        t = canonicalize_tag(t)
+        if t and t not in seen:
+            seen.add(t)
             out.append(t)
     return out
 
