@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import { cn } from "@/lib/utils";
 import { useEChart } from "@/hooks/useEChart";
+import { cssVarHsl } from "@/lib/colors";
 import { safeArray, type ThemeMatrix, type ThemeMatrixDay, type ThemeMatrixRank, type ThemeMatrixRow } from "@/lib/agent";
 
 const STATE_TONE: Record<string, string> = {
@@ -241,9 +242,17 @@ export function ThemeMatrixChart({
         data.push([xi, yi, v]);
       });
     });
+    const cMuted = cssVarHsl("--muted");
+    const cPrimary = cssVarHsl("--primary");
+    const cPrimaryMid = cssVarHsl("--primary", 0.45);
+    const cMutedFg = cssVarHsl("--muted-foreground");
+    const cFg = cssVarHsl("--foreground");
+    const cBorder = cssVarHsl("--border");
+
     return {
       animation: false,
-      grid: { left: 88, right: 16, top: 28, bottom: 36 },
+      backgroundColor: "transparent",
+      grid: { left: 88, right: 16, top: 28, bottom: 56 },
       tooltip: {
         formatter: (p) => {
           const pt = p as unknown as { data?: [number, number, number] };
@@ -261,13 +270,13 @@ export function ThemeMatrixChart({
       xAxis: {
         type: "category",
         data: xLabels,
-        axisLabel: { fontSize: 11, color: "hsl(var(--muted-foreground))" },
-        axisLine: { lineStyle: { color: "hsl(var(--border))" } },
+        axisLabel: { fontSize: 11, color: cMutedFg },
+        axisLine: { lineStyle: { color: cBorder } },
       },
       yAxis: {
         type: "category",
         data: tags,
-        axisLabel: { fontSize: 11, color: "hsl(var(--foreground))", width: 72, overflow: "truncate" },
+        axisLabel: { fontSize: 11, color: cFg, width: 72, overflow: "truncate" },
         axisLine: { show: false },
         splitLine: { show: false },
       },
@@ -277,11 +286,11 @@ export function ThemeMatrixChart({
         calculable: false,
         orient: "horizontal",
         left: "center",
-        bottom: 0,
+        bottom: 4,
         itemWidth: 12,
-        itemHeight: 80,
-        inRange: { color: ["hsl(var(--muted))", "hsl(var(--primary) / 0.45)", "hsl(var(--primary))"] },
-        textStyle: { color: "hsl(var(--muted-foreground))", fontSize: 10 },
+        itemHeight: 64,
+        inRange: { color: [cMuted, cPrimaryMid, cPrimary] },
+        textStyle: { color: cMutedFg, fontSize: 10 },
       },
       series: [{
         type: "heatmap",
@@ -294,7 +303,7 @@ export function ThemeMatrixChart({
             return v > 0 ? String(v) : "";
           },
           fontSize: 10,
-          color: "hsl(var(--foreground))",
+          color: cFg,
         },
         emphasis: { itemStyle: { shadowBlur: 6, shadowColor: "rgba(0,0,0,0.2)" } },
       }],

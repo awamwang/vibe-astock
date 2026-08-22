@@ -1,4 +1,17 @@
-
+/** 将 :root 上的 HSL 变量（如 `15 89% 56%`）转为 ECharts / Canvas 可用的颜色 */
+export function cssVarHsl(varName: string, alpha?: number): string {
+  if (typeof document === "undefined") {
+    return alpha != null ? "hsla(0, 0%, 50%, 0.5)" : "hsl(0, 0%, 50%)";
+  }
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  if (!raw) {
+    return alpha != null ? "hsla(0, 0%, 50%, 0.5)" : "hsl(0, 0%, 50%)";
+  }
+  const parts = raw.split(/\s+/);
+  if (parts.length < 3) return `hsl(${raw})`;
+  const [h, s, l] = parts;
+  return alpha != null ? `hsla(${h}, ${s}, ${l}, ${alpha})` : `hsl(${h}, ${s}, ${l})`;
+}
 
 /** 涨（正向、强）用的文字色 */
 export const UP_TEXT = "text-danger";
