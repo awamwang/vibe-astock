@@ -180,3 +180,8 @@ def us_hk_stock(query: str) -> dict:
         "quote": quote,
         "metrics": _key_metrics(info["secucode"]) if info["market"] != "KR" else None,  # 韩股东财无 F10 财务
     }
+
+
+def hk_cashflow(query: str, periods: int = 8) -> dict:
+    """港股现金流量表占位：本仓库未并入该数据源时返回空，调用方按「无数据」处理。"""
+    return {}

@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { cn } from "@/lib/utils";
+import { StockLabel } from "@/components/stock/StockLabel";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
 const LIVE_MS = 5_000;
@@ -743,7 +744,7 @@ export function ShortBoard() {
                         {emotion.lianban_stocks.map((s) => (
                           <Fragment key={s.code}>
                             <tr className="border-b border-border/30">
-                              <td className="px-2 py-2"><span className="font-medium">{s.name}</span> <span className="text-xs text-muted-foreground/50">{s.code}</span></td>
+                              <td className="px-2 py-2"><StockLabel code={s.code} name={s.name} /></td>
                               <td className="whitespace-nowrap px-2 py-2 font-mono font-bold text-primary">{s.boards} 板</td>
                               <td className="px-2 py-2 font-mono">
                                 {lianbanQuotes[s.code]?.price ?? (
@@ -819,7 +820,7 @@ export function ShortBoard() {
                   {turnover.stocks.map((s, i) => (
                     <tr key={s.code} className="border-b border-border/30">
                       <td className="px-2 py-2 font-mono text-xs text-muted-foreground/50">{i + 1}</td>
-                      <td className="px-2 py-2"><span className="font-medium">{s.name}</span> <span className="text-xs text-muted-foreground/50">{s.code}</span></td>
+                      <td className="px-2 py-2"><StockLabel code={s.code} name={s.name} /></td>
                       <td className="px-2 py-2 font-mono">{s.price ?? "—"}</td>
                       <td className={cn("px-2 py-2 font-mono", s.pct == null ? "text-muted-foreground" : pctColor(s.pct))}>
                         {s.pct == null ? "—" : `${s.pct > 0 ? "+" : ""}${s.pct}%`}

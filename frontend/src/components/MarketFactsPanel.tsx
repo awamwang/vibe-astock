@@ -12,6 +12,7 @@ import type {
   DayChange, DayDiff, FeedbackDetail, LossEffect, SealQuality,
   StatItem, StatsContext, ThemeNode, ThemeStructure, ThemeTree,
 } from "@/lib/agent";
+import { StockLabel } from "@/components/stock/StockLabel";
 
 function rate(v?: number | null): string {
   return v == null ? "—" : `${Math.round(v * 100)}%`;
@@ -122,8 +123,8 @@ export function Matrix({ fm }: { fm?: FeedbackMatrix }) {
               <tbody>
                 {safeArray<FeedbackDetail>(fm?.details).map((d) => (
                   <tr key={d.code} className="border-b border-border/30 last:border-0">
-                    <td className="py-1 pr-2 font-semibold">{d.name}</td>
-                    <td className="pr-2 text-muted-foreground">{d.code}</td>
+                    <td className="py-1 pr-2"><StockLabel code={d.code} name={d.name} variant="nameOnly" nameClassName="font-semibold" /></td>
+                    <td className="pr-2"><StockLabel code={d.code} name={d.name} variant="codeOnly" codeClassName="text-muted-foreground" /></td>
                     <td className="pr-2 text-muted-foreground">{d.prev_tier}</td>
                     <td className={cn("pr-2 font-bold",
                       pctColor(d.ret))}>
@@ -409,8 +410,12 @@ export function Ledger({ el }: { el?: EventLedger }) {
     <div className="flex items-center gap-2 border-b border-border/40 py-1 text-[12px] last:border-0">
       <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold",
         TAG_TONE[e.tag] || "bg-muted text-muted-foreground")}>{e.tag}</span>
-      <span className="font-semibold">{e.name}</span>
-      <span className="shrink-0 text-[10px] text-muted-foreground">{e.code}</span>
+      <StockLabel
+        code={e.code}
+        name={e.name}
+        nameClassName="font-semibold"
+        codeClassName="shrink-0 text-[10px] text-muted-foreground"
+      />
       {e.boards > 0 && <span className="shrink-0 text-[11px] text-primary">{e.boards}板</span>}
       <span className={cn("shrink-0 tabular-nums", pctColor(e.ret))}>{signed(e.ret)}</span>
       <span className="truncate text-[11px] text-muted-foreground">{e.sector} · {e.note}</span>

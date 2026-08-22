@@ -8,6 +8,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem } from "@/components/ui/DeepDive";
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 import { loadZtKeywords } from "@/lib/zt-keywords";
+import { StockLabel } from "@/components/stock/StockLabel";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
@@ -188,8 +189,7 @@ export function FirstBoard() {
                   <Fragment key={s.code}>
                     <tr className="border-b border-border/30">
                       <td className="whitespace-nowrap px-2 py-2">
-                        <span className="font-medium">{s.name}</span>{" "}
-                        <span className="text-xs text-muted-foreground/50">{s.code}</span>
+                        <StockLabel code={s.code} name={s.name} />
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{s.seal_time || "—"}</td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono">
@@ -325,8 +325,7 @@ export function FirstBoard() {
                   {preview.rows.map((r) => (
                     <div key={r.code} className="grid grid-cols-2 gap-2 border-b border-border/40 px-3 py-1.5 text-xs last:border-b-0">
                       <div className="min-w-0">
-                        <span className="font-medium">{r.name || "—"}</span>{" "}
-                        <span className="text-muted-foreground/60">{r.code}</span>
+                        <StockLabel code={r.code} name={r.name} />
                       </div>
                       <div className="min-w-0 leading-relaxed text-foreground">{r.reason}</div>
                     </div>

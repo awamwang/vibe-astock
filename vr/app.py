@@ -20,6 +20,7 @@ from pydantic import BaseModel
 import astock
 import chat as chat_layer
 import cli_runtime
+import debate as debate_layer
 import gstock
 import newsradar
 import portfolio as pf
@@ -120,6 +121,46 @@ def chat(req: ChatReq):
             yield json.dumps({"type": "error", "message": f"对话失败：{e}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+def _check_llm(llm: LLMConfig) -> dict:
+    """校验模型配置并返回 cfg（chat / debate 流式端点共用）。"""
+    if not llm.model:
+        raise HTTPException(400, "缺少模型配置，请先在「接入 AI」里选择")
+    if llm.provider.startswith("cli-"):
+        kind = llm.provider[4:]
+        if not cli_runtime.detect_cli(kind):
+            raise HTTPException(400, f"未检测到「{kind}」对应的本机命令。请先安装并登录该 CLI，或改用「API 接入」。")
+    elif not llm.apiKey or not llm.baseURL:
+        raise HTTPException(400, "缺少 Base URL 或 API Key，请先在「接入 AI」里填写")
+    return llm.model_dump()
+
+
+def _ndjson(events):
+    """把事件生成器包成 NDJSON 流；运行时异常转成流内 error 事件。"""
+    def gen():
+        try:
+            for ev in events():
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+        except Exception as e:  # noqa: BLE001
+            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+class DebateReq(BaseModel):
+    code: str
+    rounds: int = 1
+    llm: LLMConfig
+
+
+@app.post("/api/debate")
+def debate(req: DebateReq):
+    """多空辩论：先拉客观事实底稿，再多方 / 空方 / 主持依次发言，流式 NDJSON。"""
+    code = _validate(req.code)
+    cfg = _check_llm(req.llm)
+    rounds = 2 if req.rounds >= 2 else 1
+    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds))
 
 
 class HoldingIn(BaseModel):

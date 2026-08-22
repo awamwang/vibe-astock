@@ -10,6 +10,7 @@ import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import type { Quote } from "@/lib/api";
+import { StockLabel } from "@/components/stock/StockLabel";
 
 const pct = (v: number | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v}%`);
 
@@ -330,8 +331,8 @@ export function Watchlist() {
                             aria-label={`选择 ${q?.name || c}`}
                           />
                         </td>
-                        <td className="px-2 py-2.5 font-medium">{q?.name || "—"}</td>
-                        <td className="px-2 py-2.5 font-mono text-xs text-muted-foreground">{c}</td>
+                        <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="nameOnly" /></td>
+                        <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="codeOnly" /></td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? q.price : "—"}</td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? pct(q.change_pct) : "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pe_ttm ?? "—"}</td>

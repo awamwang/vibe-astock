@@ -5,6 +5,7 @@ import {
   Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
 
 function XLogo({ className }: { className?: string }) {
   return (
@@ -39,6 +40,22 @@ const SETTINGS_NAV = [
   { to: "/settings/keywords", icon: Tags, label: "上涨关键词" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
 ];
+
+function MainShell() {
+  const panel = useStockPanelOptional();
+  const open = !!panel?.target;
+
+  return (
+    <main className="flex min-w-0 flex-1 overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-auto">
+        <div className="mx-auto max-w-6xl px-6 py-6">
+          <Outlet />
+        </div>
+      </div>
+      {open && <StockPanelHost />}
+    </main>
+  );
+}
 
 export function Layout() {
   const { pathname } = useLocation();
@@ -83,84 +100,81 @@ export function Layout() {
     );
 
   return (
-    <div className="flex h-screen">
-      {/* Sidebar */}
-      <aside className={cn(
-        "glass z-10 m-2 flex shrink-0 flex-col rounded-2xl transition-all duration-200",
-        collapsed ? "w-14" : "w-60",
-      )}>
-        {/* Brand */}
-        <div className={cn("border-b border-border/50", collapsed ? "flex justify-center p-3" : "p-4")}>
-          <Link to="/agent/review" className={cn("flex items-center", collapsed ? "justify-center" : "gap-2")}>
-            <CandlestickChart className="h-6 w-6 shrink-0 text-primary text-glow" />
-            {!collapsed && <span className="text-lg font-extrabold tracking-tight">Vibe-<span className="text-primary">Astock</span></span>}
-          </Link>
-          {}
-          {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线复盘</p>}
-        </div>
+    <StockPanelProvider>
+      <div className="flex h-screen">
+        {/* Sidebar */}
+        <aside className={cn(
+          "glass z-10 m-2 flex shrink-0 flex-col rounded-2xl transition-all duration-200",
+          collapsed ? "w-14" : "w-60",
+        )}>
+          {/* Brand */}
+          <div className={cn("border-b border-border/50", collapsed ? "flex justify-center p-3" : "p-4")}>
+            <Link to="/agent/review" className={cn("flex items-center", collapsed ? "justify-center" : "gap-2")}>
+              <CandlestickChart className="h-6 w-6 shrink-0 text-primary text-glow" />
+              {!collapsed && <span className="text-lg font-extrabold tracking-tight">Vibe-<span className="text-primary">Astock</span></span>}
+            </Link>
+            {}
+            {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">A 股短线复盘</p>}
+          </div>
 
-        {/* Nav */}
-        <nav className={cn("flex-1 space-y-0.5 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
-          {groupLabel("复盘")}
-          {REVIEW_NAV.map((n) => item(n, "agent" in n && n.agent))}
+          {/* Nav */}
+          <nav className={cn("flex-1 space-y-0.5 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
+            {groupLabel("复盘")}
+            {REVIEW_NAV.map((n) => item(n, "agent" in n && n.agent))}
 
-          {!collapsed && <div className="my-2 border-t border-border/40" />}
-          {groupLabel("设置")}
-          {SETTINGS_NAV.map((n) => item(n))}
-        </nav>
+            {!collapsed && <div className="my-2 border-t border-border/40" />}
+            {groupLabel("设置")}
+            {SETTINGS_NAV.map((n) => item(n))}
+          </nav>
 
-        {/* Footer */}
-        <div className={cn("border-t border-border/50", collapsed ? "flex flex-col items-center gap-2 p-2" : "space-y-2 p-3")}>
-          {collapsed ? (
-            <>
-              <button onClick={toggle} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={dark ? "亮色" : "暗色"}>
-                {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-              <a href={X_URL} target="_blank" rel="noreferrer" className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={`作者 ${AUTHOR} · X ${X_HANDLE}`}>
-                <XLogo className="h-3.5 w-3.5" />
-              </a>
-              <button onClick={() => setCollapsed(false)} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title="展开">
-                <ChevronsRight className="h-4 w-4" />
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <button onClick={toggle} className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                  {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                  {dark ? "亮色" : "暗色"}
+          {/* Footer */}
+          <div className={cn("border-t border-border/50", collapsed ? "flex flex-col items-center gap-2 p-2" : "space-y-2 p-3")}>
+            {collapsed ? (
+              <>
+                <button onClick={toggle} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={dark ? "亮色" : "暗色"}>
+                  {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </button>
-                <div className="flex items-center gap-2">
-                  <a href={X_URL} target="_blank" rel="noreferrer" className="text-muted-foreground transition-colors hover:text-foreground" title={`作者 ${AUTHOR} · X ${X_HANDLE}`}>
-                    <XLogo className="h-3 w-3" />
-                  </a>
-                  <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-muted-foreground transition-colors hover:text-foreground" title="GitHub">
-                    <Github className="h-3.5 w-3.5" />
-                  </a>
-                  <button onClick={() => setCollapsed(true)} className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground" title="收起">
-                    <ChevronsLeft className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-              <p className="text-[11px] text-muted-foreground/70">
-                作者：{AUTHOR} ·{" "}
-                <a href={X_URL} target="_blank" rel="noreferrer"
-                  className="text-primary/80 transition-colors hover:text-primary">
-                  X {X_HANDLE}
+                <a href={X_URL} target="_blank" rel="noreferrer" className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={`作者 ${AUTHOR} · X ${X_HANDLE}`}>
+                  <XLogo className="h-3.5 w-3.5" />
                 </a>
-              </p>
-              <p className="text-[11px] leading-relaxed text-muted-foreground/60">{APP_VERSION} · AI 生成 · 仅供参考 · 非投资建议</p>
-            </>
-          )}
-        </div>
-      </aside>
+                <button onClick={() => setCollapsed(false)} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title="展开">
+                  <ChevronsRight className="h-4 w-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <button onClick={toggle} className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                    {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                    {dark ? "亮色" : "暗色"}
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <a href={X_URL} target="_blank" rel="noreferrer" className="text-muted-foreground transition-colors hover:text-foreground" title={`作者 ${AUTHOR} · X ${X_HANDLE}`}>
+                      <XLogo className="h-3 w-3" />
+                    </a>
+                    <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-muted-foreground transition-colors hover:text-foreground" title="GitHub">
+                      <Github className="h-3.5 w-3.5" />
+                    </a>
+                    <button onClick={() => setCollapsed(true)} className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground" title="收起">
+                      <ChevronsLeft className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground/70">
+                  作者：{AUTHOR} ·{" "}
+                  <a href={X_URL} target="_blank" rel="noreferrer"
+                    className="text-primary/80 transition-colors hover:text-primary">
+                    X {X_HANDLE}
+                  </a>
+                </p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground/60">{APP_VERSION} · AI 生成 · 仅供参考 · 非投资建议</p>
+              </>
+            )}
+          </div>
+        </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-6xl px-6 py-6">
-          <Outlet />
-        </div>
-      </main>
-    </div>
+        <MainShell />
+      </div>
+    </StockPanelProvider>
   );
 }

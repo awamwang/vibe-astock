@@ -7,6 +7,7 @@ import { PortfolioJsonImport } from "@/components/PortfolioJsonImport";
 import { api, type PortfolioData, type TradeAccount, type TradeGuard, type TradePhaseRow, type TradeSizeResult } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { DOWN_TEXT, UP_TEXT } from "@/lib/colors";
+import { StockLabel } from "@/components/stock/StockLabel";
 
 function pct(v?: number | null, digits = 0): string {
   if (v == null || Number.isNaN(v)) return "—";
@@ -456,8 +457,8 @@ export function TradeBudgetPage() {
               <tbody>
                 {guard!.reduce_order.map((r) => (
                   <tr key={r.code} className="border-t border-border/50">
-                    <td className="py-1.5 font-mono">{r.code}</td>
-                    <td>{r.name}</td>
+                    <td className="py-1.5"><StockLabel code={r.code} name={r.name} variant="codeOnly" /></td>
+                    <td><StockLabel code={r.code} name={r.name} variant="nameOnly" /></td>
                     <td className="tabular-nums">{money(r.market_value)}</td>
                     <td className={cn("tabular-nums", (r.pnl ?? 0) >= 0 ? UP_TEXT : DOWN_TEXT)}>
                       {money(r.pnl)}
@@ -519,8 +520,8 @@ export function TradeBudgetPage() {
                   ? h.market_value / guard.equity : null;
                 return (
                   <tr key={h.code} className="border-t border-border/50">
-                    <td className="py-1.5 font-mono">{h.code}</td>
-                    <td>{h.name}</td>
+                    <td className="py-1.5"><StockLabel code={h.code} name={h.name} variant="codeOnly" /></td>
+                    <td><StockLabel code={h.code} name={h.name} variant="nameOnly" /></td>
                     <td className="tabular-nums">{money(h.market_value)}</td>
                     <td className={cn("tabular-nums", h.pnl >= 0 ? UP_TEXT : DOWN_TEXT)}>
                       {money(h.pnl)}（{h.pnl_pct.toFixed(1)}%）

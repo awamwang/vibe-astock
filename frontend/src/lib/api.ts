@@ -400,6 +400,15 @@ export interface GlobalStock {
   quote: GlobalQuote; metrics: GlobalMetrics | null;
 }
 
+export interface HkCashflowItem { amount: number | null; yoy: number | null }
+export interface HkCashflowPeriod {
+  report_date: string;
+  items: Record<string, HkCashflowItem>;
+}
+export interface HkCashflow {
+  currency: string | null; item_order: string[]; periods: HkCashflowPeriod[];
+}
+
 /** 此刻的「实时行情」属于哪一场 —— 盘前行情返回的是上一场收盘，UI 要如实标注 */
 export interface MarketSession {
   now: string;
@@ -551,6 +560,7 @@ export const api = {
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
+  hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   portfolio: () => get<PortfolioData>("/portfolio"),
