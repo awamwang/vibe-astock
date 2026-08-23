@@ -206,7 +206,7 @@ class ThsLinkerBridge:
         self._thread.start()
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
-        reg.report_status("ok", "已连接 ths-linker", detail)
+        self._reg.report_status("ok", "已连接 ths-linker", detail)
 
     def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
         from duanxian import plugin_status as ps
