@@ -1,13 +1,13 @@
 """插件钩子 —— 数据暴露（引擎 push 回调）与数据导入（插件调 HookRegistry）。
 
-本地插件：`~/.vibe-astock/hooks_local.py` 导出 `PACK`（HookPack 实例）。
-也可用环境变量 `VIBE_ASTOCK_HOOKS` 指向任意 .py 路径。
+多插件：先用 `python -m duanxian.plugin_cli register <path>` 注册，
+启用/停用/卸载见 `python -m duanxian.plugin_cli --help`。
+注册表：`~/.vibe-astock/plugins.json`。
 """
 
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 import traceback
 from dataclasses import dataclass
@@ -15,8 +15,6 @@ from typing import Any, Callable, Optional
 
 from . import hook_schemas as hs
 from .util import china_now
-
-_LOCAL_HOOKS_PATH = os.path.expanduser("~/.vibe-astock/hooks_local.py")
 
 _BUILTIN_METRIC_PATHS: dict[str, tuple[str, ...]] = {
     "limit_up_count": ("emotion_metrics", "promotion", "limit_up_count"),
@@ -43,6 +41,7 @@ class HookContext:
     event: str
     emitted_at: str
     engine_version: str
+    plugin_id: str
     plugin_name: str
     plugin_version: str
 
@@ -78,7 +77,11 @@ class HookPack:
     enable_review_saved: bool = True
 
 
-EMPTY_PACK = HookPack(name="builtin", version="0.0.0", schema_bundle="vibe.hooks/builtin")
+@dataclass(frozen=True)
+class LoadedPlugin:
+    id: str
+    path: str
+    pack: HookPack
 
 
 class HookRegistry:
@@ -140,44 +143,47 @@ class HookRegistry:
         ts.set_override(str(date), phase, reason)
 
 
-def _local_hooks_path() -> str | None:
-    env = os.environ.get("VIBE_ASTOCK_HOOKS", "").strip()
-    if env.lower() in {"builtin", "default", "none"}:
-        return None
-    if env:
-        return os.path.expanduser(env)
-    return _LOCAL_HOOKS_PATH if os.path.isfile(_LOCAL_HOOKS_PATH) else None
+def _module_name(plugin_id: str) -> str:
+    safe = "".join(c if c.isalnum() else "_" for c in plugin_id)
+    return f"vibe_astock_plugin_{safe}"
 
 
-def load_pack() -> HookPack:
-    path = _local_hooks_path()
-    if path is None:
-        return EMPTY_PACK
-    if not os.path.isfile(path):
-        print(f"⚠️ 钩子包不存在，回退内置空包：{path}")
-        return EMPTY_PACK
-    print(f"⚙️ 加载本地钩子包（以进程权限执行，仅限可信文件）：{path}")
-    mod_name = "vibe_astock_hooks_local"
+def load_pack_from_path(path: str, *, plugin_id: str) -> HookPack:
+    """从单个 .py 文件加载 PACK。"""
+    mod_name = _module_name(plugin_id)
+    if mod_name in sys.modules:
+        del sys.modules[mod_name]
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载 {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
     try:
-        spec = importlib.util.spec_from_file_location(mod_name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"无法加载 {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[mod_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            sys.modules.pop(mod_name, None)
-            raise
-        pack = getattr(module, "PACK", None)
-        if not isinstance(pack, HookPack):
-            raise TypeError(f"{path} 里的 PACK 不是 HookPack 实例")
-    except Exception as exc:  # noqa: BLE001
+        spec.loader.exec_module(module)
+    except Exception:
         sys.modules.pop(mod_name, None)
-        print(f"⚠️ 钩子包加载失败，回退内置空包（{type(exc).__name__}: {exc}）")
-        return EMPTY_PACK
-    print(f"ℹ️ 已加载本地钩子包：{pack.name} v{pack.version}（{path}）")
+        raise
+    pack = getattr(module, "PACK", None)
+    if not isinstance(pack, HookPack):
+        sys.modules.pop(mod_name, None)
+        raise TypeError(f"{path} 里的 PACK 不是 HookPack 实例")
     return pack
+
+
+def load_plugins() -> list[LoadedPlugin]:
+    """从注册表加载所有已启用插件。"""
+    from . import plugin_store as ps
+
+    loaded: list[LoadedPlugin] = []
+    for pid, path in ps.list_enabled_paths():
+        try:
+            pack = load_pack_from_path(path, plugin_id=pid)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 插件加载失败（id={pid}）：{type(exc).__name__}: {exc}")
+            continue
+        print(f"ℹ️ 已加载插件：{pack.name} v{pack.version}（id={pid}）")
+        loaded.append(LoadedPlugin(id=pid, path=path, pack=pack))
+    return loaded
 
 
 def _wrap_source(data: Any, as_of: str, *, is_live: bool = False) -> dict:
@@ -312,10 +318,11 @@ def build_verification_payload(date: str, review: dict) -> dict:
     }
 
 
-def _envelope(event: str, date: str, payload: dict, pack: HookPack) -> dict:
+def _envelope(event: str, date: str, payload: dict, plugin: LoadedPlugin) -> dict:
     now = china_now().strftime("%Y-%m-%dT%H:%M:%S%z")
     if len(now) > 5 and now[-5] in "+-":
         now = f"{now[:-2]}:{now[-2:]}"
+    pack = plugin.pack
     return {
         "$schema": hs.ENVELOPE,
         "schema_version": hs.SCHEMA_VERSION,
@@ -323,18 +330,25 @@ def _envelope(event: str, date: str, payload: dict, pack: HookPack) -> dict:
         "date": date,
         "emitted_at": now,
         "engine_version": hs.ENGINE_VERSION,
-        "plugin": {"name": pack.name, "version": pack.version, "schema_bundle": pack.schema_bundle},
+        "plugin": {
+            "id": plugin.id,
+            "name": pack.name,
+            "version": pack.version,
+            "schema_bundle": pack.schema_bundle,
+        },
         "payload": payload,
     }
 
 
-def _ctx(date: str, event: str, pack: HookPack) -> HookContext:
+def _ctx(date: str, event: str, plugin: LoadedPlugin) -> HookContext:
     now = china_now().strftime("%Y-%m-%dT%H:%M:%S%z")
+    pack = plugin.pack
     return HookContext(
         date=date,
         event=event,
         emitted_at=now,
         engine_version=hs.ENGINE_VERSION,
+        plugin_id=plugin.id,
         plugin_name=pack.name,
         plugin_version=pack.version,
     )
@@ -350,24 +364,36 @@ def _safe_call(fn: Callable[..., None] | None, *args) -> None:
 
 
 class HookRunner:
-    def __init__(self, pack: HookPack, registry: HookRegistry):
-        self.pack = pack
+    def __init__(self, plugins: list[LoadedPlugin], registry: HookRegistry):
+        self.plugins = list(plugins)
         self.registry = registry
 
     def emit_metrics(self, date: str, review: dict | None, *, scope: str = "review") -> None:
         payload = build_metrics_payload(scope, date, review)
-        _safe_call(self.pack.on_metrics_snapshot, _ctx(date, "metrics.snapshot", self.pack),
-                   _envelope("metrics.snapshot", date, payload, self.pack))
+        for lp in self.plugins:
+            _safe_call(
+                lp.pack.on_metrics_snapshot,
+                _ctx(date, "metrics.snapshot", lp),
+                _envelope("metrics.snapshot", date, payload, lp),
+            )
 
     def emit_budget(self, date: str, budget_env: dict) -> None:
         payload = build_budget_payload(budget_env)
-        _safe_call(self.pack.on_budget_snapshot, _ctx(date, "budget.snapshot", self.pack),
-                   _envelope("budget.snapshot", date, payload, self.pack))
+        for lp in self.plugins:
+            _safe_call(
+                lp.pack.on_budget_snapshot,
+                _ctx(date, "budget.snapshot", lp),
+                _envelope("budget.snapshot", date, payload, lp),
+            )
 
     def emit_verification(self, date: str, review: dict) -> None:
         payload = build_verification_payload(date, review)
-        _safe_call(self.pack.on_verification_snapshot, _ctx(date, "verification.snapshot", self.pack),
-                   _envelope("verification.snapshot", date, payload, self.pack))
+        for lp in self.plugins:
+            _safe_call(
+                lp.pack.on_verification_snapshot,
+                _ctx(date, "verification.snapshot", lp),
+                _envelope("verification.snapshot", date, payload, lp),
+            )
 
     def emit_review_saved(
         self,
@@ -379,28 +405,32 @@ class HookRunner:
         verification_payload: dict | None = None,
         budget_payload: dict | None = None,
     ) -> None:
-        if not self.pack.enable_review_saved:
-            return
         mp = metrics_payload or build_metrics_payload("review", date, review)
         vp = verification_payload or build_verification_payload(date, review)
         bp = budget_payload
         if bp is None and budget_env is not None:
             bp = build_budget_payload(budget_env)
-        inner = {
-            "$schema": hs.REVIEW_SAVED,
-            "schema_version": hs.SCHEMA_VERSION,
-            "date": date,
-            "review": review,
-            "metrics": mp,
-            "verification": vp,
-            "budget": bp,
-        }
-        _safe_call(self.pack.on_review_saved, _ctx(date, "review.saved", self.pack),
-                   _envelope("review.saved", date, inner, self.pack))
+        for lp in self.plugins:
+            if not lp.pack.enable_review_saved:
+                continue
+            inner = {
+                "$schema": hs.REVIEW_SAVED,
+                "schema_version": hs.SCHEMA_VERSION,
+                "date": date,
+                "review": review,
+                "metrics": mp,
+                "verification": vp,
+                "budget": bp,
+            }
+            _safe_call(
+                lp.pack.on_review_saved,
+                _ctx(date, "review.saved", lp),
+                _envelope("review.saved", date, inner, lp),
+            )
 
     def emit_after_review(self, date: str, review: dict, budget_env: dict | None) -> None:
         """复盘保存后按序派发：metrics → verification → budget → review.saved。"""
-        if self.pack is EMPTY_PACK:
+        if not self.plugins:
             return
         mp = build_metrics_payload("review", date, review)
         vp = build_verification_payload(date, review)
@@ -452,21 +482,24 @@ def _validate_providers(providers: tuple[MetricProvider, ...]) -> tuple[MetricPr
     return tuple(accepted)
 
 
-def _init() -> tuple[HookPack, HookRegistry, HookRunner]:
-    pack = load_pack()
+def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
+    plugins = load_plugins()
     registry = HookRegistry()
-    if pack.on_register is not None:
-        try:
-            pack.on_register(registry)
-        except Exception:  # noqa: BLE001
-            print(f"⚠️ 钩子 on_register 失败：\n{traceback.format_exc()}")
-    providers = _validate_providers(pack.metric_providers)
-    if providers:
+    all_providers: list[MetricProvider] = []
+    for lp in plugins:
+        if lp.pack.on_register is not None:
+            try:
+                lp.pack.on_register(registry)
+            except Exception:  # noqa: BLE001
+                print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）on_register 失败：\n{traceback.format_exc()}")
+        accepted = _validate_providers(lp.pack.metric_providers)
+        all_providers.extend(accepted)
+    if all_providers:
         from . import verification as vf
 
-        vf.register_plugin_metrics(providers)
-    runner = HookRunner(pack, registry)
-    return pack, registry, runner
+        vf.register_plugin_metrics(tuple(all_providers))
+    runner = HookRunner(plugins, registry)
+    return plugins, registry, runner
 
 
-PACK, REGISTRY, RUNNER = _init()
+PLUGINS, REGISTRY, RUNNER = _init()
