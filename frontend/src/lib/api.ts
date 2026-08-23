@@ -686,7 +686,39 @@ export const api = {
     request<ExperienceRetrieveResult>("/experience/retrieve", "POST", { query, k }),
   experienceCommit: (files: ExperienceDraftFile[]) =>
     request<ExperienceCommitResult>("/experience/commit", "POST", { files }),
+  pluginsList: () => get<PluginsListResult>("/plugins"),
+  pluginsPick: (initialDir?: string) =>
+    request<PluginPickResult>("/plugins/pick", "POST", { initial_dir: initialDir || "" }),
+  pluginsRegister: (path: string) =>
+    request<PluginRecord>("/plugins/register", "POST", { path }),
+  pluginsEnable: (plugin: string) =>
+    request<PluginRecord>("/plugins/enable", "POST", { plugin }),
+  pluginsDisable: (plugin: string) =>
+    request<PluginRecord>("/plugins/disable", "POST", { plugin }),
+  pluginsUninstall: (plugin: string) =>
+    request<PluginRecord>("/plugins/uninstall", "POST", { plugin }),
+  pluginsOpenDir: (plugin: string) =>
+    request<{ ok: boolean; path: string }>("/plugins/open-dir", "POST", { plugin }),
 };
+
+export interface PluginPickResult {
+  cancelled: boolean;
+  path?: string;
+}
+
+export interface PluginRecord {
+  id: string;
+  path: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  registered_at: string;
+  file_exists: boolean;
+}
+export interface PluginsListResult {
+  plugins: PluginRecord[];
+  registry_file: string;
+}
 
 export interface ExperienceTopicMeta {
   filename: string;

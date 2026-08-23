@@ -205,6 +205,62 @@ def registry_file() -> str:
     return _registry_path()
 
 
+def _reveal_dir(path: Path) -> None:
+    """用系统文件管理器打开目录。"""
+    import subprocess
+    import sys
+
+    target = str(path)
+    if sys.platform == "win32":
+        os.startfile(target)  # type: ignore[attr-defined]
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def pick_entry_file(initial_dir: str | None = None) -> str | None:
+    """弹出系统文件选择框选 .py 插件入口；用户取消返回 None。"""
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    opts: dict[str, Any] = {
+        "title": "选择插件入口 (.py)",
+        "filetypes": [("Python 插件", "*.py"), ("所有文件", "*.*")],
+    }
+    if initial_dir:
+        idir = Path(initial_dir).expanduser()
+        if idir.is_dir():
+            opts["initialdir"] = str(idir.resolve())
+    try:
+        path = filedialog.askopenfilename(**opts)
+    finally:
+        root.destroy()
+    if not path:
+        return None
+    return str(Path(path).expanduser().resolve())
+
+
+def open_entry_dir(path: str) -> str:
+    """在系统文件管理器中打开插件入口所在目录。"""
+    p = Path(path).expanduser().resolve()
+    if p.is_file():
+        target = p.parent
+    elif p.is_dir():
+        target = p
+    else:
+        target = p.parent
+    if not target.is_dir():
+        raise ValueError(f"目录不存在：{target}")
+    try:
+        _reveal_dir(target)
+    except OSError as exc:
+        raise OSError(f"无法打开目录：{exc}") from exc
+    return str(target)
+
+
 def override_registry_dir(tmp_dir: str | None) -> None:
     """测试用：重定向注册表目录。"""
     global _USER_DIR, _REGISTRY_FILE

@@ -11,6 +11,7 @@ import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
 import { ZtKeywordsSettings } from "@/pages/ZtKeywordsSettings";
 import { ExperienceMemory } from "@/pages/ExperienceMemory";
+import { PluginManagement } from "@/pages/PluginManagement";
 
 // basename 跟着构建时的 --base 走，这样挂在子路径下内部跳转才不会掉回站点根目录
 export const router = createBrowserRouter([
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
       { path: "/experience", element: <ExperienceMemory /> },
       { path: "/settings", element: <Settings /> },
       { path: "/settings/keywords", element: <ZtKeywordsSettings /> },
+      { path: "/settings/plugins", element: <PluginManagement /> },
       { path: "/settings/data", element: <DataBackup /> },
       { path: "/settings/backup", element: <DataBackup /> },
       { path: "*", element: <Navigate to="/agent/review" replace /> },

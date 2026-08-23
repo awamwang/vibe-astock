@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
@@ -39,6 +39,7 @@ const REVIEW_NAV = [
 const SETTINGS_NAV = [
   { to: "/settings", icon: Cog, label: "接入 AI" },
   { to: "/settings/keywords", icon: Tags, label: "自定义配置" },
+  { to: "/settings/plugins", icon: Plug, label: "插件管理" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
 ];
 

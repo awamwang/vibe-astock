@@ -1431,6 +1431,156 @@ def api_experience_commit(request: Request, body: dict = Body(...)):
     return {"data": result}
 
 
+def _plugin_row(rec) -> dict:
+    from pathlib import Path
+
+    p = Path(rec.path).expanduser()
+    return {
+        "id": rec.id,
+        "path": rec.path,
+        "name": rec.name,
+        "version": rec.version,
+        "enabled": rec.enabled,
+        "registered_at": rec.registered_at,
+        "file_exists": p.is_file(),
+    }
+
+
+@app.get("/api/plugins")
+def api_plugins_list():
+    """列出已注册钩子插件。"""
+    from duanxian import plugin_store as ps
+
+    rows = ps.list_plugins()
+    return {
+        "data": {
+            "plugins": [_plugin_row(r) for r in rows],
+            "registry_file": ps.registry_file(),
+        }
+    }
+
+
+@app.post("/api/plugins/register")
+def api_plugins_register(request: Request, body: Optional[dict] = Body(None)):
+    """注册插件（.py 须导出 PACK）。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    path = str((body or {}).get("path") or "").strip()
+    if not path:
+        return JSONResponse({"error": "请提供 path", "detail": "请提供 path"}, status_code=400)
+    disabled = bool((body or {}).get("disabled"))
+    try:
+        rec = ps.register(path, enabled=not disabled)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    return {"data": _plugin_row(rec)}
+
+
+@app.post("/api/plugins/enable")
+def api_plugins_enable(request: Request, body: Optional[dict] = Body(None)):
+    """启用插件。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    plugin = str((body or {}).get("plugin") or "").strip()
+    if not plugin:
+        return JSONResponse({"error": "请提供 plugin", "detail": "请提供 plugin"}, status_code=400)
+    try:
+        rec = ps.set_enabled(plugin, True)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    return {"data": _plugin_row(rec)}
+
+
+@app.post("/api/plugins/disable")
+def api_plugins_disable(request: Request, body: Optional[dict] = Body(None)):
+    """停用插件。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    plugin = str((body or {}).get("plugin") or "").strip()
+    if not plugin:
+        return JSONResponse({"error": "请提供 plugin", "detail": "请提供 plugin"}, status_code=400)
+    try:
+        rec = ps.set_enabled(plugin, False)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    return {"data": _plugin_row(rec)}
+
+
+@app.post("/api/plugins/uninstall")
+def api_plugins_uninstall(request: Request, body: Optional[dict] = Body(None)):
+    """从注册表卸载插件（不删除 .py 文件）。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    plugin = str((body or {}).get("plugin") or "").strip()
+    if not plugin:
+        return JSONResponse({"error": "请提供 plugin", "detail": "请提供 plugin"}, status_code=400)
+    try:
+        rec = ps.uninstall(plugin)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    return {"data": _plugin_row(rec)}
+
+
+@app.post("/api/plugins/pick")
+def api_plugins_pick(request: Request, body: Optional[dict] = Body(None)):
+    """弹出系统文件选择框，选取 .py 插件入口。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    initial = str((body or {}).get("initial_dir") or "").strip()
+    try:
+        picked = ps.pick_entry_file(initial or None)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    if not picked:
+        return {"data": {"cancelled": True}}
+    return {"data": {"cancelled": False, "path": picked}}
+
+
+@app.post("/api/plugins/open-dir")
+def api_plugins_open_dir(request: Request, body: Optional[dict] = Body(None)):
+    """用系统文件管理器打开插件入口所在目录。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_store as ps
+
+    raw_path = str((body or {}).get("path") or "").strip()
+    plugin = str((body or {}).get("plugin") or "").strip()
+    if plugin and not raw_path:
+        try:
+            pid = ps.resolve_id(plugin)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+        hit = next((r for r in ps.list_plugins() if r.id == pid), None)
+        if hit is None:
+            return JSONResponse({"error": f"未找到插件：{pid}", "detail": f"未找到插件：{pid}"}, status_code=400)
+        raw_path = hit.path
+    if not raw_path:
+        return JSONResponse({"error": "请提供 path 或 plugin", "detail": "请提供 path 或 plugin"}, status_code=400)
+    try:
+        opened = ps.open_entry_dir(raw_path)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"ok": True, "path": opened}}
+
+
 @app.get("/api/backup/status")
 def api_backup_status():
     """当前可备份数据规模（~/.duanxian-agents 非日志文件）。"""

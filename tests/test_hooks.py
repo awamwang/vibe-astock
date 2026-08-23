@@ -242,3 +242,18 @@ class TestPluginCli:
         assert plugin_cli.main(["list"]) == 0
         out = capsys.readouterr().out
         assert "test-hooks" in out
+
+
+@pytest.mark.unit
+class TestPluginStoreUi:
+    def test_open_entry_dir(self, plugin_home, monkeypatch):
+        from duanxian import plugin_store as ps
+
+        p = plugin_home / "pkg" / "bridge.py"
+        p.parent.mkdir(parents=True)
+        p.write_text("x = 1\n", encoding="utf-8")
+        revealed: list[str] = []
+        monkeypatch.setattr(ps, "_reveal_dir", lambda path: revealed.append(str(path)))
+        opened = ps.open_entry_dir(str(p))
+        assert opened == str(p.parent.resolve())
+        assert revealed == [str(p.parent.resolve())]
