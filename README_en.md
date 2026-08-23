@@ -22,6 +22,7 @@
   <a href="#the-core-derived-sentiment-metrics">Derived metrics</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#custom-analysis-style-prompt-packs">Custom style</a> ·
+  <a href="#hook-plugins">Hook plugins</a> ·
   <a href="#quick-start">Quick start</a> ·
 </p>
 
@@ -188,6 +189,32 @@ The engine finds that file on its own (or point `VIBE_ASTOCK_PROMPTS` at any pat
 load, the engine prints why and falls back to the default pack. The file lives outside this repo and
 is not distributed with the code; what you write in it, how you use it, and the consequences are
 yours — please also confirm what your own jurisdiction requires for this kind of activity.
+
+---
+
+## Hook plugins
+
+At review save, budget refresh, and verification-item edits, the engine can **push structured
+snapshots** (sentiment metrics, budget phase, verification items, etc.) to registered plugins.
+Plugins can also **write back** via `HookRegistry` — portfolio holdings, account fields, and manual
+budget phase overrides.
+
+This is orthogonal to prompt packs: prompts control *how* the AI speaks; hooks control *data in and
+out of the engine*.
+
+| Doc | Contents |
+|---|---|
+| [doc/hook-lifecycle.md](doc/hook-lifecycle.md) | Process load order, event triggers, `emit_after_review` chain |
+| [doc/plugin-development.md](doc/plugin-development.md) | `HookPack`, `HookRegistry` API, custom verification metrics, CLI |
+
+Minimal setup:
+
+```bash
+python -m duanxian.plugin_cli register ~/.vibe-astock/plugins/my_bridge.py
+# restart server after changing the registry or plugin file
+```
+
+Registry file: `~/.vibe-astock/plugins.json`.
 
 ---
 

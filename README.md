@@ -22,6 +22,7 @@
   <a href="#核心派生情绪指标">派生情绪指标</a> ·
   <a href="#架构">架构</a> ·
   <a href="#自定义分析口径prompt-包">自定义口径</a> ·
+  <a href="#钩子插件">钩子插件</a> ·
   <a href="#快速开始">快速开始</a> ·
 </p>
 
@@ -150,6 +151,28 @@ PACK = PromptPack(
 引擎会自动发现该文件（也可用环境变量 `VIBE_ASTOCK_PROMPTS` 指向任意路径），加载失败会打印原因并回退默认包。
 该文件在本仓库之外、不随代码分发；写什么、怎么用、由此产生的责任由使用者自负，
 并请自行确认所在司法辖区对相关活动的资质要求。
+
+---
+
+## 钩子插件
+
+引擎在复盘落盘、仓位预算刷新、验证条件保存等节点，可向已注册插件 **推送结构化快照**（情绪指标、预算档位、验证条件等）；插件也可通过 `HookRegistry` **回写** 持仓、账户与预算覆盖档。
+
+与 Prompt 包正交：Prompt 管「怎么说」，插件管「数据进出引擎」。
+
+| 文档 | 内容 |
+|---|---|
+| [doc/hook-lifecycle.md](doc/hook-lifecycle.md) | 进程加载、事件触发顺序、`emit_after_review` 链路 |
+| [doc/plugin-development.md](doc/plugin-development.md) | `HookPack` 写法、`HookRegistry` API、自定义验证指标、CLI |
+
+最简注册：
+
+```bash
+python -m duanxian.plugin_cli register ~/.vibe-astock/plugins/my_bridge.py
+# 修改注册表或插件文件后需重启 server
+```
+
+注册表：`~/.vibe-astock/plugins.json`。
 
 ---
 
