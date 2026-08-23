@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Caliber } from "@/components/ui/Caliber";
 import { ThemeMatrixChart } from "@/components/charts/ThemeMatrixChart";
 import { agentFetch, finite, pct, safeArray, type WeeklyData, type LineageLeader } from "@/lib/agent";
+import { pctColor, UP_TEXT } from "@/lib/colors";
 import { StockLabel } from "@/components/stock/StockLabel";
 
 const WINDOW_MIN = 7;
@@ -23,7 +24,7 @@ function Sparkline({ leader }: { leader: LineageLeader }) {
   const W = 200, H = 34, n = vals.length;
   const pts = vals.map((v, i) => `${(i / (n - 1) * W).toFixed(1)},${(H - (v - min) / rng * H).toFixed(1)}`).join(" ");
   const last = vals[vals.length - 1];
-  const col = last >= 0 ? "hsl(var(--success))" : "hsl(var(--danger))";
+  const col = last >= 0 ? "hsl(var(--danger))" : "hsl(var(--success))";
   const zeroY = (H - (0 - min) / rng * H).toFixed(1);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="200" height="34" className="mt-1.5">
@@ -171,7 +172,7 @@ export function AgentWeekly() {
                 const atPeak = dd === 0;
                 return (
                   <div key={l.code} className={cn("glass rounded-2xl border-l-4 p-4",
-                    dd == null ? "border-l-border" : atPeak ? "border-l-success" : "border-l-danger")}>
+                    dd == null ? "border-l-border" : atPeak ? "border-l-danger" : "border-l-success")}>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="flex items-baseline gap-1.5 text-[15px] font-bold">
                         <StockLabel
@@ -186,7 +187,7 @@ export function AgentWeekly() {
                         )}
                       </span>
                       <span className={cn("text-xl font-extrabold",
-                        dd == null ? "text-muted-foreground" : atPeak ? "text-success" : "text-danger")}>
+                        dd == null ? "text-muted-foreground" : atPeak ? UP_TEXT : pctColor(dd))}>
                         {dd == null ? "—" : atPeak ? "在最高点" : pct(dd)}
                       </span>
                     </div>
