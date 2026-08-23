@@ -417,13 +417,20 @@ def compute_day(
     }
 
 
-def refresh(date: str, *, force: bool = False) -> dict:
+def refresh(date: str, *, force: bool = False, emit_hooks: bool = True) -> dict:
     """写入 `trade/{date}.json`。保留已有手拨覆盖。"""
     date = str(date)
     _ = force  # 接口保留：始终重算读数，覆盖档由 keep_override 保留
     env = compute_day(date, keep_override=True)
     os.makedirs(_TRADE_DIR, exist_ok=True)
     atomic_write_json(_trade_path(date), env)
+    if emit_hooks:
+        try:
+            from . import hooks
+
+            hooks.RUNNER.emit_budget(date, env)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 预算钩子派发失败（{date}）：{type(exc).__name__}: {exc}")
     return env
 
 

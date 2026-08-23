@@ -82,9 +82,23 @@ def main() -> None:
     print(final["tomorrow_focus"])
 
     reflection.auto_evaluate_prior(trade_date)   # 与 server 同序：先回评上期预测
-    res = review_store.save(review_store.serialize(final, trade_date, pre["warnings"]), trade_date)
+    payload = review_store.serialize(final, trade_date, pre["warnings"])
+    res = review_store.save(payload, trade_date)
     if res.written:
         print(f"\n✓ 已写入 {review_store.DIR}/{trade_date}.json（看板可直接看）")
+        budget_env = None
+        try:
+            from duanxian import trade_store as ts
+
+            budget_env = ts.refresh(trade_date, emit_hooks=False)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 仓位预算写入失败（{trade_date}）：{type(exc).__name__}: {exc}")
+        try:
+            from duanxian import hooks
+
+            hooks.RUNNER.emit_after_review(trade_date, payload, budget_env)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 复盘钩子派发失败（{trade_date}）：{type(exc).__name__}: {exc}")
     else:
         print(f"\n⚠️ 未写入：{res.reason}")
 

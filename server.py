@@ -344,10 +344,17 @@ def _run_review(date: str, job_id: str) -> None:
             raise RuntimeError(res.reason)
         _capture_theme_reasons()     # 题材串同理（问财只给最近交易日）
         # 仓位预算：与复盘同源读数，但写入 trade/，绝不进 reviews JSON
+        budget_env = None
         try:
-            trade_store.refresh(date)
+            budget_env = trade_store.refresh(date, emit_hooks=False)
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ 仓位预算写入失败（{date}）：{type(exc).__name__}: {exc}")
+        try:
+            from duanxian import hooks
+
+            hooks.RUNNER.emit_after_review(date, payload, budget_env)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 复盘钩子派发失败（{date}）：{type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001
         with _lock:
             if _job["job_id"] == job_id:
@@ -803,11 +810,22 @@ def api_verify_save(request: Request, date: str, body: dict = Body(...)):
 
     try:
         date = validate_trade_date(date)
-        return JSONResponse(verification.save_user_items(date, body.get("items") or []))
+        result = verification.save_user_items(date, body.get("items") or [])
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+    try:
+        from duanxian import hooks, review_store
+
+        rev = review_store.load(date)
+        if rev is not None:
+            hooks.RUNNER.emit_verification(date, rev)
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 验证条件钩子派发失败（{date}）：{type(exc).__name__}: {exc}")
+
+    return JSONResponse(result)
 
 
 @app.get("/api/trade/phases")

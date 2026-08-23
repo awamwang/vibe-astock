@@ -37,9 +37,9 @@ class VerificationItem(BaseModel):
     @field_validator("metric")
     @classmethod
     def _known_metric(cls, v: str) -> str:
-        from .verification import METRICS
+        from .verification import known_metric_keys
 
-        keys = {m.key for m in METRICS}
+        keys = known_metric_keys()
         v = v.strip()
         if v not in keys:
             raise ValueError(f"未知指标 {v!r}，只能从 {sorted(keys)} 里选")

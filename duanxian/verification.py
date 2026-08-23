@@ -45,15 +45,23 @@ class Metric:
     `higher_is_hotter` 只用于给 UI 提示语义（炸板率升 = 情绪转弱），不影响核验。
     """
 
+    _DEFAULT_REGISTER = frozenset({"verification_menu", "ai_pool", "export_index"})
+
     def __init__(self, key: str, label: str, hint: str, eps: float,
                  getter: Callable[[dict, dict], Optional[float]],
-                 higher_is_hotter: bool = True, unit: str = ""):
+                 higher_is_hotter: bool = True, unit: str = "",
+                 register_in: frozenset[str] | None = None,
+                 scopes: frozenset[str] | None = None,
+                 path: tuple[str, ...] | None = None):
         self.key, self.label, self.hint = key, label, hint
         self.eps, self.getter = eps, getter
         self.higher_is_hotter, self.unit = higher_is_hotter, unit
+        self.register_in = register_in or self._DEFAULT_REGISTER
+        self.scopes = scopes or frozenset({"review"})
+        self.path = path
 
 
-METRICS: list[Metric] = [
+_BUILTIN_METRICS: list[Metric] = [
     Metric("limit_up_count", "涨停家数", "市场整体的赚钱意愿", eps=5,
            getter=lambda m, f: _pick(m, "promotion", "limit_up_count"), unit="家"),
     Metric("highest_board", "最高连板高度", "情绪的天花板，压缩=周期见顶", eps=0.5,
@@ -75,7 +83,54 @@ METRICS: list[Metric] = [
            higher_is_hotter=False, unit="家"),
 ]
 
-_BY_KEY = {m.key: m for m in METRICS}
+METRICS: list[Metric] = list(_BUILTIN_METRICS)
+_BY_KEY: dict[str, Metric] = {m.key: m for m in METRICS}
+
+
+def _rebuild_index() -> None:
+    global _BY_KEY
+    _BY_KEY = {m.key: m for m in METRICS}
+
+
+def builtin_keys() -> set[str]:
+    return {m.key for m in _BUILTIN_METRICS}
+
+
+def known_metric_keys() -> set[str]:
+    return set(_BY_KEY)
+
+
+def metrics_for_menu() -> list[Metric]:
+    return [m for m in METRICS if "verification_menu" in m.register_in]
+
+
+def metrics_for_ai_pool() -> list[Metric]:
+    return [m for m in METRICS if "ai_pool" in m.register_in]
+
+
+def metrics_for_export() -> list[Metric]:
+    return [m for m in METRICS if "export_index" in m.register_in]
+
+
+def register_plugin_metrics(providers) -> None:
+    """合并插件注册的指标（启动时由 hooks 调用）。"""
+    added: list[Metric] = []
+    for p in providers or ():
+        getter = getattr(p, "getter", None)
+        if getter is None:
+            continue
+        added.append(Metric(
+            p.key, p.label, p.hint, p.eps, getter,
+            higher_is_hotter=getattr(p, "higher_is_hotter", True),
+            unit=getattr(p, "unit", ""),
+            register_in=getattr(p, "register_in", Metric._DEFAULT_REGISTER),
+            scopes=getattr(p, "scopes", frozenset({"review"})),
+            path=getattr(p, "path", None),
+        ))
+    if not added:
+        return
+    METRICS.extend(added)
+    _rebuild_index()
 
 
 
@@ -100,8 +155,8 @@ def describe_items(items: list[dict], metrics: dict, facts: dict) -> list[dict]:
     return out
 
 def metric_menu() -> str:
-    """给裁判 prompt 的可选指标清单。"""
-    return "\n".join(f"  - {m.key}（{m.label}）：{m.hint}" for m in METRICS)
+    """给裁判 prompt 的可选指标清单（ai_pool）。"""
+    return "\n".join(f"  - {m.key}（{m.label}）：{m.hint}" for m in metrics_for_ai_pool())
 
 
 def _actual_direction(cur: Optional[float], prev: Optional[float], eps: float) -> Optional[str]:
@@ -282,7 +337,7 @@ def extract_items(llm, focus_md: str, phase: str = "") -> list[dict]:
     """
     from pydantic import BaseModel, Field, field_validator
 
-    keys = {m.key for m in METRICS}
+    keys = {m.key for m in metrics_for_ai_pool()}
 
     class _Item(BaseModel):
         metric: str = Field(description="指标 key")
@@ -367,8 +422,7 @@ def load_user_items(date: str) -> list[dict]:
 
 def save_user_items(date: str, items: list[dict]) -> dict:
     """存用户自设条件。校验同 AI 产出的那套 —— 指标必须在清单里、方向必须合法。"""
-    keys = {m.key for m in METRICS}
-    clean = []
+    keys = {m.key for m in metrics_for_menu()}
     for it in items or []:
         if not isinstance(it, dict):
             raise ValueError("条件格式不对")
