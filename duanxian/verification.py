@@ -73,6 +73,8 @@ _BUILTIN_METRICS: list[Metric] = [
     Metric("broken_rate", "炸板率", "资金分歧程度（炸板未回封占尝试数）", eps=0.05,
            getter=lambda m, f: _pick(f, "seal_quality", "broken_rate"),
            higher_is_hotter=False, unit=""),
+    Metric("never_broken_rate", "涨停未炸板比例", "今日涨停里全天没开过板的比例，越高板越硬", eps=0.05,
+           getter=lambda m, f: _pick(f, "seal_quality", "never_broken_rate"), unit=""),
     Metric("deep_loss_count", "跌超5%家数", "大面的量级，判退潮先看它", eps=5,
            getter=lambda m, f: _pick(f, "loss_effect", "deep_loss_5_count"),
            higher_is_hotter=False, unit="家"),
@@ -218,6 +220,7 @@ _SERIES_KEY = {
     "promotion_1to2": "promotion_1to2",
     "money_effect_median": "money_effect",
     "broken_rate": "broken_rate",
+    "never_broken_rate": "never_broken_rate",
     "deep_loss_count": "deep_loss",
 }
 

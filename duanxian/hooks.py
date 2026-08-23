@@ -23,6 +23,7 @@ _BUILTIN_METRIC_PATHS: dict[str, tuple[str, ...]] = {
     "promotion_1to2": ("emotion_metrics", "promotion", "tiers", "1进2", "rate"),
     "money_effect_median": ("emotion_metrics", "money_effect", "median"),
     "broken_rate": ("market_facts", "seal_quality", "broken_rate"),
+    "never_broken_rate": ("market_facts", "seal_quality", "never_broken_rate"),
     "deep_loss_count": ("market_facts", "loss_effect", "deep_loss_5_count"),
     "theme_concentration": ("market_facts", "theme_structure", "concentration"),
     "market_limit_down": ("market_facts", "loss_effect", "market_limit_down"),

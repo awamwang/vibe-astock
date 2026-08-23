@@ -49,6 +49,7 @@ const METRIC_LABEL: Record<string, string> = {
   promotion_1to2: "1进2 晋级率",
   money_effect_median: "赚钱效应中位数",
   broken_rate: "炸板率",
+  never_broken_rate: "涨停未炸板比例",
   deep_loss_count: "跌超5%家数",
   theme_concentration: "头部题材集中度",
   market_limit_down: "全市场跌停家数",

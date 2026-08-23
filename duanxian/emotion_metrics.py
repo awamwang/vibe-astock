@@ -450,12 +450,12 @@ def ladder_gap(date: str) -> dict:
 
 _SUMMARY_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_summary")
 
-_SUMMARY_SCHEMA = 1
+_SUMMARY_SCHEMA = 2
 _SUMMARY_SOURCE = "akshare_zt_pool"
 
 
 def _summarize(zt: dict) -> Optional[dict]:
-    """把一天的涨停池压成三个原始读数（都不依赖行情，任意历史日可算）。"""
+    """把一天的涨停池压成原始读数（都不依赖行情，任意历史日可算）。"""
     df = zt.get("zt")
     if df is None:
         return None
@@ -463,7 +463,14 @@ def _summarize(zt: dict) -> Optional[dict]:
     n_zb = int(zt.get("zb_count", 0) or 0)
     hc = int(zt.get("highest_consec", 0) or 0)
     br = (n_zb / (n_zb + n_zt)) if (n_zb + n_zt) else None
-    return {"limit_up": n_zt, "highest_consec": hc, "broken_rate": br}
+    never_broken = 0
+    if "炸板次数" in df.columns:
+        never_broken = int((df["炸板次数"].fillna(0) == 0).sum())
+    nbr = round(never_broken / n_zt, 3) if n_zt else None
+    return {
+        "limit_up": n_zt, "highest_consec": hc, "broken_rate": br,
+        "never_broken_rate": nbr,
+    }
 
 
 def day_summary(date: str) -> Optional[dict]:

@@ -526,7 +526,8 @@ export function SealQualitySection({ sq }: { sq?: SealQuality }) {
       title="封板质量"
       hint="同样是涨停，开盘秒板不炸、和炸六次尾盘回封完全是两回事。"
       caliber={"分母 = 今日**最终涨停**的个股。\n" +
-        "「没炸过」+「炸后回封」= 最终涨停家数（互补的两半）。\n" +
+        "「涨停未炸板比例」= 全天没开过板的涨停家数 ÷ 涨停家数；「炸后回封」= 炸过但最终封住的。\n" +
+        "两者互补，加起来就是最终涨停家数。\n" +
         "「开盘秒板」是**首封时间**维度（9:35 前首封），和上面两个重叠，所以单列在下面。\n" +
         "🔴 「炸板率」的分母**不是**这里的涨停家数，而是「最终涨停 + 炸板未回封」——\n" +
         "它和「涨停里曾经开过板的比例」是两个概念，后者衡量板的成色、前者才是复盘说的炸板率。"}
@@ -535,8 +536,15 @@ export function SealQualitySection({ sq }: { sq?: SealQuality }) {
     >
       <div className="grid grid-cols-2 gap-3 text-center">
         <div>
-          <div className={cn("text-xl font-extrabold tabular-nums", strengthColor(true))}>{nb ?? "—"}</div>
-          <div className="text-[11px] text-muted-foreground">没炸过 ({rate(sq?.never_broken_rate)})</div>
+          <div className={cn("text-xl font-extrabold tabular-nums", strengthColor(true))}>
+            {rate(sq?.never_broken_rate)}
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            涨停未炸板比例
+            {nb != null && tot != null && (
+              <span className="ml-1 text-muted-foreground/60">（{nb}/{tot} 家）</span>
+            )}
+          </div>
         </div>
         <div>
           <div className="text-xl font-extrabold tabular-nums text-warning">{ro ?? "—"}</div>
