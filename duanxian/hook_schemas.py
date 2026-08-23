@@ -12,5 +12,6 @@ VERIFICATION_SNAPSHOT = f"{SCHEMA_BASE}/verification-snapshot/1.0.0"
 REVIEW_SAVED = f"{SCHEMA_BASE}/review-saved/1.0.0"
 PORTFOLIO_IMPORT = f"{SCHEMA_BASE}/portfolio-import/1.0.0"
 ACCOUNT_IMPORT = f"{SCHEMA_BASE}/account-import/1.0.0"
+WATCHLIST_IMPORT = f"{SCHEMA_BASE}/watchlist-import/1.0.0"
 
 SCHEMA_VERSION = "1.0.0"

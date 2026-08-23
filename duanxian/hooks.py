@@ -142,6 +142,37 @@ class HookRegistry:
 
         ts.set_override(str(date), phase, reason)
 
+    def import_watchlist(self, payload: dict) -> ImportResult:
+        body = dict(payload or {})
+        body.setdefault("replace", True)
+        if not body.get("replace"):
+            raise ValueError("钩子导入自选股仅支持全量覆盖（replace=true）")
+        raw = body.get("codes")
+        if raw is None and "watchlist" in body:
+            raw = body.get("watchlist")
+        _ensure_vr_path()
+        import watchlist as wl  # noqa: PLC0415
+        import watchtower as wt  # noqa: PLC0415
+
+        try:
+            clean = wl.normalize_codes(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
+        wl.replace_codes(clean)
+        wt.set_watch(clean)
+        wt.poke()
+        return ImportResult(True, "watchlist", f"{len(clean)} 只")
+
+
+def _ensure_vr_path() -> None:
+    import os
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    vr_dir = os.path.join(root, "vr")
+    if os.path.isdir(vr_dir) and vr_dir not in sys.path:
+        sys.path.insert(0, vr_dir)
+
 
 def _module_name(plugin_id: str) -> str:
     safe = "".join(c if c.isalnum() else "_" for c in plugin_id)

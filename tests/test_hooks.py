@@ -125,6 +125,35 @@ class TestHookRegistryImport:
         data = json.loads(pf_file.read_text(encoding="utf-8"))
         assert len(data["holdings"]) == 1
 
+    def test_import_watchlist_replace(self, tmp_path, monkeypatch):
+        vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import watchlist as wl
+
+        from duanxian.hooks import HookRegistry
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        reg = HookRegistry()
+        res = reg.import_watchlist({
+            "replace": True,
+            "codes": ["600000", "000001", "bad", "600000"],
+        })
+        assert res.ok
+        assert res.kind == "watchlist"
+        assert wl.get_codes() == ["600000", "000001"]
+
+    def test_import_watchlist_rejects_merge(self):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        with pytest.raises(ValueError, match="全量覆盖"):
+            reg.import_watchlist({"replace": False, "codes": ["600000"]})
+
 
 @pytest.mark.unit
 class TestHookPayloads:

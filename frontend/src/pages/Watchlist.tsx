@@ -1,15 +1,16 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, X, RefreshCw, Star, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { loadWatch, saveWatch, addCodes, removeCodes } from "@/lib/watchlist";
+import { loadWatch, saveWatch, addCodes, removeCodes, pullServerWatch, pushServerWatch } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import type { Quote } from "@/lib/api";
+import { api } from "@/lib/api";
 import { StockLabel } from "@/components/stock/StockLabel";
 
 const pct = (v: number | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v}%`);
@@ -51,6 +52,12 @@ export function Watchlist() {
   const [live, setLive] = useState(loadLive);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
+  useEffect(() => {
+    void pullServerWatch(() => api.watchlist()).then((next) => {
+      if (next) setCodes(next);
+    });
+  }, []);
+
   const { quotes, loading, updatedAt, polling, error, refresh } = useLiveQuotes(codes, live);
   const dd = useDeepDive("watchlist", beijingDateKey());
 
@@ -65,6 +72,7 @@ export function Watchlist() {
   const persist = (next: string[]) => {
     setCodes(next);
     saveWatch(next);
+    void pushServerWatch(next, (c) => api.saveWatchlist(c));
     setSelected((prev) => {
       if (prev.size === 0) return prev;
       const keep = new Set<string>();

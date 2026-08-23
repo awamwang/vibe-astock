@@ -266,6 +266,23 @@ def _pin_pool_to_settled_session() -> int:
 
 _POOL_PINNED = _pin_pool_to_settled_session()
 _guard_vr_userdata()
+
+
+def _bootstrap_watchlist() -> None:
+    """启动时把磁盘自选股灌进盯盘池（插件 / API 写入的列表）。"""
+    _add_vr_to_path()
+    try:
+        import watchlist as wl  # noqa: PLC0415
+        import watchtower as wt  # noqa: PLC0415
+
+        codes = wl.get_codes()
+        if codes:
+            wt.set_watch(codes)
+    except Exception as exc:  # noqa: BLE001
+        _alert(f"⚠️ 自选股恢复失败：{type(exc).__name__}: {exc}")
+
+
+_bootstrap_watchlist()
 _DISABLED_CLIS = _disable_unsafe_clis()
 
 _VR_API_KEY = os.environ.get("VR_API_KEY", "").strip()
@@ -952,6 +969,35 @@ def api_trade_snapshot(request: Request, date: str | None = None, body: dict | N
         )
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@app.get("/api/watchlist")
+def api_watchlist_get():
+    """读取服务端自选股（插件写入或前端同步）。"""
+    _add_vr_to_path()
+    import watchlist as wl  # noqa: PLC0415
+
+    return wl.get_watchlist()
+
+
+@app.put("/api/watchlist")
+def api_watchlist_put(request: Request, body: dict = Body(...)):
+    """全量覆盖服务端自选股，并同步盯盘池。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    _add_vr_to_path()
+    import watchlist as wl  # noqa: PLC0415
+    import watchtower as wt  # noqa: PLC0415
+
+    try:
+        out = wl.replace_codes(body.get("codes"))
+        wt.set_watch(out["codes"])
+        wt.poke()
+        return out
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
 
 
 def _portfolio_holdings() -> tuple[list, float]:

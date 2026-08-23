@@ -557,6 +557,12 @@ export interface MoodBlocksSnapshot {
   updated?: string;
 }
 
+export interface WatchlistData {
+  schema?: number;
+  codes: string[];
+  updated_at: string | null;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
@@ -568,6 +574,8 @@ export const api = {
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),
+  watchlist: () => get<WatchlistData>("/watchlist"),
+  saveWatchlist: (codes: string[]) => request<WatchlistData>("/watchlist", "PUT", { codes }),
   firstBoard: () => get<FirstBoardData>("/market/first-board"),
   parseZtReasons: (text: string) =>
     request<ZtReasonPreview>("/market/first-board/parse-reasons", "POST", { text }),

@@ -204,6 +204,21 @@ reg.import_account({
 
 人手覆盖某日仓位档位。`phase` 须为 `trade_budget.PHASES` 之一；传 `None` 清除覆盖（通过 `trade_store.set_override`）。
 
+### `import_watchlist(payload) -> ImportResult`
+
+全量覆盖自选股（最多 100 只 6 位 A 股代码），写入 `~/.vibe-research/watchlist.json`，并同步盯盘池。
+
+```python
+reg.import_watchlist({
+    "replace": True,
+    "codes": ["600000", "000001"],
+})
+```
+
+也接受别名字段 `watchlist`（与 `codes` 等价）。`replace` 必须为 `true`（不支持增量合并）。清空列表传 `codes: []`。
+
+前端打开自选股页时会经 `GET /api/watchlist` 拉取；用户在页面上的改动经 `PUT /api/watchlist` 写回。
+
 ---
 
 ## 注册自定义验证指标：`MetricProvider`
