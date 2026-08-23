@@ -3,6 +3,7 @@ import { pctColor, UP_TEXT, DOWN_TEXT } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import { Caliber } from "@/components/ui/Caliber";
 import { finite, plain, safeArray, safeRecord } from "@/lib/agent";
+import { fmtCountPermille } from "@/lib/marketRatio";
 import type {
   ConsecPremium, EmotionCycle, EmotionMetrics, LadderGap, MoneyEffect, Promotion,
 } from "@/lib/agent";
@@ -144,7 +145,9 @@ export function ConsecPremiumCard({ cp }: { cp: ConsecPremium }) {
   );
 }
 
-export function LadderCard({ lg }: { lg: LadderGap }) {
+export function LadderCard({ lg, marketTotal: tot }: { lg: LadderGap; marketTotal?: number | null }) {
+  const tiers = safeRecord<number>(lg.tiers);
+  const lianbanTotal = Object.values(tiers).reduce((sum, c) => sum + (c || 0), 0);
   return (
     <Card
       icon={Layers} title="梯队结构"
@@ -155,9 +158,9 @@ export function LadderCard({ lg }: { lg: LadderGap }) {
       available={lg.available} reason={lg.reason}
     >
       <div className="flex flex-wrap items-end gap-2">
-        {Object.entries(safeRecord<number>(lg.tiers)).map(([b, c]) => (
+        {Object.entries(tiers).map(([b, c]) => (
           <span key={b} className="rounded-lg bg-primary/10 px-2.5 py-1 text-[13px] font-semibold text-primary tabular-nums">
-            {b}板 × {c}
+            {b}板 × {fmtCountPermille(c, tot ?? null)}
           </span>
         ))}
         {safeArray<number>(lg.gaps).map((g) => (
@@ -165,8 +168,13 @@ export function LadderCard({ lg }: { lg: LadderGap }) {
             {g}板 缺
           </span>
         ))}
-        {!Object.keys(safeRecord<number>(lg.tiers)).length && <span className="text-[13px] text-muted-foreground">无 2 板以上</span>}
+        {!Object.keys(tiers).length && <span className="text-[13px] text-muted-foreground">无 2 板以上</span>}
       </div>
+      {lianbanTotal > 0 && (
+        <p className="mt-2 text-[12px] text-muted-foreground">
+          连板数合计 <b className="text-foreground">{fmtCountPermille(lianbanTotal, tot ?? null)}</b>
+        </p>
+      )}
       {}
       <p className={cn("mt-3 border-t border-dashed border-border pt-2 text-[12px]",
         lg.continuous === false ? "text-danger" : "text-muted-foreground")}>

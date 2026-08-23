@@ -10,6 +10,7 @@ import { Caliber } from "@/components/ui/Caliber";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { finite } from "@/lib/agent";
+import { fmtCountPct, fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import {
   api, type MarketOverview, type ShortTermEmotion, type LianbanStock,
   type TurnoverTop, type MarketSession, type LiveEmotion, type ShortBoardSnapshot,
@@ -72,15 +73,17 @@ function SectionHead({
 /** 今日 / 昨日对照卡。色规则对齐 awam TwoDataProp：今日相对昨日更大→红（reversed 则相反）。
  *  无昨日归档时右侧固定 `/-` 占位，避免只显示今日误以为没有对照能力。 */
 function EnvCard({
-  name, today, yesterday, format, reversed, className,
+  name, today, yesterday, format, formatYesterday, reversed, className,
 }: {
   name: string;
   today: number | null | undefined;
   yesterday?: number | null;
   format: (v: number) => string;
+  formatYesterday?: (v: number) => string;
   reversed?: boolean;
   className?: string;
 }) {
+  const fmtY = formatYesterday ?? format;
   const hasT = today != null && Number.isFinite(today);
   const hasY = yesterday != null && Number.isFinite(yesterday);
   let color = "text-foreground";
@@ -99,7 +102,7 @@ function EnvCard({
         <span className={cn("font-bold", hasT ? color : "text-muted-foreground/40")}>
           {hasT ? format(today as number) : "—"}
         </span>
-        <span className="text-muted-foreground">/{hasY ? format(yesterday as number) : "-"}</span>
+        <span className="text-muted-foreground">/{hasY ? fmtY(yesterday as number) : "-"}</span>
       </div>
     </div>
   );
@@ -337,6 +340,8 @@ export function ShortBoard() {
 
   const sentiment = overview?.sentiment;
   const sentY = sentiment?.yesterday || {};
+  const sentTotal = marketTotal(undefined, sentiment?.up, sentiment?.down, sentiment?.flat);
+  const sentTotalY = marketTotal(undefined, sentY.up, sentY.down, sentY.flat);
   const sectors = overview?.sectors || [];
   const ley = liveEmo?.yesterday || {};
   const pctEmo = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -464,8 +469,21 @@ export function ShortBoard() {
               <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
               <EnvTextCard name="大盘宽度" today={sentiment?.breadth} yesterday={sentY.breadth} />
               <EnvTextCard name="题材投机" today={sentiment?.speculation} yesterday={sentY.speculation} />
-              <EnvCard name="上涨数" today={sentiment?.up} yesterday={sentY.up} format={intFmt} />
-              <EnvCard name="下跌数" today={sentiment?.down} yesterday={sentY.down} format={intFmt} reversed />
+              <EnvCard
+                name="上涨数"
+                today={sentiment?.up}
+                yesterday={sentY.up}
+                format={(v) => fmtCountPct(v, sentTotal)}
+                formatYesterday={(v) => fmtCountPct(v, sentTotalY)}
+              />
+              <EnvCard
+                name="下跌数"
+                today={sentiment?.down}
+                yesterday={sentY.down}
+                format={(v) => fmtCountPct(v, sentTotal)}
+                formatYesterday={(v) => fmtCountPct(v, sentTotalY)}
+                reversed
+              />
               <EnvCard name="平盘" today={sentiment?.flat} yesterday={sentY.flat} format={intFmt} />
               <EnvTextCard name="活跃度" today={sentiment?.active} yesterday={sentY.active} />
             </EnvGroup>
@@ -489,7 +507,8 @@ export function ShortBoard() {
                 name="连板（2板+）"
                 today={liveEmo?.lianban_count}
                 yesterday={ley.lianban_count}
-                format={(v) => `${Math.round(v)} 家`}
+                format={(v) => `${fmtCountPermille(v, sentTotal)} 家`}
+                formatYesterday={(v) => `${fmtCountPermille(v, sentTotalY)} 家`}
               />
               <EnvCard
                 name="晋级率"
@@ -523,14 +542,16 @@ export function ShortBoard() {
                 name="涨停"
                 today={t.qcj_zt}
                 yesterday={y.qcj_zt}
-                format={intFmt}
+                format={(v) => fmtCountPermille(v, sentTotal)}
+                formatYesterday={(v) => fmtCountPermille(v, sentTotalY)}
                 className="border-amber-500/25 bg-background/40"
               />
               <EnvCard
                 name="跌停"
                 today={t.qcj_dt}
                 yesterday={y.qcj_dt}
-                format={intFmt}
+                format={(v) => fmtCountPermille(v, sentTotal)}
+                formatYesterday={(v) => fmtCountPermille(v, sentTotalY)}
                 reversed
                 className="border-amber-500/25 bg-background/40"
               />
@@ -594,10 +615,10 @@ export function ShortBoard() {
             <>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  { k: "涨停", v: `${emotion.zt_count}`, cls: "text-danger" },
-                  { k: "跌停", v: `${emotion.dt_count}`, cls: "text-success" },
+                  { k: "涨停", v: fmtCountPermille(emotion.zt_count, sentTotal), cls: "text-danger" },
+                  { k: "跌停", v: fmtCountPermille(emotion.dt_count, sentTotal), cls: "text-success" },
                   { k: "最高连板", v: `${emotion.max_boards} 板`, cls: "text-primary" },
-                  { k: "连板（2板+）", v: `${emotion.lianban_count} 家`, cls: "text-primary" },
+                  { k: "连板（2板+）", v: `${fmtCountPermille(emotion.lianban_count, sentTotal)} 家`, cls: "text-primary" },
                 ].map((c) => (
                   <div key={c.k} className="rounded-lg bg-muted/25 p-3 text-center">
                     <p className="text-[11px] text-muted-foreground">{c.k}</p>

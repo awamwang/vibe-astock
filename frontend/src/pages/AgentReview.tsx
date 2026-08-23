@@ -17,6 +17,7 @@ import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
   type FocusDirection, type ReviewData, type VerificationItem, type JobStatus,
 } from "@/lib/agent";
+import { fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { api, type TradeBudget } from "@/lib/api";
 
 
@@ -269,6 +270,13 @@ export function AgentReview() {
   // 页面按"用户复盘的顺序"重排后，各卡片散在不同区块里，这里统一取一次
   const facts = data?.market_facts;
   const em = splitMetrics(data?.emotion_metrics);
+  const breadth = facts?.breadth;
+  const marketTot = marketTotal(
+    breadth?.universe,
+    breadth?.up,
+    breadth?.down,
+    breadth?.flat,
+  );
 
   return (
     <div className="space-y-6">
@@ -355,13 +363,14 @@ export function AgentReview() {
           <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">接力生态 · Ladder</span>
           {em.prevDate && em.zt != null && em.ztPrev != null && (
             <span className="text-[11px] text-muted-foreground">
-              对照 {em.prevDate} · 涨停家数 {em.ztPrev} → <b className="tabular-nums text-foreground">{em.zt}</b>
+              对照 {em.prevDate} · 涨停家数 {fmtCountPermille(em.ztPrev, marketTot)} →{" "}
+              <b className="tabular-nums text-foreground">{fmtCountPermille(em.zt, marketTot)}</b>
             </span>
           )}
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           <PromotionCard pr={em.pr} />
-          <LadderCard lg={em.lg} />
+          <LadderCard lg={em.lg} marketTotal={marketTot} />
           <ConsecPremiumCard cp={em.cp} />
         </div>
         <SealQualitySection sq={facts?.seal_quality} />

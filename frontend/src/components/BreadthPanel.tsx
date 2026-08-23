@@ -2,6 +2,7 @@ import { Gauge, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { countColor, pctColor } from "@/lib/colors";
 import { finite, plain } from "@/lib/agent";
+import { fmtCountPct, fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { Caliber } from "@/components/ui/Caliber";
 import type { Breadth } from "@/lib/agent";
 
@@ -25,6 +26,7 @@ export function BreadthPanel({ b, limitDown }: { b?: Breadth; limitDown?: number
   const countsOk = upN != null && downN != null && flatN != null;
   const up = upN ?? 0, down = downN ?? 0, flat = flatN ?? 0;
   const tot = countsOk ? up + down + flat : 0;
+  const marketTot = marketTotal(b.universe, upN, downN, flatN);
   const upRatio = countsOk && tot ? up / tot : null;
   const dist = b.dist_available;
   const down5 = finite(b.deep_down_5);
@@ -74,14 +76,14 @@ export function BreadthPanel({ b, limitDown }: { b?: Breadth; limitDown?: number
             </b>
           </span>
           <span className="text-muted-foreground">
-            <span className={countColor("up")}>{upN ?? "—"}</span> 涨 /{" "}
-            <span className={countColor("down")}>{downN ?? "—"}</span> 跌 / {flatN ?? "—"} 平
+            <span className={countColor("up")}>{fmtCountPct(upN, marketTot)}</span> 涨 /{" "}
+            <span className={countColor("down")}>{fmtCountPct(downN, marketTot)}</span> 跌 / {flatN ?? "—"} 平
             <span className="ml-1 text-[11px] text-muted-foreground/60">（{b.up_down_scope}）</span>
           </span>
           {}
           {finite(limitDown) != null && (
             <span className="text-muted-foreground">
-              跌停 <b className={countColor("down")}>{finite(limitDown)}</b> 家
+              跌停 <b className={countColor("down")}>{fmtCountPermille(finite(limitDown), marketTot)}</b> 家
             </span>
           )}
         </div>
@@ -99,13 +101,13 @@ export function BreadthPanel({ b, limitDown }: { b?: Breadth; limitDown?: number
           <div>
             <div className="text-[11px] text-muted-foreground">跌超 5%</div>
             <div className={cn("text-xl font-extrabold tabular-nums", down5 != null ? countColor("down") : "text-muted-foreground/40")}>
-              {down5 != null ? `${down5} 家` : "—"}
+              {down5 != null ? `${fmtCountPermille(down5, marketTot)} 家` : "—"}
             </div>
           </div>
           <div>
             <div className="text-[11px] text-muted-foreground">涨幅 ≥5%</div>
             <div className={cn("text-xl font-extrabold tabular-nums", up5 != null ? countColor("up") : "text-muted-foreground/40")}>
-              {up5 != null ? `${up5} 家` : "—"}
+              {up5 != null ? `${fmtCountPermille(up5, marketTot)} 家` : "—"}
             </div>
           </div>
         </div>
