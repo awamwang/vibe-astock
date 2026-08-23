@@ -131,7 +131,7 @@ def snapshot(limit: int = _LIMIT) -> dict:
         except Exception as exc:  # noqa: BLE001
             return {
                 "available": False,
-                "reason": f"开盘啦板块人气取数失败：{type(exc).__name__}",
+                "reason": f"板块人气取数失败：{type(exc).__name__}",
                 "blocks": [],
                 "updated": china_now().strftime("%Y-%m-%d %H:%M"),
             }
@@ -145,7 +145,7 @@ def snapshot(limit: int = _LIMIT) -> dict:
         available = bool(rows)
         return {
             "available": available,
-            "reason": None if available else "板块人气暂无数据（非交易时段或开盘啦未返回）",
+            "reason": None if available else "板块人气暂无数据（非交易时段或未返回）",
             "date": china_now().strftime("%Y-%m-%d"),
             "api_time": api_time,
             "blocks": rows,

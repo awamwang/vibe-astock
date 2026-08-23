@@ -331,7 +331,7 @@ export function ShortBoard() {
 
   const pending = (done: boolean) => (
     <p className="py-4 text-center text-sm text-muted-foreground/60">
-      {done ? "暂无数据：可能是非交易时段或数据源暂时不可用" : "加载中…"}
+      {done ? "暂无数据：可能是非交易时段或数据暂时不可用" : "加载中…"}
     </p>
   );
 
@@ -405,7 +405,7 @@ export function ShortBoard() {
               {autoRefresh ? (liveNow ? `每 ${LIVE_MS / 1000} 秒自动刷新` : "自动刷新（非交易时段暂停）") : "自动刷新"}
             </button>
             <AskAiButton
-              context={`短线盘面：情绪温度 ${t.temperature ?? "—"}，上涨 ${t.n_up ?? "—"}，下跌 ${t.n_down ?? "—"}，实际涨停 ${t.n_sjzt ?? "—"}；趣财经情绪 ${t.qcj_temp != null ? `${t.qcj_temp}°` : "—"}（${t.qcj_level ?? "—"}），龙头 ${t.qcj_leader ?? "—"}，主线 ${(t.qcj_themes || []).join("、") || "—"}`}
+              context={`短线盘面：情绪温度 ${t.temperature ?? "—"}，上涨 ${t.n_up ?? "—"}，下跌 ${t.n_down ?? "—"}，实际涨停 ${t.n_sjzt ?? "—"}；情绪分 ${t.qcj_temp != null ? `${t.qcj_temp}°` : "—"}（${t.qcj_level ?? "—"}），龙头 ${t.qcj_leader ?? "—"}，主线 ${(t.qcj_themes || []).join("、") || "—"}`}
               label="问 AI"
               suggestions={["今天短线情绪怎么样", "炸板率和涨停溢价怎么读", "资金面有什么信号"]}
             />
@@ -420,10 +420,10 @@ export function ShortBoard() {
         caliber={
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "归档只在「日历今天就是这场」且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。\n" +
-          "涨跌宽度：情绪温度来自选股宝；大盘宽度 / 题材投机 / 平盘 / 活跃度来自乐咕乐股，按日归档作昨日对照。\n" +
-          "资金量能：成交额优先开盘啦、否则腾讯上证+深证；主力净流入来自东财。\n" +
+          "涨跌宽度：情绪温度、大盘宽度、题材投机、平盘家数、活跃度；按日归档作昨日对照。\n" +
+          "资金量能：上证 / A 股成交额、主力净流入；缺失字段按可用行情补全。\n" +
           "实时打板：最高连板 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
-          "趣财经：情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材来自 qiniugu market API（昨日优先取历史序列）。\n" +
+          "情绪全景：情绪分、阶段、涨跌停家数、龙头、主线题材；昨日场次优先取历史序列。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }
@@ -460,21 +460,21 @@ export function ShortBoard() {
           pending(false)
         ) : (
           <div className="space-y-2.5">
-            <EnvGroup label="涨跌宽度" hint="选股宝 / 乐咕乐股">
+            <EnvGroup label="涨跌宽度" hint="情绪温度 · 宽度 · 活跃度">
               <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
               <EnvTextCard name="大盘宽度" today={sentiment?.breadth} yesterday={sentY.breadth} />
               <EnvTextCard name="题材投机" today={sentiment?.speculation} yesterday={sentY.speculation} />
               <EnvCard name="平盘" today={sentiment?.flat} yesterday={sentY.flat} format={intFmt} />
               <EnvTextCard name="活跃度" today={sentiment?.active} yesterday={sentY.active} />
             </EnvGroup>
-            <EnvGroup label="资金量能" hint="开盘啦 / 腾讯 / 东财">
+            <EnvGroup label="资金量能" hint="成交额 · 主力净流入">
               <EnvCard name="上证成交额" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
               <EnvCard name="A股成交额" today={t.v_ca} yesterday={y.v_ca} format={yiCompact} />
               <EnvCard name="主力净流入" today={t.m_net} yesterday={y.m_net} format={yiCompact} />
               {board?.placeholders?.volume_vs_yesterday && <PlaceholderCard name="量能对比昨日" />}
               {board?.placeholders?.volume_5d_ratio && <PlaceholderCard name="量能5日，量比" />}
             </EnvGroup>
-            <EnvGroup label="打板质量" hint="选股宝 · 实时">
+            <EnvGroup label="打板质量" hint="炸板 · 溢价 · 连板晋级（盘中刷新）">
               <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
               <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
               <EnvCard
@@ -503,7 +503,7 @@ export function ShortBoard() {
                 reversed
               />
             </EnvGroup>
-            <EnvGroup label="趣财经" hint="情绪阶段 · 龙头 · 主线" tone="qcj">
+            <EnvGroup label="情绪全景" hint="情绪阶段 · 龙头 · 主线" tone="qcj">
               <EnvCard
                 name="情绪分°"
                 today={t.qcj_temp}
@@ -579,7 +579,7 @@ export function ShortBoard() {
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <Caliber text={
               "封板率 / 炸板率与上面那张实时卡同一个算法：分母是摸板家数（涨停 + 炸板），按家数不按次数。\n" +
-              "表里的「行业 / 概念」经常只有四个字——是上游把名字截到四字，不是这里显示不全。"
+              "表里的「行业 / 概念」经常只有四个字——行业名称常被截断为四字，不是这里显示不全。"
             } />
             <span>已收盘那一场的定稿 · 连板股 · 客观公开榜单</span>
             {emotion?.date && (
@@ -744,8 +744,8 @@ export function ShortBoard() {
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <TrendingUp className="h-3.5 w-3.5" />
             <Caliber text={
-              "净流入 / 流入 / 流出取自同花顺行业资金流的**盘中即时值**，单位亿元，净流入 = 流入 − 流出。\n" +
-              "⚠️ 那边没说明这是主力资金还是全部成交资金，所以**不能当作主力净流入**来读。"
+              "净流入 / 流入 / 流出为行业板块资金流的**盘中即时值**，单位亿元，净流入 = 流入 − 流出。\n" +
+              "⚠️ 未区分主力资金与全部成交资金，**不能当作主力净流入**来读。"
             } />
             <span>行业 · 按今日净流入排序</span>
           </div>
@@ -784,9 +784,9 @@ export function ShortBoard() {
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <Flame className="h-3.5 w-3.5" />
             <Caliber text={
-              "开盘啦 RealRankingInfo（ZSType=7）板块人气榜，按人气从高到低。\n" +
-              "人气 / 涨跌幅 / 涨速 / 主力净额来自该接口；涨停家数合并同站 PlateAnalysis。\n" +
-              "主力净额单位元，界面按亿元展示。客观公开榜单，非推荐 / 非预测。"
+              "概念板块人气榜，按人气从高到低排序。\n" +
+              "人气、涨跌幅、涨速、主力净额与板块涨停家数；主力净额界面按亿元展示。\n" +
+              "客观公开榜单，非推荐 / 非预测。"
             } />
             <span>概念板块 · 按人气排序</span>
             {moodBlocks?.updated && <span className="ml-auto">更新于 {moodBlocks.updated}</span>}
@@ -858,7 +858,7 @@ export function ShortBoard() {
                 <col.icon className="h-4 w-4" /> {col.title}
                 <Caliber text={
                   "就是板块资金榜的两头：流入榜只放净流入为正的、流出榜只放为负的，各取前六。\n" +
-                  "口径：同花顺行业资金流盘中即时值，不能当主力净流入读。"
+                  "口径：行业资金流盘中即时值，不能当主力净流入读。"
                 } />
               </h4>
               {col.rows.length === 0 ? (

@@ -396,7 +396,7 @@ export function StockDataPanel({ code: codeProp }: Props) {
                 <BarChart3 className="h-4 w-4 text-primary" /> 关键财务指标
                 <span className="text-xs font-normal text-muted-foreground/60">· {gstock.metrics.report_date}</span>
               </h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">东财 GMAININDICATOR，最新报告期。金额为原生币种。</p>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">最新报告期财务指标，金额为原生币种。</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   { k: "营业收入", v: bigMoney(gstock.metrics.revenue, gstock.market), yoy: gstock.metrics.revenue_yoy != null ? round2(gstock.metrics.revenue_yoy, "%") : "" },
@@ -423,7 +423,7 @@ export function StockDataPanel({ code: codeProp }: Props) {
                 <BarChart3 className="h-4 w-4 text-primary" /> 现金流量表
                 <span className="text-xs font-normal text-muted-foreground/60">· 单位：亿{cashflow.currency ?? ""}</span>
               </h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">东财 RPT_HKSK_FN_CASHFLOW · 季度为年初至今累计 · 负数（现金流出）标绿。</p>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">季度现金流量表，年初至今累计；负数（现金流出）标绿。</p>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] text-sm">
                   <thead>
@@ -455,7 +455,7 @@ export function StockDataPanel({ code: codeProp }: Props) {
           )}
 
           <p className="text-xs text-muted-foreground/60">
-            美股 / 港股数据来自 <a href="https://github.com/simonlin1212/global-stock-data" target="_blank" rel="noreferrer" className="hover:text-primary">global-stock-data</a>（东财域内源）· 金额为原生币种 · 仅客观数据，不含买卖建议。
+            美股 / 港股行情与财务数据 · 金额为原生币种 · 仅客观数据，不含买卖建议。
           </p>
         </>
       )}
@@ -500,7 +500,7 @@ export function StockDataPanel({ code: codeProp }: Props) {
           {fin && (fin.revenue || fin.roe) && (
             <GlassCard className="mb-4">
               <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><BarChart3 className="h-4 w-4 text-primary" /> 财务关键指标{fin.period && <span className="text-xs font-normal text-muted-foreground/60">· {fin.period}</span>}</h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">同花顺财务摘要,最新报告期。</p>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">最新报告期财务摘要。</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
                   { k: "营业总收入", v: fin.revenue, yoy: fin.revenue_yoy },

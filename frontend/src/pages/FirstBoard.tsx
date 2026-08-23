@@ -165,7 +165,7 @@ export function FirstBoard() {
             "「炸板」是当天开板过几次，0 就是全天没开过板 —— 这张表里的票**最终都封住了涨停**，\n" +
             "所以炸板次数说的是过程有多难看，不是最后有没有封住。\n" +
             "名单按首次封板时间从早到晚排。\n" +
-            "「行业」经常只有四个字（像「互联网电」「自动化设」）——是上游把名字截到四字，\n" +
+            "「行业」经常只有四个字（像「互联网电」「自动化设」）——行业名称常被截断为四字，\n" +
             "不是这里显示不全；怕猜错所以不替它补全称。"
           } />
           <span className="text-xs font-normal text-muted-foreground">
@@ -180,7 +180,7 @@ export function FirstBoard() {
             <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
           </div>
         ) : stocks.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">暂无数据（数据源异常或非交易日）</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">暂无数据（取数异常或非交易日）</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

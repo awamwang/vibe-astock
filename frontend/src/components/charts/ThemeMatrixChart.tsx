@@ -352,7 +352,7 @@ export function ThemeMatrixChart({
         </div>
         <div className="rounded-2xl border border-border/60 bg-card/20 p-3">
           <div className="mb-2 text-xs font-semibold text-muted-foreground">
-            多日涨停分布（同花顺风格 · 按涨停数排名 · 点击题材联动高亮）
+            多日涨停分布（按涨停数排名 · 点击题材联动高亮）
           </div>
           {dates.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">暂无交易日</p>

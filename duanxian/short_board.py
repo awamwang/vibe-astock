@@ -506,7 +506,7 @@ def snapshot() -> dict:
         )
         return {
             "available": available,
-            "reason": None if available else "环境指标暂不可用（选股宝/东财/开盘啦/趣财经均未取到）",
+            "reason": None if available else "环境指标暂不可用（各指标均未取到）",
             "date": as_of,
             "prev_date": prev,
             "is_live": is_live,

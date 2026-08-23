@@ -166,7 +166,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
                       )}>
                         {m.tools && m.tools.length > 0 && (
                           <div className="mb-1.5 flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] text-muted-foreground/70">数据来源</span>
+                            <span className="text-[10px] text-muted-foreground/70">调取工具</span>
                             {m.tools.map((t, j) => (
                               <span key={j} className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
                                 <Wrench className="h-2.5 w-2.5" /> {TOOL_LABEL[t.name] || t.name}{t.arg ? ` ${t.arg}` : ""}
