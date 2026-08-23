@@ -280,6 +280,74 @@ class TestPluginStatus:
 
 
 @pytest.mark.unit
+class TestPluginLifecycle:
+    _LIFECYCLE_SRC = '''
+from __future__ import annotations
+from duanxian.hooks import HookPack, HookRegistry
+
+_STATE = {"active": False}
+
+def on_enable(reg: HookRegistry) -> None:
+    _STATE["active"] = True
+
+def on_disable() -> None:
+    _STATE["active"] = False
+
+PACK = HookPack(
+    name="lifecycle-test",
+    version="1.0.0",
+    schema_bundle="test/1",
+    on_enable=on_enable,
+    on_disable=on_disable,
+)
+'''
+
+    def test_apply_enable_disable(self, plugin_home):
+        import sys
+
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import (
+            _module_name,
+            apply_plugin_disable,
+            apply_plugin_enable,
+            PLUGINS,
+            RUNNER,
+        )
+
+        p = plugin_home / "lifecycle.py"
+        p.write_text(self._LIFECYCLE_SRC, encoding="utf-8")
+        rec = ps.register(str(p))
+
+        assert apply_plugin_enable(rec.id) is not None
+        mod_obj = sys.modules[_module_name(rec.id)]
+        assert mod_obj._STATE["active"] is True
+        assert rec.id in {lp.id for lp in PLUGINS}
+        assert rec.id in {lp.id for lp in RUNNER.plugins}
+
+        assert apply_plugin_disable(rec.id) is True
+        assert mod_obj._STATE["active"] is False
+        assert rec.id not in {lp.id for lp in PLUGINS}
+
+    def test_on_register_fallback_for_enable(self, plugin_home):
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import apply_plugin_disable, apply_plugin_enable, PLUGINS
+
+        src = '''
+from duanxian.hooks import HookPack, HookRegistry
+def on_register(reg: HookRegistry) -> None:
+    pass
+PACK = HookPack(name="legacy", version="1", schema_bundle="t/1", on_register=on_register)
+'''
+        p = plugin_home / "legacy.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        lp = apply_plugin_enable(rec.id)
+        assert lp is not None
+        assert rec.id in {x.id for x in PLUGINS}
+        apply_plugin_disable(rec.id)
+
+
+@pytest.mark.unit
 class TestPluginCli:
     def test_cli_register_and_list(self, plugin_home, capsys):
         from duanxian import plugin_cli

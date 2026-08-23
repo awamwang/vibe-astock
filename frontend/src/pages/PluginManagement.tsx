@@ -273,7 +273,7 @@ export function PluginManagement() {
     <div>
       <PageHeader
         title="插件管理"
-        subtitle="管理钩子插件：选择 .py 入口安装、启用/停用、从注册表卸载。变更后需重启 server 才会加载新插件。"
+        subtitle="管理钩子插件：选择 .py 入口安装、启用/停用、从注册表卸载。启用/停用即时生效；修改插件代码后需重启 server。"
       />
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">

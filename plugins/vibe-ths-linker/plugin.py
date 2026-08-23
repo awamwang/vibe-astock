@@ -208,6 +208,14 @@ class ThsLinkerBridge:
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
 
+    def stop(self) -> None:
+        self._stop.set()
+        self._client.close()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        self._thread = None
+        self._report_status("off", "已停用")
+
     def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
         from duanxian import plugin_status as ps
 
@@ -449,17 +457,28 @@ class ThsLinkerBridge:
 _BRIDGE: ThsLinkerBridge | None = None
 
 
-def on_register(reg: HookRegistry) -> None:
+def on_enable(reg: HookRegistry) -> None:
     global _BRIDGE
+    if _BRIDGE is not None:
+        return
     plugin_id = reg.plugin_id or ""
     _BRIDGE = ThsLinkerBridge(reg, plugin_id)
     _BRIDGE.start()
+
+
+def on_disable() -> None:
+    global _BRIDGE
+    if _BRIDGE is None:
+        return
+    _BRIDGE.stop()
+    _BRIDGE = None
 
 
 PACK = HookPack(
     name="vibe-ths-linker",
     version="1.0.0",
     schema_bundle="vibe-ths-linker/1.0.0",
-    on_register=on_register,
+    on_enable=on_enable,
+    on_disable=on_disable,
     enable_review_saved=False,
 )

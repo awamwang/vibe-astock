@@ -12,7 +12,9 @@
 
 | 回调 / 配置 | 事件名 | 详表 |
 |---|---|---|
-| `on_register` | —（进程启动） | [附录 A.1](#a1-on_register) |
+| `on_register` | —（兼容旧插件，等同 `on_enable`） | [附录 A.1](#a1-on_register) |
+| `on_enable` | —（插件激活） | [附录 A.7](#a7-on_enable) |
+| `on_disable` | —（插件停用） | [附录 A.8](#a8-on_disable) |
 | `on_metrics_snapshot` | `metrics.snapshot` | [附录 A.2](#a2-on_metrics_snapshot) |
 | `on_verification_snapshot` | `verification.snapshot` | [附录 A.3](#a3-on_verification_snapshot) |
 | `on_budget_snapshot` | `budget.snapshot` | [附录 A.4](#a4-on_budget_snapshot) |
@@ -156,7 +158,7 @@ python -m duanxian.plugin_cli list
 
 ## 设计约束（请勿依赖的行为）
 
-1. **无热重载**：改代码或注册表必须重启进程。
+1. **代码无热重载**：改 `.py` 源码须重启进程；启用/停用/卸载经 API 可即时生效（调用 `on_enable` / `on_disable`）。
 2. **复盘路径 budget 不 double-fire**：`refresh(..., emit_hooks=False)` + `emit_after_review` 内统一发 budget。
 3. **钩子不是安全边界**：插件与引擎同权，可读写本地数据；仅安装可信代码。
 4. **`live` scope 默认不在复盘链路透传**：需要时请插件内自行 `build_metrics_payload("live", ...)`。
@@ -189,11 +191,35 @@ python -m duanxian.plugin_cli list
 |---|---|
 | **中文作用** | 进程启动、插件加载成功后调用一次；用于初始化（建目录、预连外部服务等），并向引擎 **写入** 持仓、账户、预算档位、自选股。 |
 | **HookPack 字段** | `on_register` |
-| **触发时机** | 首次 `import duanxian.hooks` 时 `_init()` 加载每个已启用插件后立即调用。 |
+| **触发时机** | 进程启动加载已启用插件时调用；与 `on_enable` 二选一即可，若两者都实现则仅调用 `on_enable`。 |
 | **对应页面** | 无直接 UI；写入结果体现在 [持仓与预算](/trade)、[自选股](/watchlist)、[复盘看板](/agent/review) 预算卡等页面下次打开时的数据。 |
 | **对应 API** | 写入侧等价于 `POST /api/trade/screenshot/apply`、`POST /api/trade/account/*`、`POST /api/trade/budget/override`、`PUT /api/watchlist`（插件不经 HTTP，直接调 `HookRegistry`）。 |
 | **回调签名** | `on_register(reg: HookRegistry) -> None` |
 | **信封 / payload** | 无第二参数；通过 `reg` 调用 [附录 B](#附录-b-写入接口插件--引擎) 中的方法。 |
+
+---
+
+### A.7 `on_enable` {#a7-on_enable}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 插件被激活时调用：进程启动加载、插件管理页启用、API `POST /api/plugins/enable` 注册后启用。用于启动后台任务、连接外部服务等。 |
+| **HookPack 字段** | `on_enable` |
+| **触发时机** | `apply_plugin_enable` 或进程 `_init()` 加载已启用插件时；优先于 `on_register`。 |
+| **回调签名** | `on_enable(reg: HookRegistry) -> None` |
+| **信封 / payload** | 同 `on_register`，通过 `reg` 写入引擎。 |
+
+---
+
+### A.8 `on_disable` {#a8-on_disable}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 插件被停用时调用：释放连接、停止后台线程、清理临时资源。 |
+| **HookPack 字段** | `on_disable` |
+| **触发时机** | 插件管理页停用、API `POST /api/plugins/disable`、卸载前 `apply_plugin_disable`。 |
+| **回调签名** | `on_disable() -> None` |
+| **信封 / payload** | 无参数。停用后插件从 `RUNNER` 移除，不再接收 push 事件。 |
 
 ---
 
@@ -663,6 +689,8 @@ class HookPack:
     schema_bundle: str
     metric_providers: tuple[MetricProvider, ...] = ()
     on_register: Callable[[HookRegistry], None] | None = None
+    on_enable: Callable[[HookRegistry], None] | None = None
+    on_disable: Callable[[], None] | None = None
     on_metrics_snapshot: Callable[[HookContext, dict], None] | None = None
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None

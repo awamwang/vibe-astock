@@ -31,18 +31,41 @@ def _cmd_register(args: argparse.Namespace) -> int:
         return 1
     state = "启用" if rec.enabled else "停用"
     print(f"✓ 已注册插件 {rec.name} v{rec.version}（id={rec.id}，{state}）")
-    print("  若 server 正在运行，请重启后加载新插件。")
+    if rec.enabled:
+        try:
+            from duanxian.hooks import apply_plugin_enable
+
+            if apply_plugin_enable(rec.id):
+                print("  本进程已热加载插件。")
+            else:
+                print("  若 server 正在运行，请通过插件管理页启用或重启 server。")
+        except Exception:  # noqa: BLE001
+            print("  若 server 正在运行，请重启后加载新插件。")
+    else:
+        print("  若 server 正在运行，请重启后加载新插件。")
     return 0
 
 
 def _cmd_uninstall(args: argparse.Namespace) -> int:
+    try:
+        pid = ps.resolve_id(args.plugin)
+    except ValueError as exc:
+        print(f"卸载失败：{exc}", file=sys.stderr)
+        return 1
+    try:
+        from duanxian.hooks import apply_plugin_disable
+
+        if apply_plugin_disable(pid):
+            print("  本进程已停止插件运行时。")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         rec = ps.uninstall(args.plugin)
     except ValueError as exc:
         print(f"卸载失败：{exc}", file=sys.stderr)
         return 1
     print(f"✓ 已从注册表移除 {rec.name}（id={rec.id}）")
-    print("  插件文件未删除；若 server 正在运行，请重启。")
+    print("  插件文件未删除。")
     return 0
 
 
@@ -53,7 +76,13 @@ def _cmd_enable(args: argparse.Namespace) -> int:
         print(f"启用失败：{exc}", file=sys.stderr)
         return 1
     print(f"✓ 已启用 {rec.name}（id={rec.id}）")
-    print("  若 server 正在运行，请重启后生效。")
+    try:
+        from duanxian.hooks import apply_plugin_enable
+
+        if apply_plugin_enable(rec.id):
+            print("  本进程已热加载插件。")
+    except Exception:  # noqa: BLE001
+        print("  若 server 在其它进程运行，请在其插件管理页操作或重启。")
     return 0
 
 
@@ -64,7 +93,13 @@ def _cmd_disable(args: argparse.Namespace) -> int:
         print(f"停用失败：{exc}", file=sys.stderr)
         return 1
     print(f"✓ 已停用 {rec.name}（id={rec.id}）")
-    print("  若 server 正在运行，请重启后生效。")
+    try:
+        from duanxian.hooks import apply_plugin_disable
+
+        if apply_plugin_disable(rec.id):
+            print("  本进程已停止插件运行时。")
+    except Exception:  # noqa: BLE001
+        print("  若 server 在其它进程运行，请在其插件管理页操作或重启。")
     return 0
 
 

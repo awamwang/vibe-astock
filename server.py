@@ -1487,6 +1487,10 @@ def api_plugins_register(request: Request, body: Optional[dict] = Body(None)):
         rec = ps.register(path, enabled=not disabled)
     except (ValueError, TypeError, RuntimeError) as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    if rec.enabled:
+        from duanxian.hooks import apply_plugin_enable
+
+        apply_plugin_enable(rec.id)
     return {"data": _plugin_row(rec)}
 
 
@@ -1505,6 +1509,9 @@ def api_plugins_enable(request: Request, body: Optional[dict] = Body(None)):
         rec = ps.set_enabled(plugin, True)
     except ValueError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    from duanxian.hooks import apply_plugin_enable
+
+    apply_plugin_enable(rec.id)
     return {"data": _plugin_row(rec)}
 
 
@@ -1523,6 +1530,9 @@ def api_plugins_disable(request: Request, body: Optional[dict] = Body(None)):
         rec = ps.set_enabled(plugin, False)
     except ValueError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    from duanxian.hooks import apply_plugin_disable
+
+    apply_plugin_disable(rec.id)
     return {"data": _plugin_row(rec)}
 
 
@@ -1537,6 +1547,13 @@ def api_plugins_uninstall(request: Request, body: Optional[dict] = Body(None)):
     plugin = str((body or {}).get("plugin") or "").strip()
     if not plugin:
         return JSONResponse({"error": "请提供 plugin", "detail": "请提供 plugin"}, status_code=400)
+    from duanxian.hooks import apply_plugin_disable
+
+    try:
+        pid = ps.resolve_id(plugin)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    apply_plugin_disable(pid)
     try:
         rec = ps.uninstall(plugin)
     except ValueError as exc:

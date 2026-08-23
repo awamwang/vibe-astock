@@ -11,6 +11,7 @@ import importlib.util
 import sys
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import hook_schemas as hs
@@ -70,6 +71,8 @@ class HookPack:
     schema_bundle: str
     metric_providers: tuple[MetricProvider, ...] = ()
     on_register: Callable[["HookRegistry"], None] | None = None
+    on_enable: Callable[["HookRegistry"], None] | None = None
+    on_disable: Callable[[], None] | None = None
     on_metrics_snapshot: Callable[[HookContext, dict], None] | None = None
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None
@@ -557,33 +560,117 @@ def _validate_providers(providers: tuple[MetricProvider, ...]) -> tuple[MetricPr
     return tuple(accepted)
 
 
-def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
+def _unload_module(plugin_id: str) -> None:
+    sys.modules.pop(_module_name(plugin_id), None)
+
+
+def _find_loaded_plugin(plugins: list[LoadedPlugin], plugin_id: str) -> LoadedPlugin | None:
+    for lp in plugins:
+        if lp.id == plugin_id:
+            return lp
+    return None
+
+
+def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
     from . import plugin_status as ps
 
-    plugins = load_plugins()
-    registry = HookRegistry()
-    all_providers: list[MetricProvider] = []
-    for lp in plugins:
-        registry.bind_plugin(lp.id)
-        if lp.pack.on_register is not None:
+    registry.bind_plugin(lp.id)
+    try:
+        activate_fn = lp.pack.on_enable or lp.pack.on_register
+        if activate_fn is not None:
             try:
-                lp.pack.on_register(registry)
+                activate_fn(registry)
             except Exception:  # noqa: BLE001
                 tb = traceback.format_exc()
-                print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）on_register 失败：\n{tb}")
-                ps.set_status(lp.id, "error", "初始化失败", tb)
+                print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）启用失败：\n{tb}")
+                ps.set_status(lp.id, "error", "启用失败", tb)
             else:
                 if ps.get_status(lp.id) is None:
                     ps.set_status(lp.id, "ok", "已加载")
         else:
             ps.set_status(lp.id, "ok", "已加载")
-        accepted = _validate_providers(lp.pack.metric_providers)
-        all_providers.extend(accepted)
-    registry.unbind_plugin()
-    if all_providers:
-        from . import verification as vf
+    finally:
+        registry.unbind_plugin()
 
-        vf.register_plugin_metrics(tuple(all_providers))
+
+def _deactivate_plugin(lp: LoadedPlugin) -> None:
+    from . import plugin_status as ps
+
+    _safe_call(lp.pack.on_disable, lp)
+    ps.set_status(lp.id, "off", "已停用")
+
+
+def _collect_metric_providers(plugins: list[LoadedPlugin]) -> list[MetricProvider]:
+    all_providers: list[MetricProvider] = []
+    for lp in plugins:
+        all_providers.extend(_validate_providers(lp.pack.metric_providers))
+    return all_providers
+
+
+def _rebuild_metric_providers(plugins: list[LoadedPlugin]) -> None:
+    from . import verification as vf
+
+    vf.reset_to_builtins()
+    providers = _collect_metric_providers(plugins)
+    if providers:
+        vf.register_plugin_metrics(tuple(providers))
+
+
+def apply_plugin_disable(plugin_id: str) -> bool:
+    """运行时停用已加载插件（调用 on_disable 并从 RUNNER 移除）。"""
+    lp = _find_loaded_plugin(PLUGINS, plugin_id)
+    if lp is None:
+        return False
+    _deactivate_plugin(lp)
+    PLUGINS[:] = [p for p in PLUGINS if p.id != plugin_id]
+    RUNNER.plugins[:] = [p for p in RUNNER.plugins if p.id != plugin_id]
+    _rebuild_metric_providers(PLUGINS)
+    _unload_module(plugin_id)
+    return True
+
+
+def apply_plugin_enable(plugin_id: str) -> LoadedPlugin | None:
+    """运行时启用插件（加载并调用 on_enable / on_register）。"""
+    from . import plugin_status as ps
+    from . import plugin_store as pstore
+
+    if _find_loaded_plugin(PLUGINS, plugin_id) is not None:
+        return _find_loaded_plugin(PLUGINS, plugin_id)
+
+    rec = next((r for r in pstore.list_plugins() if r.id == plugin_id), None)
+    if rec is None or not rec.enabled:
+        return None
+
+    path = str(Path(rec.path).expanduser().resolve())
+    if not Path(path).is_file():
+        ps.set_status(plugin_id, "error", "插件文件不存在", path)
+        return None
+
+    try:
+        pack = load_pack_from_path(path, plugin_id=plugin_id)
+    except Exception as exc:  # noqa: BLE001
+        err = f"{type(exc).__name__}: {exc}"
+        print(f"⚠️ 插件加载失败（id={plugin_id}）：{err}")
+        ps.set_status(plugin_id, "error", "加载失败", err)
+        return None
+
+    lp = LoadedPlugin(id=plugin_id, path=path, pack=pack)
+    print(f"ℹ️ 已加载插件：{pack.name} v{pack.version}（id={plugin_id}）")
+    _activate_plugin(lp, REGISTRY)
+    PLUGINS.append(lp)
+    RUNNER.plugins.append(lp)
+    _rebuild_metric_providers(PLUGINS)
+    return lp
+
+
+def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
+    from . import plugin_status as ps
+
+    plugins = load_plugins()
+    registry = HookRegistry()
+    for lp in plugins:
+        _activate_plugin(lp, registry)
+    _rebuild_metric_providers(plugins)
     runner = HookRunner(plugins, registry)
     return plugins, registry, runner
 

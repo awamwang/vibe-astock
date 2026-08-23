@@ -112,6 +112,13 @@ def metrics_for_export() -> list[Metric]:
     return [m for m in METRICS if "export_index" in m.register_in]
 
 
+def reset_to_builtins() -> None:
+    """恢复为内置指标集（插件停用后由 hooks 调用）。"""
+    global METRICS
+    METRICS = list(_BUILTIN_METRICS)
+    _rebuild_index()
+
+
 def register_plugin_metrics(providers) -> None:
     """合并插件注册的指标（启动时由 hooks 调用）。"""
     added: list[Metric] = []

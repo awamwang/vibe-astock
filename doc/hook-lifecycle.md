@@ -50,7 +50,14 @@ sequenceDiagram
 
 ### 变更生效
 
-通过 `plugin_cli` 的 `register` / `enable` / `disable` / `uninstall` **只改注册表文件**，**不会**热加载到已运行进程。修改插件代码或注册表后需 **重启 server**（或重新跑 `main.py`）。
+| 操作 | 已运行 server | 说明 |
+|---|---|---|
+| 启用 / 停用 / 卸载 | **即时** | 经 API 或同进程 CLI 调用 `apply_plugin_enable` / `apply_plugin_disable`；停用会触发 `on_disable` |
+| 注册新插件（已启用） | **即时** | 注册成功后自动热加载 |
+| 修改插件 `.py` 代码 | **需重启** | 进程内已 import 的模块不会自动重载 |
+| 独立 CLI 进程操作 | **仅改注册表** | 不影响其它进程中的 server，需在 server 侧操作或重启 |
+
+修改插件代码或注册表路径后需 **重启 server**（或重新跑 `main.py`）。
 
 ---
 
