@@ -1,0 +1,3 @@
+# vibe-ths-linker 插件专用依赖（与主项目 requirements.txt 分离）
+# 安装：pip install -r plugins/vibe-ths-linker/requirements.txt
+websocket-client>=1.8
