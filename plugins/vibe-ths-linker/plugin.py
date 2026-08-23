@@ -343,15 +343,14 @@ class ThsLinkerBridge:
             seen.add(code)
             codes.append(code)
         source = "插件：vibe-ths-linker（同花顺）"
-        sig = tuple(sorted(codes))
+        sig = tuple(codes)
         if sig == self._last_watchlist:
             return
-        current_plugin = tuple(sorted(wl.get_codes_by_source(source)))
-        if sig == current_plugin:
+        if sig == tuple(wl.get_codes()):
             self._last_watchlist = sig
             return
         result = self._reg.import_watchlist({
-            "merge": True,
+            "replace": True,
             "source": source,
             "codes": codes,
         })
