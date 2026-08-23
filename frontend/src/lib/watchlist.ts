@@ -114,6 +114,66 @@ function saveServerStamp(stamp: string | null) {
   }
 }
 
+function pickItem(local: WatchItem, remote: WatchItem | undefined): WatchItem {
+  if (!remote) return local;
+  if (remote.source.startsWith("插件：") && !local.source.startsWith("插件：")) return remote;
+  if (local.source.startsWith("插件：") && !remote.source.startsWith("插件：")) return local;
+  if (remote.updated_at && (!local.updated_at || remote.updated_at >= local.updated_at)) return remote;
+  return local;
+}
+
+function itemsEqual(a: WatchItem[], b: WatchItem[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((it, i) => {
+    const other = b[i];
+    return it.code === other.code && it.source === other.source && it.updated_at === other.updated_at;
+  });
+}
+
+function remoteItemsOf(remote: { codes: string[]; items?: WatchItem[]; updated_at: string | null }): WatchItem[] {
+  return (remote.items?.length ? remote.items : remote.codes.map((code) => ({
+    code,
+    source: SOURCE_MANUAL,
+    updated_at: remote.updated_at,
+  })))
+    .map((it) => normalizeItem(it))
+    .filter((it): it is WatchItem => !!it);
+}
+
+/** 首次进入页面时合并服务端元数据（来源 / 导入时间）。 */
+export async function hydrateFromServer(
+  fetcher: () => Promise<{ codes: string[]; items?: WatchItem[]; updated_at: string | null }>,
+): Promise<WatchItem[] | null> {
+  try {
+    const remote = await fetcher();
+    const remoteItems = remoteItemsOf(remote);
+    if (!remoteItems.length) return null;
+
+    const local = loadWatchItems();
+    const remoteByCode = new Map(remoteItems.map((it) => [it.code, it]));
+    const merged: WatchItem[] = [];
+    const seen = new Set<string>();
+
+    for (const it of local) {
+      merged.push(pickItem(it, remoteByCode.get(it.code)));
+      seen.add(it.code);
+    }
+    for (const it of remoteItems) {
+      if (!seen.has(it.code)) {
+        merged.push(it);
+        seen.add(it.code);
+      }
+    }
+
+    if (itemsEqual(merged, local)) return null;
+    saveWatchItems(merged);
+    if (remote.updated_at) saveServerStamp(remote.updated_at);
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
 /** 拉取服务端自选股；有 updated_at 且比本地新时返回 items，否则 null。 */
 export async function pullServerWatch(
   fetcher: () => Promise<{ codes: string[]; items?: WatchItem[]; updated_at: string | null }>,
@@ -122,13 +182,7 @@ export async function pullServerWatch(
     const remote = await fetcher();
     if (!remote.updated_at) return null;
     if (remote.updated_at === loadServerStamp()) return null;
-    const items = (remote.items?.length ? remote.items : remote.codes.map((code) => ({
-      code,
-      source: SOURCE_MANUAL,
-      updated_at: remote.updated_at,
-    })))
-      .map((it) => normalizeItem(it))
-      .filter((it): it is WatchItem => !!it);
+    const items = remoteItemsOf(remote);
     saveWatchItems(items);
     saveServerStamp(remote.updated_at);
     return items;
@@ -137,15 +191,22 @@ export async function pullServerWatch(
   }
 }
 
-/** 把当前列表同步到服务端（失败静默）。 */
+/** 把当前列表同步到服务端（失败静默），并以服务端返回的元数据回写本地。 */
 export async function pushServerWatch(
   items: WatchItem[],
-  saver: (codes: string[]) => Promise<{ updated_at: string | null }>,
-) {
+  saver: (codes: string[]) => Promise<{ codes: string[]; items?: WatchItem[]; updated_at: string | null }>,
+): Promise<WatchItem[] | null> {
   try {
     const out = await saver(items.map((it) => it.code));
     saveServerStamp(out.updated_at);
+    const synced = remoteItemsOf(out);
+    if (synced.length) {
+      saveWatchItems(synced);
+      return synced;
+    }
+    return null;
   } catch {
     /* 同步失败不阻断本地操作 */
+    return null;
   }
 }

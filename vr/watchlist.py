@@ -142,22 +142,19 @@ def replace_codes(codes: Any, *, default_source: str = SOURCE_MANUAL) -> dict:
 
 
 def merge_plugin_codes(codes: Any, source: str) -> dict:
-    """按来源合并插件自选股：仅增删该来源的标的，不动手动添加项。"""
+    """按来源合并插件自选股：linker 列表内标的标记为插件来源，仅插件来源的缺失项会被移除。"""
     clean = normalize_codes(codes)
     plugin_set = set(clean)
     stamp = _now()
     with _LOCK:
         data = _load()
         by_code = {it["code"]: dict(it) for it in data.get("items") or []}
-        manual_codes = [c for c, it in by_code.items() if it.get("source") != source]
         for code in list(by_code):
             if by_code[code].get("source") == source and code not in plugin_set:
                 del by_code[code]
         for code in clean:
-            prev = by_code.get(code)
-            if prev and prev.get("source") != source:
-                continue
             by_code[code] = _item(code, source, stamp)
+        manual_codes = [c for c, it in by_code.items() if it.get("source") != source]
         ordered: list[dict[str, Any]] = []
         seen: set[str] = set()
         for code in clean:

@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { loadWatchItems, saveWatchItems, addCodes, removeCodes, pullServerWatch, pushServerWatch, type WatchItem } from "@/lib/watchlist";
+import { loadWatchItems, saveWatchItems, addCodes, removeCodes, hydrateFromServer, pullServerWatch, pushServerWatch, type WatchItem } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
@@ -50,19 +50,22 @@ function formatImportTime(value: string | null | undefined): string {
   return value.replace("T", " ").slice(0, 16);
 }
 
-function SourceBadge({ source }: { source: string }) {
-  const plugin = source.startsWith("插件：");
-  return (
-    <span
-      className={cn(
-        "inline-block max-w-[11rem] truncate rounded-md px-1.5 py-0.5 text-[11px] leading-tight",
-        plugin ? "bg-primary/15 text-primary" : "bg-muted/50 text-muted-foreground",
-      )}
-      title={source}
-    >
-      {source}
-    </span>
-  );
+type SourceGroup = { source: string; count: number; latest: string | null };
+
+function buildSourceSummary(items: WatchItem[]): SourceGroup[] {
+  const groups = new Map<string, SourceGroup>();
+  for (const it of items) {
+    const g = groups.get(it.source) ?? { source: it.source, count: 0, latest: null };
+    g.count += 1;
+    if (it.updated_at && (!g.latest || it.updated_at > g.latest)) g.latest = it.updated_at;
+    groups.set(it.source, g);
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    const aPlugin = a.source.startsWith("插件：") ? 0 : 1;
+    const bPlugin = b.source.startsWith("插件：") ? 0 : 1;
+    if (aPlugin !== bPlugin) return aPlugin - bPlugin;
+    return a.source.localeCompare(b.source, "zh-CN");
+  });
 }
 
 export function Watchlist() {
@@ -74,6 +77,7 @@ export function Watchlist() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const codes = useMemo(() => items.map((it) => it.code), [items]);
+  const sourceSummary = useMemo(() => buildSourceSummary(items), [items]);
 
   const applyServerItems = (next: WatchItem[] | null) => {
     if (!next?.length) return;
@@ -81,7 +85,7 @@ export function Watchlist() {
   };
 
   useEffect(() => {
-    void pullServerWatch(() => api.watchlist()).then(applyServerItems);
+    void hydrateFromServer(() => api.watchlist()).then(applyServerItems);
     const timer = window.setInterval(() => {
       void pullServerWatch(() => api.watchlist()).then(applyServerItems);
     }, SERVER_PULL_MS);
@@ -109,7 +113,9 @@ export function Watchlist() {
   const persist = (next: WatchItem[]) => {
     setItems(next);
     saveWatchItems(next);
-    void pushServerWatch(next, (c) => api.saveWatchlist(c));
+    void pushServerWatch(next, (c) => api.saveWatchlist(c)).then((synced) => {
+      if (synced) setItems(synced);
+    });
     setSelected((prev) => {
       if (prev.size === 0) return prev;
       const keep = new Set(next.map((it) => it.code));
@@ -211,7 +217,7 @@ export function Watchlist() {
     <div>
       <PageHeader
         title="自选股"
-        subtitle="批量添加 / 批量删除 / 一键清空。列表展示来源与导入时间；插件同步的数据会自动合并。"
+        subtitle="批量添加 / 批量删除 / 一键清空。上方展示来源与导入时间概览。"
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -272,6 +278,23 @@ export function Watchlist() {
         </div>
         {hint && <p className="mt-2 text-xs text-muted-foreground/70">{hint}</p>}
       </GlassCard>
+
+      {sourceSummary.length > 0 && (
+        <GlassCard className="mb-4">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground/90">来源概览</span>
+            {sourceSummary.map((g) => (
+              <span key={g.source} className="inline-flex flex-wrap items-center gap-1.5">
+                <span className={cn(g.source.startsWith("插件：") && "text-primary")}>{g.source}</span>
+                <span className="text-muted-foreground/70">{g.count} 只</span>
+                {g.latest && (
+                  <span className="font-mono text-muted-foreground/60">导入 {formatImportTime(g.latest)}</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       <GlassCard glow>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -354,7 +377,7 @@ export function Watchlist() {
                       aria-label="全选"
                     />
                   </th>
-                  {["名称", "代码", "来源", "导入时间", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
+                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
                     <th key={h || `a${i}`} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -380,12 +403,6 @@ export function Watchlist() {
                         </td>
                         <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="nameOnly" /></td>
                         <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="codeOnly" /></td>
-                        <td className="min-w-[7rem] px-2 py-2.5">
-                          <SourceBadge source={item.source} />
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-2.5 font-mono text-xs text-muted-foreground">
-                          {formatImportTime(item.updated_at)}
-                        </td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? q.price : "—"}</td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? pct(q.change_pct) : "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pe_ttm ?? "—"}</td>
@@ -414,7 +431,7 @@ export function Watchlist() {
                         <DeepDivePanel
                           dd={dd}
                           stockKey={c}
-                          colSpan={12}
+                          colSpan={10}
                           noteTitle={`自选深析 · ${q?.name || c}`}
                           onRerun={() => dd.rerun(diveItem(c))}
                         />

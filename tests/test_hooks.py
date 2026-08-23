@@ -176,6 +176,20 @@ class TestHookRegistryImport:
         assert items["600519"]["source"] == wl.SOURCE_MANUAL
         assert items["600000"]["source"] == source
 
+    def test_merge_plugin_overrides_manual_same_code(self, tmp_path, monkeypatch):
+        import watchlist as wl
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        wl.sync_codes_from_ui(["600000"])
+        source = "插件：vibe-ths-linker（同花顺）"
+        wl.merge_plugin_codes(["600000"], source)
+        items = {it["code"]: it for it in wl.get_watchlist()["items"]}
+        assert items["600000"]["source"] == source
+
     def test_sync_codes_from_ui_remove_keeps_updated_at(self, tmp_path, monkeypatch):
         import watchlist as wl
 
