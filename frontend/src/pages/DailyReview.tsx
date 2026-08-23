@@ -11,7 +11,7 @@ import {
   api, type IndexQuote, type Quote, type GlobalIndex, type MarketSession,
   type OverseasSnapshot, type OverseasRow,
 } from "@/lib/api";
-import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
+import { loadWatchItems, saveWatchItems, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
 // A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致。
@@ -32,7 +32,8 @@ export function DailyReview() {
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
   // 关注股票（自选，存本地）
-  const [watchCodes, setWatchCodes] = useState<string[]>(loadWatch);
+  const [watchItems, setWatchItems] = useState(loadWatchItems);
+  const watchCodes = watchItems.map((it) => it.code);
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
   const [watchInput, setWatchInput] = useState("");
   const [watchLoading, setWatchLoading] = useState(false);
@@ -59,7 +60,7 @@ export function DailyReview() {
 
   useEffect(() => {
     loadIndices();
-    refreshWatch(loadWatch());
+    refreshWatch(watchItems.map((it) => it.code));
   }, []);
 
   // ⭐ 自动刷新。交易时段用后端 `session.phase`；收盘不刷；cleanup 清两个句柄。
@@ -82,15 +83,19 @@ export function DailyReview() {
   };
 
   const addWatch = () => {
-    const { next, added } = addCodes(watchCodes, watchInput);
+    const { next, added } = addCodes(watchItems, watchInput);
     setWatchInput("");
     if (!added) return;
-    setWatchCodes(next); saveWatch(next); refreshWatch(next);
+    setWatchItems(next);
+    saveWatchItems(next);
+    refreshWatch(next.map((it) => it.code));
   };
 
   const removeWatch = (c: string) => {
-    const next = watchCodes.filter((x) => x !== c);
-    setWatchCodes(next); saveWatch(next); refreshWatch(next);
+    const next = watchItems.filter((it) => it.code !== c);
+    setWatchItems(next);
+    saveWatchItems(next);
+    refreshWatch(next.map((it) => it.code));
   };
 
   const today = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });

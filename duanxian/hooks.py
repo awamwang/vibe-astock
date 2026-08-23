@@ -170,9 +170,6 @@ class HookRegistry:
 
     def import_watchlist(self, payload: dict) -> ImportResult:
         body = dict(payload or {})
-        body.setdefault("replace", True)
-        if not body.get("replace"):
-            raise ValueError("钩子导入自选股仅支持全量覆盖（replace=true）")
         raw = body.get("codes")
         if raw is None and "watchlist" in body:
             raw = body.get("watchlist")
@@ -184,10 +181,21 @@ class HookRegistry:
             clean = wl.normalize_codes(raw)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from exc
-        wl.replace_codes(clean)
-        wt.set_watch(clean)
+
+        if body.get("merge"):
+            source = str(body.get("source") or "插件：未知").strip() or "插件：未知"
+            out = wl.merge_plugin_codes(clean, source)
+        else:
+            body.setdefault("replace", True)
+            if not body.get("replace"):
+                raise ValueError("钩子导入自选股须 replace=true 全量覆盖，或 merge=true 按来源合并")
+            default_source = str(body.get("source") or wl.SOURCE_MANUAL).strip() or wl.SOURCE_MANUAL
+            out = wl.replace_codes(clean, default_source=default_source)
+
+        codes = out.get("codes") or []
+        wt.set_watch(codes)
         wt.poke()
-        return ImportResult(True, "watchlist", f"{len(clean)} 只")
+        return ImportResult(True, "watchlist", f"{len(codes)} 只")
 
 
 def _ensure_vr_path() -> None:

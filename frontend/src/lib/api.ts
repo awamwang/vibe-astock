@@ -557,9 +557,16 @@ export interface MoodBlocksSnapshot {
   updated?: string;
 }
 
+export interface WatchlistItem {
+  code: string;
+  source: string;
+  updated_at: string | null;
+}
+
 export interface WatchlistData {
   schema?: number;
   codes: string[];
+  items?: WatchlistItem[];
   updated_at: string | null;
 }
 

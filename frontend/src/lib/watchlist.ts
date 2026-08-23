@@ -2,7 +2,54 @@
 // 供插件钩子与多设备同步，经 /api/watchlist 读写。
 
 const KEY = "vr-watchlist";
+const META_KEY = "vr-watchlist-meta";
 const UPDATED_KEY = "vr-watchlist-server-at";
+
+export interface WatchItem {
+  code: string;
+  source: string;
+  updated_at: string | null;
+}
+
+const SOURCE_MANUAL = "手动添加";
+
+function normalizeItem(raw: Partial<WatchItem> | string): WatchItem | null {
+  const code = typeof raw === "string" ? raw : String(raw.code || "").trim();
+  if (!/^\d{6}$/.test(code)) return null;
+  if (typeof raw === "string") {
+    return { code, source: SOURCE_MANUAL, updated_at: null };
+  }
+  return {
+    code,
+    source: String(raw.source || SOURCE_MANUAL),
+    updated_at: raw.updated_at ?? null,
+  };
+}
+
+function loadMetaRaw(): WatchItem[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(META_KEY) || "[]");
+    if (!Array.isArray(v)) return [];
+    return v.map((it) => normalizeItem(it)).filter((it): it is WatchItem => !!it);
+  } catch {
+    return [];
+  }
+}
+
+function saveMeta(items: WatchItem[]) {
+  try {
+    localStorage.setItem(META_KEY, JSON.stringify(items));
+    localStorage.setItem(KEY, JSON.stringify(items.map((it) => it.code)));
+  } catch {
+    /* 存储不可用 */
+  }
+}
+
+export function loadWatchItems(): WatchItem[] {
+  const meta = loadMetaRaw();
+  if (meta.length > 0) return meta;
+  return loadWatch().map((code) => ({ code, source: SOURCE_MANUAL, updated_at: null }));
+}
 
 export function loadWatch(): string[] {
   try {
@@ -13,14 +60,16 @@ export function loadWatch(): string[] {
   }
 }
 
+export function saveWatchItems(items: WatchItem[]) {
+  saveMeta(items);
+}
+
 export function saveWatch(codes: string[]) {
-  // localStorage 在隐私模式 / 嵌入式浏览器 / 配额写满时会抛异常。
-  // 存不下就算了——自选丢失总好过整页崩掉（读取侧同样是 try/catch 兜底）。
-  try {
-    localStorage.setItem(KEY, JSON.stringify(codes));
-  } catch {
-    /* 存储不可用：本次会话内仍可正常使用，只是关掉页面后不保留 */
-  }
+  const prev = new Map(loadWatchItems().map((it) => [it.code, it]));
+  const items = codes
+    .filter((c) => /^\d{6}$/.test(c))
+    .map((code) => prev.get(code) ?? { code, source: SOURCE_MANUAL, updated_at: null });
+  saveMeta(items);
 }
 
 // 从任意文本里抽取 6 位 A 股代码（逗号 / 空格 / 换行 / 顿号分隔都行，方便一次粘贴一串）。
@@ -30,16 +79,22 @@ export function parseCodes(raw: string): string[] {
 }
 
 // 把用户输入的一串代码并入已有自选，返回去重后的新列表 + 实际新增数量。
-export function addCodes(existing: string[], raw: string): { next: string[]; added: number } {
-  const incoming = parseCodes(raw).filter((c) => !existing.includes(c));
-  return { next: [...existing, ...incoming], added: incoming.length };
+export function addCodes(existing: WatchItem[], raw: string): { next: WatchItem[]; added: number } {
+  const incoming = parseCodes(raw).filter((c) => !existing.some((it) => it.code === c));
+  const stamp = new Date().toLocaleString("zh-CN", { hour12: false }).slice(0, 16);
+  const addedItems = incoming.map((code) => ({
+    code,
+    source: SOURCE_MANUAL,
+    updated_at: stamp,
+  }));
+  return { next: [...existing, ...addedItems], added: incoming.length };
 }
 
-// 从自选中批量移除指定代码，返回剩余列表。
-export function removeCodes(existing: string[], toRemove: string[]): string[] {
+// 从自选中批量移除指定代码，返回剩余列表（不改动保留项的来源与时间）。
+export function removeCodes(existing: WatchItem[], toRemove: string[]): WatchItem[] {
   if (toRemove.length === 0) return existing;
   const drop = new Set(toRemove);
-  return existing.filter((c) => !drop.has(c));
+  return existing.filter((it) => !drop.has(it.code));
 }
 
 function loadServerStamp(): string | null {
@@ -59,18 +114,24 @@ function saveServerStamp(stamp: string | null) {
   }
 }
 
-/** 拉取服务端自选股；有 updated_at 且比本地新时返回 codes，否则 null。 */
+/** 拉取服务端自选股；有 updated_at 且比本地新时返回 items，否则 null。 */
 export async function pullServerWatch(
-  fetcher: () => Promise<{ codes: string[]; updated_at: string | null }>,
-): Promise<string[] | null> {
+  fetcher: () => Promise<{ codes: string[]; items?: WatchItem[]; updated_at: string | null }>,
+): Promise<WatchItem[] | null> {
   try {
     const remote = await fetcher();
     if (!remote.updated_at) return null;
     if (remote.updated_at === loadServerStamp()) return null;
-    const codes = remote.codes.filter((c) => /^\d{6}$/.test(c));
-    saveWatch(codes);
+    const items = (remote.items?.length ? remote.items : remote.codes.map((code) => ({
+      code,
+      source: SOURCE_MANUAL,
+      updated_at: remote.updated_at,
+    })))
+      .map((it) => normalizeItem(it))
+      .filter((it): it is WatchItem => !!it);
+    saveWatchItems(items);
     saveServerStamp(remote.updated_at);
-    return codes;
+    return items;
   } catch {
     return null;
   }
@@ -78,11 +139,11 @@ export async function pullServerWatch(
 
 /** 把当前列表同步到服务端（失败静默）。 */
 export async function pushServerWatch(
-  codes: string[],
+  items: WatchItem[],
   saver: (codes: string[]) => Promise<{ updated_at: string | null }>,
 ) {
   try {
-    const out = await saver(codes);
+    const out = await saver(items.map((it) => it.code));
     saveServerStamp(out.updated_at);
   } catch {
     /* 同步失败不阻断本地操作 */

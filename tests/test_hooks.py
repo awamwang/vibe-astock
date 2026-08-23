@@ -146,12 +146,56 @@ class TestHookRegistryImport:
         assert res.ok
         assert res.kind == "watchlist"
         assert wl.get_codes() == ["600000", "000001"]
+        data = wl.get_watchlist()
+        assert all(it["source"] == wl.SOURCE_MANUAL for it in data["items"])
 
-    def test_import_watchlist_rejects_merge(self):
+    def test_import_watchlist_merge_plugin(self, tmp_path, monkeypatch):
+        vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import watchlist as wl
+
+        from duanxian.hooks import HookRegistry
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        wl.sync_codes_from_ui(["600519"])
+        source = "插件：vibe-ths-linker（同花顺）"
+        reg = HookRegistry()
+        res = reg.import_watchlist({
+            "merge": True,
+            "source": source,
+            "codes": ["600000", "000001"],
+        })
+        assert res.ok
+        assert wl.get_codes() == ["600000", "000001", "600519"]
+        items = {it["code"]: it for it in wl.get_watchlist()["items"]}
+        assert items["600519"]["source"] == wl.SOURCE_MANUAL
+        assert items["600000"]["source"] == source
+
+    def test_sync_codes_from_ui_remove_keeps_updated_at(self, tmp_path, monkeypatch):
+        import watchlist as wl
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        first = wl.sync_codes_from_ui(["600000", "000001"])
+        stamp = first["updated_at"]
+        second = wl.sync_codes_from_ui(["600000"])
+        assert second["updated_at"] == stamp
+        items = {it["code"]: it for it in second["items"]}
+        assert items["600000"]["source"] == wl.SOURCE_MANUAL
+
+    def test_import_watchlist_rejects_invalid_mode(self):
         from duanxian.hooks import HookRegistry
 
         reg = HookRegistry()
-        with pytest.raises(ValueError, match="全量覆盖"):
+        with pytest.raises(ValueError, match="replace=true"):
             reg.import_watchlist({"replace": False, "codes": ["600000"]})
 
 

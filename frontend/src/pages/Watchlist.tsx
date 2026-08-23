@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
-import { loadWatch, saveWatch, addCodes, removeCodes, pullServerWatch, pushServerWatch } from "@/lib/watchlist";
+import { loadWatchItems, saveWatchItems, addCodes, removeCodes, pullServerWatch, pushServerWatch, type WatchItem } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,7 @@ import { StockLabel } from "@/components/stock/StockLabel";
 const pct = (v: number | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v}%`);
 
 const LIVE_KEY = "vr-watchlist-live";
+const SERVER_PULL_MS = 60_000;
 
 /** 北京时间 YYYYMMDD，供 DeepDive 存档键使用 */
 function beijingDateKey(): string {
@@ -44,18 +45,54 @@ const saveLive = (on: boolean) => {
   }
 };
 
+function formatImportTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  return value.replace("T", " ").slice(0, 16);
+}
+
+function SourceBadge({ source }: { source: string }) {
+  const plugin = source.startsWith("插件：");
+  return (
+    <span
+      className={cn(
+        "inline-block max-w-[11rem] truncate rounded-md px-1.5 py-0.5 text-[11px] leading-tight",
+        plugin ? "bg-primary/15 text-primary" : "bg-muted/50 text-muted-foreground",
+      )}
+      title={source}
+    >
+      {source}
+    </span>
+  );
+}
+
 export function Watchlist() {
-  const [codes, setCodes] = useState<string[]>(loadWatch);
+  const [items, setItems] = useState<WatchItem[]>(loadWatchItems);
   const [input, setInput] = useState("");
   const [hint, setHint] = useState<string | null>(null);
   // 实时行情默认**关闭**——开着会持续请求，让用户自己决定要不要开。
   const [live, setLive] = useState(loadLive);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
+  const codes = useMemo(() => items.map((it) => it.code), [items]);
+
+  const applyServerItems = (next: WatchItem[] | null) => {
+    if (!next?.length) return;
+    setItems(next);
+  };
+
   useEffect(() => {
-    void pullServerWatch(() => api.watchlist()).then((next) => {
-      if (next) setCodes(next);
-    });
+    void pullServerWatch(() => api.watchlist()).then(applyServerItems);
+    const timer = window.setInterval(() => {
+      void pullServerWatch(() => api.watchlist()).then(applyServerItems);
+    }, SERVER_PULL_MS);
+    const onFocus = () => {
+      void pullServerWatch(() => api.watchlist()).then(applyServerItems);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const { quotes, loading, updatedAt, polling, error, refresh } = useLiveQuotes(codes, live);
@@ -69,20 +106,21 @@ export function Watchlist() {
     });
   };
 
-  const persist = (next: string[]) => {
-    setCodes(next);
-    saveWatch(next);
+  const persist = (next: WatchItem[]) => {
+    setItems(next);
+    saveWatchItems(next);
     void pushServerWatch(next, (c) => api.saveWatchlist(c));
     setSelected((prev) => {
       if (prev.size === 0) return prev;
-      const keep = new Set<string>();
-      for (const c of prev) if (next.includes(c)) keep.add(c);
-      return keep;
+      const keep = new Set(next.map((it) => it.code));
+      const out = new Set<string>();
+      for (const c of prev) if (keep.has(c)) out.add(c);
+      return out;
     });
   };
 
   const add = () => {
-    const { next, added } = addCodes(codes, input);
+    const { next, added } = addCodes(items, input);
     if (added === 0) {
       setHint(input.trim() ? "没识别到新的 6 位代码（可能已在自选里）" : null);
       setInput("");
@@ -93,7 +131,7 @@ export function Watchlist() {
     setHint(`已添加 ${added} 只`);
   };
   const remove = (c: string) => {
-    persist(removeCodes(codes, [c]));
+    persist(removeCodes(items, [c]));
   };
 
   const allSelected = codes.length > 0 && selected.size === codes.length;
@@ -115,7 +153,7 @@ export function Watchlist() {
   const removeSelected = () => {
     if (selected.size === 0) return;
     const n = selected.size;
-    persist(removeCodes(codes, Array.from(selected)));
+    persist(removeCodes(items, Array.from(selected)));
     setHint(`已删除 ${n} 只`);
   };
 
@@ -173,7 +211,7 @@ export function Watchlist() {
     <div>
       <PageHeader
         title="自选股"
-        subtitle="批量添加 / 批量删除 / 一键清空。数据只存本地、不上传。每只可让 AI 深入分析。"
+        subtitle="批量添加 / 批量删除 / 一键清空。列表展示来源与导入时间；插件同步的数据会自动合并。"
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -316,7 +354,7 @@ export function Watchlist() {
                       aria-label="全选"
                     />
                   </th>
-                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
+                  {["名称", "代码", "来源", "导入时间", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
                     <th key={h || `a${i}`} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -324,7 +362,8 @@ export function Watchlist() {
                 </tr>
               </thead>
               <tbody>
-                {codes.map((c) => {
+                {items.map((item) => {
+                  const c = item.code;
                   const q = quotes[c];
                   const checked = selected.has(c);
                   return (
@@ -341,6 +380,12 @@ export function Watchlist() {
                         </td>
                         <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="nameOnly" /></td>
                         <td className="px-2 py-2.5"><StockLabel code={c} name={q?.name} variant="codeOnly" /></td>
+                        <td className="min-w-[7rem] px-2 py-2.5">
+                          <SourceBadge source={item.source} />
+                        </td>
+                        <td className="whitespace-nowrap px-2 py-2.5 font-mono text-xs text-muted-foreground">
+                          {formatImportTime(item.updated_at)}
+                        </td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? q.price : "—"}</td>
                         <td className={cn("px-2 py-2.5 font-mono", pctColor(q?.change_pct))}>{q ? pct(q.change_pct) : "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pe_ttm ?? "—"}</td>
@@ -369,7 +414,7 @@ export function Watchlist() {
                         <DeepDivePanel
                           dd={dd}
                           stockKey={c}
-                          colSpan={10}
+                          colSpan={12}
                           noteTitle={`自选深析 · ${q?.name || c}`}
                           onRerun={() => dd.rerun(diveItem(c))}
                         />

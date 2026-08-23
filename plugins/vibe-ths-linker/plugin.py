@@ -204,6 +204,10 @@ class ThsLinkerBridge:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
         self._thread.start()
+        try:
+            self._sync_watchlist()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
@@ -315,17 +319,30 @@ class ThsLinkerBridge:
         if not resp.get("ok"):
             raise RuntimeError(resp.get("error") or "自选股列表读取失败")
         items = resp.get("items") or []
-        codes = tuple(sorted({str(it.get("code") or "").strip() for it in items if it.get("code")}))
-        if codes == self._last_watchlist:
+        codes: list[str] = []
+        seen: set[str] = set()
+        for it in items:
+            code = str(it.get("code") or "").strip()
+            if len(code) != 6 or not code.isdigit() or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        source = "插件：vibe-ths-linker（同花顺）"
+        sig = tuple(sorted(codes))
+        if sig == self._last_watchlist:
             return
-        current = tuple(sorted(wl.get_codes()))
-        if codes == current:
-            self._last_watchlist = codes
+        current_plugin = tuple(sorted(wl.get_codes_by_source(source)))
+        if sig == current_plugin:
+            self._last_watchlist = sig
             return
-        result = self._reg.import_watchlist({"replace": True, "codes": list(codes)})
+        result = self._reg.import_watchlist({
+            "merge": True,
+            "source": source,
+            "codes": codes,
+        })
         if result.ok:
-            self._last_watchlist = codes
-            print(f"[vibe-ths-linker] 自选股已更新 {len(codes)} 只")
+            self._last_watchlist = sig
+            print(f"[vibe-ths-linker] 自选股已更新 {len(codes)} 只（来源：{source}）")
 
     def _sync_portfolio(self) -> None:
         _ensure_vr_path()

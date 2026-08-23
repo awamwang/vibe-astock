@@ -990,7 +990,7 @@ def api_watchlist_put(request: Request, body: dict = Body(...)):
     import watchtower as wt  # noqa: PLC0415
 
     try:
-        out = wl.replace_codes(body.get("codes"))
+        out = wl.sync_codes_from_ui(body.get("codes"))
         wt.set_watch(out["codes"])
         wt.poke()
         return out
