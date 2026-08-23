@@ -658,13 +658,14 @@ def api_weekly_refresh(request: Request, days: int = 10):
 
 def _weekly(force: bool, days: int = 10):
     """多日情绪的真正实现。`force` **只能由 POST 处理器传入**，不接受查询参数。"""
-    from duanxian.weekly import build_weekly, ensure_theme_matrix, slice_weekly, WINDOW_DAYS_MAX, _clamp_window
+    from duanxian.weekly import build_weekly, ensure_metric_charts, ensure_theme_matrix, slice_weekly, WINDOW_DAYS_MAX, _clamp_window
 
     want = _clamp_window(days)
 
     def _respond(payload: dict) -> JSONResponse:
         enriched = ensure_theme_matrix(payload)
-        return JSONResponse(slice_weekly(enriched, want))
+        sliced = slice_weekly(enriched, want)
+        return JSONResponse(ensure_metric_charts(sliced))
 
     cached = _wk_load()
     if not force and cached and _wk_fresh(cached):

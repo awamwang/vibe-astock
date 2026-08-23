@@ -5051,6 +5051,92 @@ class TestWeeklyThemeMatrixFromReviews:
 
 
 @pytest.mark.unit
+class TestWeeklyMetricCharts:
+    def test_build_metric_charts_groups_series(self, monkeypatch, tmp_path):
+        import json
+        from duanxian import weekly as wk
+
+        sb_dir = tmp_path / "short_board"
+        sb_dir.mkdir()
+        (sb_dir / "2026-08-18.json").write_text(
+            json.dumps({
+                "temperature": 72,
+                "qcj_temp": 65,
+                "qcj_level": "发酵",
+                "broken_r": 28.5,
+                "zt_avg_zr": 1.8,
+                "n_up": 3200,
+                "n_down": 1800,
+                "m_net": 5.5e9,
+                "v_ca": 1.25e12,
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(wk, "_SHORT_BOARD_DIR", str(sb_dir))
+        monkeypatch.setattr(wk, "_LIVE_EMOTION_DIR", str(tmp_path / "live_emotion"))
+        monkeypatch.setattr("duanxian.review_store.load", lambda _d: None)
+        monkeypatch.setattr("duanxian.emotion_metrics.day_summary", lambda _d: {
+            "limit_up": 55, "highest_consec": 6, "broken_rate": 0.285, "never_broken_rate": 0.71,
+        })
+        monkeypatch.setattr("duanxian.breadth.market_breadth", lambda _d: {
+            "available": True,
+            "up": 3200, "down": 1800, "flat": 120,
+            "amount_yi": 12500.0,
+            "deep_up_5_incl": 420, "deep_down_5": 88,
+            "up_down_scope": "沪深", "dist_scope": "全A",
+            "dist_available": True, "dist_partial": False, "universe": 5120,
+        })
+        monkeypatch.setattr("duanxian.emotion_metrics._settled_pool", lambda _d: None)
+
+        out = wk.build_metric_charts(["2026-08-18"])
+        assert out["available"] is True
+        assert out["days"] == ["2026-08-18"]
+        ids = {c["id"] for c in out["charts"]}
+        assert "emotion_heat" in ids and "limit_board" in ids
+        heat = next(c for c in out["charts"] if c["id"] == "emotion_heat")
+        temp = next(s for s in heat["series"] if s["key"] == "temperature")
+        assert temp["values"] == [72]
+        board = next(c for c in out["charts"] if c["id"] == "limit_board")
+        zt = next(s for s in board["series"] if s["key"] == "limit_up")
+        assert zt["kind"] == "permille"
+        assert zt["counts"] == [55]
+        assert zt["values"][0] == round(55 / 5120 * 1000, 3)
+
+    def test_limit_down_skips_live_emotion_zero(self, monkeypatch, tmp_path):
+        import json
+        from duanxian import weekly as wk
+
+        sb_dir = tmp_path / "short_board"
+        le_dir = tmp_path / "live_emotion"
+        sb_dir.mkdir()
+        le_dir.mkdir()
+        (sb_dir / "2026-08-22.json").write_text(json.dumps({"qcj_dt": 13, "qcj_zt": 54}), encoding="utf-8")
+        (le_dir / "2026-08-22.json").write_text(json.dumps({"dt_count": 0, "zt_count": 54}), encoding="utf-8")
+        monkeypatch.setattr(wk, "_SHORT_BOARD_DIR", str(sb_dir))
+        monkeypatch.setattr(wk, "_LIVE_EMOTION_DIR", str(le_dir))
+        monkeypatch.setattr("duanxian.review_store.load", lambda _d: None)
+        monkeypatch.setattr("duanxian.emotion_metrics.day_summary", lambda _d: None)
+        monkeypatch.setattr("duanxian.breadth.market_breadth", lambda _d: {"available": False})
+        monkeypatch.setattr("duanxian.emotion_metrics._settled_pool", lambda _d: None)
+
+        row = wk._day_metric_row("2026-08-22")
+        assert row["limit_down"] == 13
+        assert row["limit_up"] == 54
+
+    def test_ensure_metric_charts_on_slice(self, monkeypatch):
+        from duanxian import weekly as wk
+
+        monkeypatch.setattr(wk, "build_metric_charts", lambda dates: {
+            "available": True, "days": dates, "charts": [],
+        })
+        payload = {"days": [{"date": f"2026-08-{d:02d}"} for d in range(1, 11)]}
+        sliced = wk.slice_weekly(payload, 7)
+        enriched = wk.ensure_metric_charts(sliced)
+        assert len(enriched["days"]) == 7
+        assert enriched["metric_charts"]["days"] == [f"2026-08-{d:02d}" for d in range(4, 11)]
+
+
+@pytest.mark.unit
 class TestThsZtReasonImport:
     """同花顺涨停池 txt → 题材串。日期必须认导出场次，不能用「涨停原因类别」上的模板日期。"""
 

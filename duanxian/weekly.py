@@ -9,12 +9,23 @@
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+import os
+import re
+from typing import Any, Optional
 
 from . import reflection
 from . import trade_calendar
 
 from . import fetchers as dr
+
+_SHORT_BOARD_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
+_LIVE_EMOTION_DIR = os.path.expanduser("~/.duanxian-agents/cache/live_emotion")
+
+_QCJ_LEVEL_ORD: dict[str, int] = {
+    "冰点": 1, "修复": 2, "发酵": 3, "亢奋": 4, "退潮": 5,
+}
+_SPEC_ORD: dict[str, int] = {"冰点": 1, "普通": 2, "活跃": 3, "亢奋": 4}
 
 
 def _last_trade_dates(n: int = 5) -> list[str]:
@@ -363,6 +374,378 @@ def _rank_from_by_day(by_day: dict[str, dict], dates_subset: list[str], limit: i
         {"tag": tag, "score": score}
         for tag, score in sorted(scores.items(), key=lambda x: (-x[1], x[0]))[:limit]
     ]
+
+
+def _load_day_archive(cache_dir: str, date: str) -> dict:
+    path = os.path.join(cache_dir, f"{date}.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _parse_activity_pct(text: object) -> Optional[float]:
+    if not isinstance(text, str) or not text.strip():
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+    return float(m.group(1)) if m else None
+
+
+def _theme_speculation(limit_up: Optional[int], broken_rate: Optional[float]) -> tuple[Optional[str], Optional[int]]:
+    if limit_up is None:
+        return None, None
+    lu = int(limit_up)
+    br = broken_rate
+    if lu >= 80:
+        theme = "亢奋" if (br is not None and br < 0.30) else "活跃"
+    elif lu >= 50:
+        theme = "活跃"
+    elif lu >= 25:
+        theme = "普通"
+    else:
+        theme = "冰点"
+    return theme, _SPEC_ORD.get(theme)
+
+
+def _first_num(*vals: object) -> Optional[float]:
+    for v in vals:
+        if v is None or v == "":
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _coalesce_count(*vals: object) -> Optional[float]:
+    """涨停/跌停家数：东财跌停池取数失败时常落 0，不阻断后续源（与短线盘面趣财经/开盘啦对齐）。"""
+    zero: Optional[float] = None
+    for v in vals:
+        if v is None or v == "":
+            continue
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return n
+        if zero is None:
+            zero = n
+    return zero
+
+
+def _day_metric_row(date: str) -> dict[str, Any]:
+    """单日指标（优先复盘落盘 + 本地归档，历史日零网络）。"""
+    from . import breadth as br
+    from . import emotion_metrics as em
+    from . import review_store as rs
+    from .data import fetch_prev_pool
+
+    sb = _load_day_archive(_SHORT_BOARD_DIR, date)
+    le = _load_day_archive(_LIVE_EMOTION_DIR, date)
+    summary = em.day_summary(date) or {}
+    rev = rs.load(date) or {}
+    em_m = rev.get("emotion_metrics") or {}
+    mf = rev.get("market_facts") or {}
+
+    me = em_m.get("money_effect") if em_m.get("money_effect", {}).get("available") else {}
+    if not me or me.get("median") is None:
+        cached_pool = fetch_prev_pool(date)
+        if cached_pool:
+            vals = [r["ret"] for r in cached_pool if r.get("ret") is not None]
+            if vals:
+                from statistics import median
+
+                me = {
+                    **(me or {}),
+                    "median": round(median(vals), 2),
+                    "open_success_rate": me.get("open_success_rate") if me else None,
+                    "close_success_rate": me.get("close_success_rate") if me else None,
+                }
+    if not me or me.get("median") is None:
+        settled = em._settled_pool(date)  # noqa: SLF001
+        if settled:
+            vals = [r["ret"] for r in settled if r.get("ret") is not None]
+            if vals:
+                from statistics import median
+
+                me = {"median": round(median(vals), 2)}
+
+    pr = em_m.get("promotion") if em_m.get("promotion", {}).get("available") else {}
+    promo_rate = (pr.get("overall") or {}).get("rate")
+    if promo_rate is None and le.get("promotion_rate") is not None:
+        promo_rate = le.get("promotion_rate")
+
+    cp = em_m.get("consec_premium") if em_m.get("consec_premium", {}).get("available") else {}
+    cp_med = cp.get("median")
+
+    loss = mf.get("loss_effect") if mf.get("loss_effect", {}).get("available") else {}
+    loss_rate = loss.get("deep_loss_5_rate") if loss.get("available") else None
+    if loss_rate is None:
+        settled = em._settled_pool(date)  # noqa: SLF001
+        if settled:
+            got = [r for r in settled if r.get("ret") is not None]
+            if got:
+                loss_rate = round(sum(1 for r in got if r["ret"] <= -5) / len(got), 3)
+
+    breadth = mf.get("breadth") if mf.get("breadth", {}).get("available") else br.market_breadth(date)
+    if not breadth.get("available"):
+        breadth = {}
+
+    limit_up = _coalesce_count(sb.get("qcj_zt"), sb.get("n_sjzt"), le.get("zt_count"), summary.get("limit_up"))
+    limit_down = _coalesce_count(sb.get("qcj_dt"), sb.get("n_sjdt"), le.get("dt_count"))
+    broken_rate = summary.get("broken_rate")
+    if broken_rate is None and sb.get("broken_r") is not None:
+        broken_rate = float(sb["broken_r"]) / 100.0
+    if broken_rate is None and le.get("break_rate") is not None:
+        broken_rate = le.get("break_rate")
+
+    n_up = _first_num(breadth.get("up"), sb.get("n_up"))
+    n_down = _first_num(breadth.get("down"), sb.get("n_down"))
+    activity_pct = _parse_activity_pct(sb.get("activity"))
+    if activity_pct is None and n_up is not None and n_down is not None and (n_up + n_down) > 0:
+        activity_pct = round(n_up / (n_up + n_down) * 100, 1)
+
+    spec_text, spec_ord = _theme_speculation(
+        int(limit_up) if limit_up is not None else None,
+        broken_rate if broken_rate is not None else None,
+    )
+
+    qcj_level = sb.get("qcj_level")
+    qcj_ord = _QCJ_LEVEL_ORD.get(str(qcj_level or "").strip())
+
+    amount_yi = _first_num(breadth.get("amount_yi"))
+    if amount_yi is None and sb.get("v_ca") is not None:
+        amount_yi = round(float(sb["v_ca"]) / 1e8, 1)
+
+    m_net_yi = None
+    if sb.get("m_net") is not None:
+        m_net_yi = round(float(sb["m_net"]) / 1e8, 2)
+
+    zt_premium = sb.get("zt_avg_zr")
+    universe = _first_num(breadth.get("universe"))
+    flat = _first_num(breadth.get("flat"))
+
+    return {
+        "temperature": sb.get("temperature"),
+        "qcj_temp": sb.get("qcj_temp"),
+        "activity_pct": activity_pct,
+        "speculation": spec_text,
+        "speculation_ord": spec_ord,
+        "qcj_level": qcj_level,
+        "qcj_level_ord": qcj_ord,
+        "up": n_up,
+        "down": n_down,
+        "flat": flat,
+        "universe": universe,
+        "limit_up": limit_up,
+        "limit_down": limit_down,
+        "deep_up_5": br.up5_of(breadth) if breadth else None,
+        "deep_down_5": breadth.get("deep_down_5") if breadth else None,
+        "broken_rate": broken_rate,
+        "never_broken_rate": summary.get("never_broken_rate"),
+        "zt_premium_pct": zt_premium,
+        "open_success_rate": me.get("open_success_rate"),
+        "close_success_rate": me.get("close_success_rate") or me.get("positive_rate"),
+        "amount_yi": amount_yi,
+        "m_net_yi": m_net_yi,
+        "highest_board": _first_num(le.get("max_boards"), summary.get("highest_consec")),
+        "lianban_count": le.get("lianban_count"),
+        "promotion_rate": promo_rate,
+        "money_effect_median": me.get("median"),
+        "loss_effect_rate": loss_rate,
+        "consec_premium_median": cp_med,
+    }
+
+
+def _market_total(row: dict) -> Optional[float]:
+    u = row.get("universe")
+    if u is not None and float(u) > 0:
+        return float(u)
+    up, down, flat = row.get("up"), row.get("down"), row.get("flat")
+    if up is not None and down is not None and flat is not None:
+        total = float(up) + float(down) + float(flat)
+        return total if total > 0 else None
+    return None
+
+
+def _chart_series(rows: list[dict], key: str, *, kind: str, label: str,
+                  label_key: Optional[str] = None, y_axis_index: int = 0,
+                  plot_scale: Optional[float] = None) -> dict:
+    out_vals: list[Any] = []
+    out_labels: list[Optional[str]] = []
+    for row in rows:
+        v = row.get(key)
+        out_vals.append(v if v is not None else None)
+        if label_key:
+            lv = row.get(label_key)
+            out_labels.append(str(lv) if lv not in (None, "") else None)
+        else:
+            out_labels.append(None)
+    out: dict[str, Any] = {
+        "key": key, "label": label, "kind": kind, "values": out_vals,
+        "labels": out_labels if any(x is not None for x in out_labels) else None,
+        "y_axis_index": y_axis_index,
+    }
+    if plot_scale is not None and plot_scale != 1:
+        out["plot_scale"] = plot_scale
+    return out
+
+
+def _chart_series_count_ratio(
+    rows: list[dict], key: str, *, label: str, ratio_kind: str = "permille",
+    y_axis_index: int = 0,
+) -> dict:
+    """家数序列：折线用占比，悬停展示「家数(占比)」。"""
+    values: list[Any] = []
+    counts: list[Any] = []
+    totals: list[Any] = []
+    for row in rows:
+        n = row.get(key)
+        total = _market_total(row)
+        counts.append(int(n) if n is not None else None)
+        totals.append(total)
+        if n is None or total is None or total <= 0:
+            values.append(None)
+        elif ratio_kind == "permille":
+            values.append(round(float(n) / total * 1000, 3))
+        else:
+            values.append(round(float(n) / total * 100, 3))
+    kind = "permille" if ratio_kind == "permille" else "count_pct"
+    return {
+        "key": key, "label": label, "kind": kind, "values": values,
+        "counts": counts, "totals": totals, "y_axis_index": y_axis_index,
+    }
+
+
+def build_metric_charts(dates: list[str]) -> dict:
+    """多日指标分组图表数据（按类型与纵轴范围归并）。"""
+    if not dates:
+        return {"available": False, "reason": "无交易日", "days": [], "charts": []}
+    rows = [{"date": d, **_day_metric_row(d)} for d in dates]
+    charts = [
+        {
+            "id": "emotion_heat",
+            "title": "情绪温度 · 情绪分 · 活跃度",
+            "chart_type": "line",
+            "y_axis": {"name": "分 / %", "kind": "count"},
+            "series": [
+                _chart_series(rows, "temperature", kind="count", label="情绪温度"),
+                _chart_series(rows, "qcj_temp", kind="count", label="情绪分°"),
+                _chart_series(rows, "activity_pct", kind="pct", label="活跃度"),
+            ],
+        },
+        {
+            "id": "stage_spec",
+            "title": "阶段 · 题材投机",
+            "chart_type": "bar",
+            "y_axis": {"name": "档位", "kind": "ordinal"},
+            "series": [
+                _chart_series(rows, "qcj_level_ord", kind="ordinal", label="阶段",
+                              label_key="qcj_level"),
+                _chart_series(rows, "speculation_ord", kind="ordinal", label="题材投机",
+                              label_key="speculation"),
+            ],
+        },
+        {
+            "id": "breadth_counts",
+            "title": "上涨数 · 下跌数 · 深涨跌",
+            "chart_type": "line",
+            "y_axis": {"name": "%", "kind": "count_pct"},
+            "series": [
+                _chart_series_count_ratio(rows, "up", label="上涨数", ratio_kind="count_pct"),
+                _chart_series_count_ratio(rows, "down", label="下跌数", ratio_kind="count_pct"),
+                _chart_series_count_ratio(rows, "deep_up_5", label="涨幅≥5%", ratio_kind="count_pct"),
+                _chart_series_count_ratio(rows, "deep_down_5", label="跌超5%", ratio_kind="count_pct"),
+            ],
+        },
+        {
+            "id": "limit_board",
+            "title": "涨停 · 跌停 · 最高板 · 连板",
+            "chart_type": "line",
+            "y_axis": [
+                {"name": "‰", "kind": "permille"},
+                {"name": "板", "kind": "board"},
+            ],
+            "series": [
+                _chart_series_count_ratio(rows, "limit_up", label="涨停数"),
+                _chart_series_count_ratio(rows, "limit_down", label="跌停数"),
+                _chart_series_count_ratio(rows, "lianban_count", label="连板数"),
+                _chart_series(rows, "highest_board", kind="board", label="最高板数", y_axis_index=1),
+            ],
+        },
+        {
+            "id": "board_quality_rates",
+            "title": "炸板率 · 封板率 · 晋级 · 涨停溢价",
+            "chart_type": "line",
+            "y_axis": {"name": "%", "kind": "rate"},
+            "note": "涨停溢价折线按涨跌幅×10 绘制（与同图炸板率等同轴对比），悬停为真实百分比。",
+            "series": [
+                _chart_series(rows, "broken_rate", kind="rate", label="炸板率"),
+                _chart_series(rows, "never_broken_rate", kind="rate", label="涨停未炸板比例"),
+                _chart_series(rows, "promotion_rate", kind="rate", label="晋级率"),
+                _chart_series(rows, "zt_premium_pct", kind="pct", label="涨停溢价", plot_scale=10),
+            ],
+        },
+        {
+            "id": "money_effect",
+            "title": "赚钱效应 · 亏钱效应 · 连板溢价 · 打板成功率",
+            "chart_type": "line",
+            "y_axis": {"name": "%", "kind": "pct"},
+            "note": "赚钱效应、连板溢价按涨跌幅×10 绘制（与亏钱效应/打板成功率同轴对比），悬停为真实百分比。",
+            "series": [
+                _chart_series(rows, "money_effect_median", kind="pct", label="赚钱效应", plot_scale=10),
+                _chart_series(rows, "loss_effect_rate", kind="rate", label="亏钱效应"),
+                _chart_series(rows, "consec_premium_median", kind="pct", label="连板溢价", plot_scale=10),
+                _chart_series(rows, "open_success_rate", kind="rate", label="打板成功率-开盘"),
+                _chart_series(rows, "close_success_rate", kind="rate", label="打板成功率-收盘"),
+            ],
+        },
+        {
+            "id": "amount",
+            "title": "两市成交额",
+            "chart_type": "line",
+            "y_axis": {"name": "亿", "kind": "yi"},
+            "series": [
+                _chart_series(rows, "amount_yi", kind="yi", label="两市成交额"),
+            ],
+        },
+        {
+            "id": "main_flow",
+            "title": "主力净流入",
+            "chart_type": "line",
+            "y_axis": {"name": "亿", "kind": "yi"},
+            "series": [
+                _chart_series(rows, "m_net_yi", kind="yi", label="主力净流入"),
+            ],
+        },
+    ]
+    has_any = any(
+        v is not None
+        for row in rows
+        for k, v in row.items()
+        if k != "date"
+    )
+    return {
+        "available": has_any,
+        "reason": None if has_any else "指标归档与缓存暂不可用",
+        "days": dates,
+        "charts": charts,
+    }
+
+
+def ensure_metric_charts(payload: dict) -> dict:
+    """按窗口日期补全指标图表（读缓存时现场算，不污染 weekly 落盘结构）。"""
+    dates = [str(d.get("date") or "") for d in (payload.get("days") or []) if d.get("date")]
+    if not dates:
+        return payload
+    charts = build_metric_charts(dates)
+    return {**payload, "metric_charts": charts}
 
 
 def slice_weekly(payload: dict, days: int) -> dict:

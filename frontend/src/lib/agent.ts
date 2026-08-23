@@ -434,6 +434,32 @@ export interface LineageLeader {
   drawdown_from_peak?: number | null;  // 现价距该最高点跌了多少（≤0；不知道时 null）
   is_current_top?: boolean;            // 是不是**最近一个交易日**的最高标
 }
+export interface WeeklyMetricSeries {
+  key: string;
+  label: string;
+  kind?: "count" | "rate" | "pct" | "yi" | "ordinal" | "permille" | "count_pct" | "board";
+  values: (number | null)[];
+  labels?: (string | null)[] | null;
+  counts?: (number | null)[] | null;
+  totals?: (number | null)[] | null;
+  y_axis_index?: number;
+  /** 绘图时把原始值乘以此系数（如涨跌幅×10 与比率同轴） */
+  plot_scale?: number;
+}
+export interface WeeklyMetricChart {
+  id: string;
+  title: string;
+  chart_type: "line" | "bar";
+  y_axis?: { name?: string; kind?: string } | { name?: string; kind?: string }[];
+  note?: string;
+  series: WeeklyMetricSeries[];
+}
+export interface WeeklyMetricCharts {
+  available?: boolean;
+  reason?: string;
+  days?: string[];
+  charts?: WeeklyMetricChart[];
+}
 export interface WeeklyData {
   generated_at?: string;
   error?: string;
@@ -442,6 +468,7 @@ export interface WeeklyData {
   days: HeatDay[];
   leader_lineage: LineageLeader[];
   theme_matrix?: ThemeMatrix;
+  metric_charts?: WeeklyMetricCharts;
 }
 
 export interface JobStatus { running: boolean; elapsed?: number; error?: string | null; stock?: string; busy?: boolean; }

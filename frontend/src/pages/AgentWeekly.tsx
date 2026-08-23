@@ -3,6 +3,7 @@ import { CalendarRange, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Caliber } from "@/components/ui/Caliber";
 import { ThemeMatrixChart } from "@/components/charts/ThemeMatrixChart";
+import { WeeklyMetricsCharts } from "@/components/charts/WeeklyMetricsCharts";
 import { agentFetch, finite, pct, safeArray, type WeeklyData, type LineageLeader } from "@/lib/agent";
 import { pctColor, UP_TEXT } from "@/lib/colors";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -116,6 +117,22 @@ export function AgentWeekly() {
                 windowDays={activeDays}
                 fallbackDates={safeArray(data.days).map((d) => d.date).filter(Boolean)}
               />
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">
+                指标趋势 · Metrics
+              </span>
+              <Caliber text={
+                "按类型与纵轴范围分组展示多日指标；有百分比口径的序列在图中用百分比刻度。\n" +
+                "数据优先读复盘落盘与本地归档（短线盘面环境条、涨停池缓存、宽度缓存），\n" +
+                "缺归档的日期该序列留空、不连过去。阶段 / 题材投机在柱上显示档位，悬停可看原文。"
+              } />
+            </div>
+            <div className="glass rounded-2xl p-4">
+              <WeeklyMetricsCharts data={data.metric_charts} />
             </div>
           </section>
 
