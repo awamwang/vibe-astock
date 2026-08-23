@@ -27,6 +27,7 @@
 | `import_account` | [附录 B.2](#b2-import_account) |
 | `override_budget_phase` | [附录 B.3](#b3-override_budget_phase) |
 | `import_watchlist` | [附录 B.4](#b4-import_watchlist) |
+| `report_status` | [附录 B.5](#b5-report_status) |
 
 ### 扩展指标
 
@@ -169,6 +170,7 @@ python -m duanxian.plugin_cli list
 | `duanxian/hooks.py` | `HookPack`、`HookRunner`、`HookRegistry`、payload 构建 |
 | `duanxian/hook_schemas.py` | `$schema` URL 与版本常量 |
 | `duanxian/plugin_store.py` | `plugins.json` 读写 |
+| `duanxian/plugin_status.py` | 运行状态存储与 API 合成 |
 | `duanxian/plugin_cli.py` | 命令行管理 |
 | `duanxian/verification.py` | 内置与插件指标合并 |
 | `server.py` / `main.py` | `emit_after_review` 调用点 |
@@ -529,6 +531,58 @@ python -m duanxian.plugin_cli list
 | `codes` / `watchlist` | 最多 100 只 6 位 A 股代码；`codes: []` 清空列表。 |
 
 落盘：`~/.vibe-research/watchlist.json`。
+
+---
+
+### B.5 `report_status` {#b5-report_status}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 向引擎上报插件 **运行状态**（正常、提示、警告、错误），经 `GET /api/plugins` 转发至 [插件管理](/plugins) 列表展示。 |
+| **调用方式** | `reg.report_status(level, message, detail=None)`；后台线程可用 `duanxian.plugin_status.set_status(plugin_id, ...)` |
+| **对应页面** | [插件管理](/plugins) — 每条插件下的运行状态条。 |
+| **对应 API** | `GET /api/plugins` 响应字段 `runtime_status` |
+
+**`level` 取值**：
+
+| level | 含义 |
+|---|---|
+| `ok` | 正常运行 |
+| `info` | 一般提示（如等待外部服务） |
+| `warn` | 可恢复异常（如同步失败但仍在重试） |
+| `error` | 严重错误（需人工介入） |
+| `off` | 停用（引擎对停用插件自动合成，插件无需上报） |
+
+**`runtime_status` 结构**：
+
+```json
+{
+  "level": "warn",
+  "message": "同步异常：TimeoutError: 等待响应超时",
+  "detail": "完整 traceback 或补充说明（可选）",
+  "updated_at": "2026-08-23T11:30:00+08:00"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `message` | 一行摘要，列表主文案 |
+| `detail` | 可选详情（错误栈、连接参数等） |
+| `updated_at` | 状态更新时间 |
+
+**示例**（`on_register` 内绑定后上报）：
+
+```python
+def on_register(reg: HookRegistry) -> None:
+    reg.report_status("info", "等待 ths-linker 连接…")
+    try:
+        connect_external()
+        reg.report_status("ok", "已连接外部服务")
+    except OSError as exc:
+        reg.report_status("error", "连接失败", str(exc))
+```
+
+引擎在 **加载失败**、**on_register 失败**、**钩子回调失败** 时也会自动写入状态，无需插件重复上报。
 
 ---
 

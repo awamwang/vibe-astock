@@ -215,6 +215,7 @@ class TestHookRunner:
         assert events.count("b:review") == 1
 
     def test_callback_error_does_not_raise(self):
+        from duanxian import plugin_status as ps
         from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
 
         lp = LoadedPlugin(
@@ -229,6 +230,53 @@ class TestHookRunner:
         )
         runner = HookRunner([lp], HookRegistry())
         runner.emit_metrics("2026-01-02", {"emotion_metrics": {}, "market_facts": {}}, scope="review")
+        st = ps.get_status("x")
+        assert st is not None
+        assert st.level == "warn"
+        assert "钩子回调失败" in st.message
+
+
+@pytest.mark.unit
+class TestPluginStatus:
+    def test_report_status_via_registry(self):
+        from duanxian import plugin_status as ps
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("abc12345")
+        reg.report_status("info", "等待连接", "ws://127.0.0.1")
+        st = ps.get_status("abc12345")
+        assert st is not None
+        assert st.level == "info"
+        assert st.message == "等待连接"
+        assert st.detail == "ws://127.0.0.1"
+
+    def test_resolve_runtime_status_disabled(self):
+        from duanxian import plugin_status as ps
+
+        out = ps.resolve_runtime_status(
+            "abc",
+            enabled=False,
+            file_exists=True,
+            loaded=False,
+        )
+        assert out["level"] == "off"
+        assert out["message"] == "已停用"
+
+    def test_load_failure_records_status(self, plugin_home):
+        from duanxian import plugin_status as ps
+        from duanxian import plugin_store as store
+        from duanxian.hooks import load_plugins
+
+        p = plugin_home / "bad.py"
+        p.write_text(_PLUGIN_SRC, encoding="utf-8")
+        rec = store.register(str(p))
+        p.write_text("PACK = 1\n", encoding="utf-8")
+        load_plugins()
+        st = ps.get_status(rec.id)
+        assert st is not None
+        assert st.level == "error"
+        assert st.message == "加载失败"
 
 
 @pytest.mark.unit

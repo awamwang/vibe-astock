@@ -19,6 +19,7 @@ from duanxian.hooks import HookPack, HookRegistry
 
 _REQ_FILE = Path(__file__).resolve().parent / "requirements.txt"
 
+
 try:
     import websocket
 except ImportError as exc:
@@ -166,8 +167,9 @@ class ThsLinkerWsClient:
 
 
 class ThsLinkerBridge:
-    def __init__(self, reg: HookRegistry) -> None:
+    def __init__(self, reg: HookRegistry, plugin_id: str) -> None:
         self._reg = reg
+        self._plugin_id = plugin_id
         self._client = ThsLinkerWsClient(_WS_URL)
         self._client.set_push_handler(self._on_stock_push)
         self._instance: dict | None = None
@@ -202,10 +204,15 @@ class ThsLinkerBridge:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
         self._thread.start()
-        print(
-            f"[vibe-ths-linker] 已绑定实例 pid={self._instance.get('id')} "
-            f"ths_dir={self._ths_dir}"
-        )
+        detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
+        print(f"[vibe-ths-linker] 已绑定实例 {detail}")
+        reg.report_status("ok", "已连接 ths-linker", detail)
+
+    def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
+        from duanxian import plugin_status as ps
+
+        if self._plugin_id:
+            ps.set_status(self._plugin_id, level, message, detail)
 
     def _run_loop(self) -> None:
         last_stock = 0.0
@@ -222,12 +229,16 @@ class ThsLinkerBridge:
                     self._sync_risk_control()
                     last_sync = now
             except Exception as exc:  # noqa: BLE001
-                print(f"⚠️ [vibe-ths-linker] 同步异常：{type(exc).__name__}: {exc}")
+                err = f"{type(exc).__name__}: {exc}"
+                print(f"⚠️ [vibe-ths-linker] 同步异常：{err}")
                 traceback.print_exc()
+                self._report_status("warn", f"同步异常：{err}", traceback.format_exc())
                 try:
                     self._client.connect()
                 except Exception as re_exc:  # noqa: BLE001
+                    re_err = f"{type(re_exc).__name__}: {re_exc}"
                     print(f"⚠️ [vibe-ths-linker] 重连失败：{re_exc}")
+                    self._report_status("error", f"重连失败：{re_err}", str(re_exc))
                     time.sleep(3.0)
             time.sleep(0.15)
 
@@ -440,7 +451,8 @@ _BRIDGE: ThsLinkerBridge | None = None
 
 def on_register(reg: HookRegistry) -> None:
     global _BRIDGE
-    _BRIDGE = ThsLinkerBridge(reg)
+    plugin_id = reg.plugin_id or ""
+    _BRIDGE = ThsLinkerBridge(reg, plugin_id)
     _BRIDGE.start()
 
 

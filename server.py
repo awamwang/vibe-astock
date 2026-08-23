@@ -1434,8 +1434,12 @@ def api_experience_commit(request: Request, body: dict = Body(...)):
 def _plugin_row(rec) -> dict:
     from pathlib import Path
 
+    from duanxian import plugin_status as ps
+    from duanxian.hooks import PLUGINS
+
     p = Path(rec.path).expanduser()
-    return {
+    loaded_ids = {lp.id for lp in PLUGINS}
+    row = {
         "id": rec.id,
         "path": rec.path,
         "name": rec.name,
@@ -1444,6 +1448,13 @@ def _plugin_row(rec) -> dict:
         "registered_at": rec.registered_at,
         "file_exists": p.is_file(),
     }
+    row["runtime_status"] = ps.resolve_runtime_status(
+        rec.id,
+        enabled=rec.enabled,
+        file_exists=row["file_exists"],
+        loaded=rec.id in loaded_ids,
+    )
+    return row
 
 
 @app.get("/api/plugins")

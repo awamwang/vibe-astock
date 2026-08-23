@@ -706,6 +706,13 @@ export interface PluginPickResult {
   path?: string;
 }
 
+export interface PluginRuntimeStatus {
+  level: "ok" | "info" | "warn" | "error" | "off";
+  message: string;
+  detail?: string;
+  updated_at: string;
+}
+
 export interface PluginRecord {
   id: string;
   path: string;
@@ -714,6 +721,7 @@ export interface PluginRecord {
   enabled: boolean;
   registered_at: string;
   file_exists: boolean;
+  runtime_status: PluginRuntimeStatus;
 }
 export interface PluginsListResult {
   plugins: PluginRecord[];

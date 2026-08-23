@@ -87,6 +87,29 @@ class LoadedPlugin:
 class HookRegistry:
     """插件写入引擎的唯一入口。"""
 
+    def __init__(self) -> None:
+        self._bound_plugin_id: str | None = None
+
+    @property
+    def plugin_id(self) -> str | None:
+        """当前绑定的注册表 id（`on_register` 内可用）。"""
+        return self._bound_plugin_id
+
+    def bind_plugin(self, plugin_id: str) -> None:
+        self._bound_plugin_id = str(plugin_id)
+
+    def unbind_plugin(self) -> None:
+        self._bound_plugin_id = None
+
+    def report_status(self, level: str, message: str, detail: str | None = None) -> None:
+        """向引擎上报运行状态，供插件管理页展示。"""
+        from . import plugin_status as ps
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("report_status 需在 on_register 内调用，或先 bind_plugin")
+        ps.set_status(pid, level, message, detail)
+
     def import_portfolio(self, payload: dict) -> ImportResult:
         from . import screenshot_parse as sp
 
@@ -210,7 +233,10 @@ def load_plugins() -> list[LoadedPlugin]:
         try:
             pack = load_pack_from_path(path, plugin_id=pid)
         except Exception as exc:  # noqa: BLE001
+            from . import plugin_status as ps
+
             print(f"⚠️ 插件加载失败（id={pid}）：{type(exc).__name__}: {exc}")
+            ps.set_status(pid, "error", "加载失败", f"{type(exc).__name__}: {exc}")
             continue
         print(f"ℹ️ 已加载插件：{pack.name} v{pack.version}（id={pid}）")
         loaded.append(LoadedPlugin(id=pid, path=path, pack=pack))
@@ -385,13 +411,27 @@ def _ctx(date: str, event: str, plugin: LoadedPlugin) -> HookContext:
     )
 
 
-def _safe_call(fn: Callable[..., None] | None, *args) -> None:
+def _safe_call(
+    fn: Callable[..., None] | None,
+    plugin: LoadedPlugin | None,
+    *args,
+) -> None:
     if fn is None:
         return
     try:
         fn(*args)
     except Exception:  # noqa: BLE001
-        print(f"⚠️ 钩子回调失败：\n{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        print(f"⚠️ 钩子回调失败：\n{tb}")
+        if plugin is not None:
+            from . import plugin_status as ps
+
+            ps.set_status(
+                plugin.id,
+                "warn",
+                "钩子回调失败",
+                tb,
+            )
 
 
 class HookRunner:
@@ -404,6 +444,7 @@ class HookRunner:
         for lp in self.plugins:
             _safe_call(
                 lp.pack.on_metrics_snapshot,
+                lp,
                 _ctx(date, "metrics.snapshot", lp),
                 _envelope("metrics.snapshot", date, payload, lp),
             )
@@ -413,6 +454,7 @@ class HookRunner:
         for lp in self.plugins:
             _safe_call(
                 lp.pack.on_budget_snapshot,
+                lp,
                 _ctx(date, "budget.snapshot", lp),
                 _envelope("budget.snapshot", date, payload, lp),
             )
@@ -422,6 +464,7 @@ class HookRunner:
         for lp in self.plugins:
             _safe_call(
                 lp.pack.on_verification_snapshot,
+                lp,
                 _ctx(date, "verification.snapshot", lp),
                 _envelope("verification.snapshot", date, payload, lp),
             )
@@ -455,6 +498,7 @@ class HookRunner:
             }
             _safe_call(
                 lp.pack.on_review_saved,
+                lp,
                 _ctx(date, "review.saved", lp),
                 _envelope("review.saved", date, inner, lp),
             )
@@ -514,17 +558,28 @@ def _validate_providers(providers: tuple[MetricProvider, ...]) -> tuple[MetricPr
 
 
 def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
+    from . import plugin_status as ps
+
     plugins = load_plugins()
     registry = HookRegistry()
     all_providers: list[MetricProvider] = []
     for lp in plugins:
+        registry.bind_plugin(lp.id)
         if lp.pack.on_register is not None:
             try:
                 lp.pack.on_register(registry)
             except Exception:  # noqa: BLE001
-                print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）on_register 失败：\n{traceback.format_exc()}")
+                tb = traceback.format_exc()
+                print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）on_register 失败：\n{tb}")
+                ps.set_status(lp.id, "error", "初始化失败", tb)
+            else:
+                if ps.get_status(lp.id) is None:
+                    ps.set_status(lp.id, "ok", "已加载")
+        else:
+            ps.set_status(lp.id, "ok", "已加载")
         accepted = _validate_providers(lp.pack.metric_providers)
         all_providers.extend(accepted)
+    registry.unbind_plugin()
     if all_providers:
         from . import verification as vf
 

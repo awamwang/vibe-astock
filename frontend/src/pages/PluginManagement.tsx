@@ -5,7 +5,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { api, type PluginRecord } from "@/lib/api";
+import { api, type PluginRecord, type PluginRuntimeStatus } from "@/lib/api";
 
 const PATH_KEY = "va-plugin-install-path";
 
@@ -24,6 +24,40 @@ function writeLocal(key: string, value: string) {
   } catch {
     /* 隐私模式等场景 localStorage 不可用 */
   }
+}
+
+function RuntimeStatusPanel({ status }: { status: PluginRuntimeStatus }) {
+  const levelStyles: Record<PluginRuntimeStatus["level"], string> = {
+    ok: "border-success/30 bg-success/10 text-success",
+    info: "border-primary/30 bg-primary/10 text-primary",
+    warn: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    error: "border-danger/30 bg-danger/10 text-danger",
+    off: "border-border bg-muted/20 text-muted-foreground",
+  };
+  const levelLabel: Record<PluginRuntimeStatus["level"], string> = {
+    ok: "正常",
+    info: "提示",
+    warn: "警告",
+    error: "错误",
+    off: "停用",
+  };
+
+  return (
+    <div className={`mt-2 rounded-lg border px-2.5 py-2 text-xs ${levelStyles[status.level]}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className="font-medium">{levelLabel[status.level]}</span>
+        <span className="text-foreground/90">{status.message}</span>
+        {status.updated_at && (
+          <span className="text-[10px] opacity-70">{status.updated_at}</span>
+        )}
+      </div>
+      {status.detail && (
+        <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[10px] text-foreground/80 opacity-90">
+          {status.detail}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function StatusBadge({ enabled, fileExists }: { enabled: boolean; fileExists: boolean }) {
@@ -72,6 +106,7 @@ function PluginRow({
             {row.registered_at && <span className="ml-2">注册于 {row.registered_at}</span>}
           </div>
           <p className="mt-1.5 break-all text-xs text-muted-foreground/90">{row.path}</p>
+          <RuntimeStatusPanel status={row.runtime_status} />
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
           <button
