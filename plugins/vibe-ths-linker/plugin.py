@@ -36,6 +36,16 @@ _SYNC_INTERVAL = 60.0
 _WS_TIMEOUT = 20.0
 
 
+def _is_trading_hours() -> bool:
+    """A 股是否在可交易时段（含集合竞价），与 server 场次口径一致。"""
+    from duanxian import trade_calendar
+    from duanxian.util import china_today, is_a_share_closed
+
+    today = china_today()
+    quotes_of = trade_calendar.quote_trade_day()
+    return bool(quotes_of) and quotes_of == today and not is_a_share_closed()
+
+
 def _ensure_vr_path() -> None:
     import sys
 
@@ -208,6 +218,10 @@ class ThsLinkerBridge:
             self._sync_watchlist()
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
+        try:
+            self._sync_portfolio()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ [vibe-ths-linker] 启动持仓同步失败：{exc}")
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
@@ -237,7 +251,8 @@ class ThsLinkerBridge:
                     last_stock = now
                 if now - last_sync >= _SYNC_INTERVAL:
                     self._sync_watchlist()
-                    self._sync_portfolio()
+                    if _is_trading_hours():
+                        self._sync_portfolio()
                     self._sync_risk_control()
                     last_sync = now
             except Exception as exc:  # noqa: BLE001
