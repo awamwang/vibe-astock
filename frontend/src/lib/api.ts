@@ -133,6 +133,8 @@ export interface IndexQuote {
 export interface MarketSentimentYesterday {
   breadth?: string;
   speculation?: string;
+  up?: number;
+  down?: number;
   flat?: number;
   active?: string;
 }

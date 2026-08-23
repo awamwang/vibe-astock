@@ -3721,12 +3721,16 @@ class TestMarketSentimentArchive:
         m._save_archive("2026-08-21", {
             "breadth": "偏强",
             "speculation": "活跃",
+            "up": 2500,
+            "down": 2200,
             "flat": 150,
             "active": "62% 涨家占比",
         })
         y = m._yesterday_slice("2026-08-21")
         assert y["breadth"] == "偏强"
         assert y["speculation"] == "活跃"
+        assert y["up"] == 2500
+        assert y["down"] == 2200
         assert y["flat"] == 150
         assert y["active"] == "62% 涨家占比"
 

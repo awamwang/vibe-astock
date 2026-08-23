@@ -21,7 +21,7 @@ _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
 _OFFSESSION_TTL = 86400.0
 _CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_sentiment")
-_ARCHIVE_KEYS = ("breadth", "speculation", "flat", "active")
+_ARCHIVE_KEYS = ("breadth", "speculation", "up", "down", "flat", "active")
 
 
 def _cached(key: str, fn, valid=bool, ttl: float | None = None):

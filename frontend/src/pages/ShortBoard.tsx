@@ -420,7 +420,7 @@ export function ShortBoard() {
         caliber={
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "归档只在「日历今天就是这场」且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。\n" +
-          "涨跌宽度：情绪温度、大盘宽度、题材投机、平盘家数、活跃度；按日归档作昨日对照。\n" +
+          "涨跌宽度：情绪温度、大盘宽度、题材投机、上涨/下跌/平盘家数、活跃度；按日归档作昨日对照。\n" +
           "资金量能：上证 / A 股成交额、主力净流入；缺失字段按可用行情补全。\n" +
           "实时打板：最高连板 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
           "情绪全景：情绪分、阶段、涨跌停家数、龙头、主线题材；昨日场次优先取历史序列。\n" +
@@ -464,6 +464,8 @@ export function ShortBoard() {
               <EnvCard name="情绪温度" today={t.temperature} yesterday={y.temperature} format={intFmt} />
               <EnvTextCard name="大盘宽度" today={sentiment?.breadth} yesterday={sentY.breadth} />
               <EnvTextCard name="题材投机" today={sentiment?.speculation} yesterday={sentY.speculation} />
+              <EnvCard name="上涨数" today={sentiment?.up} yesterday={sentY.up} format={intFmt} />
+              <EnvCard name="下跌数" today={sentiment?.down} yesterday={sentY.down} format={intFmt} reversed />
               <EnvCard name="平盘" today={sentiment?.flat} yesterday={sentY.flat} format={intFmt} />
               <EnvTextCard name="活跃度" today={sentiment?.active} yesterday={sentY.active} />
             </EnvGroup>
