@@ -404,6 +404,36 @@ PACK = HookPack(name="legacy", version="1", schema_bundle="t/1", on_register=on_
         assert rec.id in {x.id for x in PLUGINS}
         apply_plugin_disable(rec.id)
 
+    def test_enable_runtime_error_shows_friendly_message(self, plugin_home):
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import apply_plugin_enable, PLUGINS
+
+        src = '''
+from duanxian.hooks import HookPack, HookRegistry
+
+def on_enable(reg: HookRegistry) -> None:
+    raise RuntimeError("无法连接 ths-linker：请先启动服务")
+
+PACK = HookPack(
+    name="fail-enable",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+)
+'''
+        p = plugin_home / "fail_enable.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        lp = apply_plugin_enable(rec.id)
+        assert lp is not None
+        assert rec.id in {x.id for x in PLUGINS}
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "error"
+        assert st.message == "无法连接 ths-linker：请先启动服务"
+        assert st.detail is None
+
 
 @pytest.mark.unit
 class TestPluginCli:

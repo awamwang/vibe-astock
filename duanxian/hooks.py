@@ -589,10 +589,13 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
         if activate_fn is not None:
             try:
                 activate_fn(registry)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 tb = traceback.format_exc()
                 print(f"⚠️ 插件 {lp.pack.name}（id={lp.id}）启用失败：\n{tb}")
-                ps.set_status(lp.id, "error", "启用失败", tb)
+                # RuntimeError 视为插件给出的可读说明，界面只展示文案，不全量堆栈
+                msg = str(exc).strip() or "启用失败"
+                detail = None if isinstance(exc, RuntimeError) else tb
+                ps.set_status(lp.id, "error", msg, detail)
             else:
                 if ps.get_status(lp.id) is None:
                     ps.set_status(lp.id, "ok", "已加载")

@@ -107,7 +107,20 @@ class ThsLinkerWsClient:
 
     def connect(self) -> None:
         self.close()
-        ws = websocket.create_connection(self._url, timeout=_WS_TIMEOUT)
+        try:
+            ws = websocket.create_connection(self._url, timeout=_WS_TIMEOUT)
+        except (ConnectionRefusedError, ConnectionError, TimeoutError, OSError) as exc:
+            raise RuntimeError(
+                f"无法连接 ths-linker（{self._url}）：请先启动 ths-linker 服务后再启用本插件"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            # websocket-client 在部分环境下会包一层 WebSocketException
+            err = str(exc).lower()
+            if "refused" in err or "10061" in err or "timed out" in err:
+                raise RuntimeError(
+                    f"无法连接 ths-linker（{self._url}）：请先启动 ths-linker 服务后再启用本插件"
+                ) from exc
+            raise
         ws.settimeout(2.0)
         self._ws = ws
 
@@ -562,8 +575,13 @@ def on_enable(reg: HookRegistry) -> None:
     if _BRIDGE is not None:
         return
     plugin_id = reg.plugin_id or ""
-    _BRIDGE = ThsLinkerBridge(reg, plugin_id)
-    _BRIDGE.start()
+    bridge = ThsLinkerBridge(reg, plugin_id)
+    try:
+        bridge.start()
+    except Exception:
+        bridge.stop()
+        raise
+    _BRIDGE = bridge
 
 
 def on_disable() -> None:
