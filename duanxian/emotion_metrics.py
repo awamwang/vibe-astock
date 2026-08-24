@@ -11,7 +11,12 @@ from typing import Optional
 from . import trade_calendar
 from .util import atomic_write_json
 
-from . import fetchers as dr
+from .settled_archive import (
+    _COVERAGE_MIN,
+    _COVERAGE_PARTIAL,
+    _coverage,
+    settled_pool as _settled_pool,
+)
 
 _TENCENT = "http://qt.gtimg.cn/q="
 _TENCENT_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
@@ -161,26 +166,33 @@ def _success_rates(close_vals: list[float], open_vals: list[float]) -> dict:
     }
 
 
-_POOL_CACHE: dict[str, dict] = {}
-_POOL_CACHE_MAX = 240   # 约一年交易日；上界防常驻进程无限增长
-
-
 def _zt_pool(date: str) -> Optional[dict]:
-    """取某日涨停池；失败或标了 error_zt 一律返回 None（不把失败伪装成 0 家）。"""
-    settled = trade_calendar.is_settled(date)
-    if settled and date in _POOL_CACHE:
-        return _POOL_CACHE[date]
-    try:
-        zt = dr.fetch_zt_pool(date.replace("-", ""))
-    except Exception:  # noqa: BLE001
+    """取某日涨停池；失败返回 None（不把失败伪装成 0 家）。
+
+    三池只打 `settled_archive.limit_pools`（与客观事实共用磁盘缓存）。
+    返回形状给梯队 / 家数用：`ladder` + `zt` 行列表 + zb/dt 家数。
+    """
+    from . import settled_archive as sa
+
+    p = sa.limit_pools(date)
+    if not p or not p.get("zt"):
         return None
-    if not zt or zt.get("error_zt") or zt.get("zt") is None:
-        return None
-    if settled:
-        if len(_POOL_CACHE) >= _POOL_CACHE_MAX:
-            _POOL_CACHE.pop(next(iter(_POOL_CACHE)), None)   # 简单 FIFO 淘汰
-        _POOL_CACHE[date] = zt
-    return zt
+    zt_rows = p["zt"]
+    boards = [int(r.get("boards") or 1) for r in zt_rows]
+    return {
+        "zt": zt_rows,
+        "zb_count": len(p.get("zb") or []),
+        "dt_count": len(p.get("dt") or []),
+        "highest_consec": max(boards) if boards else 0,
+        "ladder": [
+            {
+                "code": str(r.get("code") or "").zfill(6),
+                "name": r.get("name") or "",
+                "consec_boards": int(r.get("boards") or 1),
+            }
+            for r in zt_rows if r.get("code")
+        ],
+    }
 
 
 def _ladder_by_boards(zt: dict) -> list[dict]:
@@ -196,18 +208,24 @@ def _ladder_by_boards(zt: dict) -> list[dict]:
 
 def _pool_codes(zt: dict) -> set[str]:
     """涨停池全部代码集合（用于判断"今日是否仍涨停"）。"""
-    df = zt.get("zt")
-    codes: set[str] = set()
-    try:
-        for col in ("代码", "code", "股票代码"):
-            if col in df.columns:
-                codes = {str(c).zfill(6) for c in df[col].tolist()}
-                break
-    except Exception:  # noqa: BLE001  DataFrame 结构异常 → 退回梯队里的代码
-        pass
-    if not codes:
-        codes = {x["code"] for x in _ladder_by_boards(zt)}
-    return codes
+    rows = zt.get("zt")
+    if isinstance(rows, list):
+        codes = {str(r.get("code") or "").zfill(6) for r in rows if r.get("code")}
+        if codes:
+            return codes
+    else:
+        df = rows
+        codes: set[str] = set()
+        try:
+            for col in ("代码", "code", "股票代码"):
+                if df is not None and hasattr(df, "columns") and col in df.columns:
+                    codes = {str(c).zfill(6) for c in df[col].tolist()}
+                    break
+        except Exception:  # noqa: BLE001  DataFrame 结构异常 → 退回梯队里的代码
+            pass
+        if codes:
+            return codes
+    return {x["code"] for x in _ladder_by_boards(zt)}
 
 
 def promotion_rates(date: str, prev: Optional[str] = None) -> dict:
@@ -242,42 +260,6 @@ def promotion_rates(date: str, prev: Optional[str] = None) -> dict:
         "limit_up_count": len(today_codes),
         "prev_limit_up_count": len(_pool_codes(prev_zt)),
     }
-
-
-# 行情覆盖率闸门。批量行情半死不活时只回来几只票，若照样出结论，就是拿
-# 3 只票的表现冒充全体赚钱效应 —— 数字看着完全正常，是最难发现的一类错。
-_COVERAGE_MIN = 0.5      # 低于此：判定不可用，如实说取不到
-_COVERAGE_PARTIAL = 0.9  # 低于此：可用但标 partial，prompt/UI 都要提示样本不全
-
-
-def _coverage(vals: list[float], expected: int) -> dict:
-    """样本覆盖情况。expected = 本该拿到的只数。"""
-    rate = round(len(vals) / expected, 3) if expected else None
-    return {
-        "sample": len(vals),
-        "expected_sample": expected,
-        "coverage_rate": rate,
-        "partial": bool(rate is not None and rate < _COVERAGE_PARTIAL),
-    }
-
-
-def _settled_pool(date: str) -> Optional[list[dict]]:
-    """`date` 那一场的**定稿记录**：昨日涨停股在 `date` 当天的表现。
-
-    每行自带 `ret`（该股在 `date` 的涨跌幅）、`prev_boards`、`close`、`limit_price`
-    —— 也就是说"昨天进去的人赚不赚钱"这一整段**不需要实时行情**也算得出。
-
-    🔴 这条路必须**优先于实时行情**：实时行情只在"目标日就是最近已收盘那一场"
-       那一小段时间内可用，一旦今天开盘，它就变成今天的价、算不了昨天那一场 ——
-       于是"想看 07-29 的复盘"就永远看不到了（而这是复盘系统的基本功能）。
-       定稿记录对任何历史日期都取得到（已收盘的读落盘缓存，否则走东财昨日涨停池）。
-    """
-    from .data import fetch_prev_pool
-
-    try:
-        return fetch_prev_pool(date)
-    except Exception:  # noqa: BLE001  取不到就退回实时那条路
-        return None
 
 
 def _stats_from_pool(rows: list[dict], date: str, today_codes: Optional[set]) -> dict:
@@ -456,15 +438,29 @@ _SUMMARY_SOURCE = "akshare_zt_pool"
 
 def _summarize(zt: dict) -> Optional[dict]:
     """把一天的涨停池压成原始读数（都不依赖行情，任意历史日可算）。"""
-    df = zt.get("zt")
-    if df is None:
+    rows = zt.get("zt")
+    if rows is None:
         return None
+    if isinstance(rows, list):
+        n_zt = len(rows)
+        if not n_zt:
+            return None
+        n_zb = int(zt.get("zb_count", 0) or 0)
+        hc = int(zt.get("highest_consec", 0) or 0)
+        br = (n_zb / (n_zb + n_zt)) if (n_zb + n_zt) else None
+        never_broken = sum(1 for r in rows if not (r.get("broken_times") or 0))
+        nbr = round(never_broken / n_zt, 3) if n_zt else None
+        return {
+            "limit_up": n_zt, "highest_consec": hc, "broken_rate": br,
+            "never_broken_rate": nbr,
+        }
+    df = rows
     n_zt = int(len(df))
     n_zb = int(zt.get("zb_count", 0) or 0)
     hc = int(zt.get("highest_consec", 0) or 0)
     br = (n_zb / (n_zb + n_zt)) if (n_zb + n_zt) else None
     never_broken = 0
-    if "炸板次数" in df.columns:
+    if hasattr(df, "columns") and "炸板次数" in df.columns:
         never_broken = int((df["炸板次数"].fillna(0) == 0).sum())
     nbr = round(never_broken / n_zt, 3) if n_zt else None
     return {

@@ -114,9 +114,9 @@ def _day_theme_tree(date: str, top_per_day: int = 12) -> tuple[dict, dict]:
                 return _matrix_day_from_tree(tree, top_per_day, source="review"), tree
     except Exception:  # noqa: BLE001
         pass
-    from . import theme_tree as tt
+    from . import settled_archive as sa
 
-    tree = tt.build(date)
+    tree = sa.theme_tree_of(date)
     return _matrix_day_from_tree(tree, top_per_day, source="live"), tree
 
 
@@ -444,6 +444,7 @@ def _day_metric_row(date: str) -> dict[str, Any]:
     from . import breadth as br
     from . import emotion_metrics as em
     from . import review_store as rs
+    from . import settled_archive as sa
     from .data import fetch_prev_pool
 
     sb = _load_day_archive(_SHORT_BOARD_DIR, date)
@@ -468,7 +469,7 @@ def _day_metric_row(date: str) -> dict[str, Any]:
                     "close_success_rate": me.get("close_success_rate") if me else None,
                 }
     if not me or me.get("median") is None:
-        settled = em._settled_pool(date)  # noqa: SLF001
+        settled = sa.settled_pool(date)
         if settled:
             vals = [r["ret"] for r in settled if r.get("ret") is not None]
             if vals:
@@ -487,7 +488,7 @@ def _day_metric_row(date: str) -> dict[str, Any]:
     loss = mf.get("loss_effect") if mf.get("loss_effect", {}).get("available") else {}
     loss_rate = loss.get("deep_loss_5_rate") if loss.get("available") else None
     if loss_rate is None:
-        settled = em._settled_pool(date)  # noqa: SLF001
+        settled = sa.settled_pool(date)
         if settled:
             got = [r for r in settled if r.get("ret") is not None]
             if got:

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
     live_emotion, mood_block, overseas, preflight, reflection, review_store, screenshot_parse,
-    short_board, trade_calendar, trade_budget, trade_store,
+    risk_stance, short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -1026,62 +1026,8 @@ def api_trade_guard(date: str | None = None):
 
     budget = trade_store.get_or_compute(date)
     account = trade_store.load_account()
-    equity = account.get("equity")
-    holdings, mv = _portfolio_holdings()
-    consts = account.get("constants") or {}
-
-    out: dict = {
-        "date": date,
-        "budget": budget,
-        "equity": equity,
-        "constants": consts,
-        "position": None,
-        "reduce_order": [],
-        "daily_loss": None,
-        "block_new_long_reasons": list(budget.get("block_new_long_reasons") or []),
-    }
-    if not budget.get("available"):
-        return out
-    if equity is None or float(equity) <= 0:
-        out["block_new_long_reasons"] = out["block_new_long_reasons"] + ["未录入总权益"]
-        return out
-
-    eq = float(equity)
-    cap_t = float(budget["cap_total"])
-    cap_s = float(budget["cap_single"])
-    pos = trade_budget.position_vs_caps(holdings, eq, cap_t, cap_s)
-    out["position"] = pos
-    out["reduce_order"] = trade_budget.reduce_order(holdings, eq, cap_t)
-    if pos.get("over_total"):
-        out["block_new_long_reasons"].append("总仓已达当前档 Cap_total")
-    if not budget.get("expansion_allowed") and budget.get("phase") in (
-        "过热防守", "退潮杀伤", "高潮拥挤",
-    ):
-        pass  # 理由已在 budget.block_new_long_reasons
-
-    # 当日亏损：相对上一交易日权益快照
-    prev = trade_calendar.prev_trade_date(date)
-    snaps = account.get("snapshots") or {}
-    prev_snap = snaps.get(prev) if prev else None
-    if prev_snap and prev_snap.get("equity"):
-        prev_eq = float(prev_snap["equity"])
-        if prev_eq > 0:
-            pnl_pct = (eq - prev_eq) / prev_eq
-            limit = float(consts.get("daily_loss_limit") or trade_budget.DEFAULT_DAILY_LOSS_LIMIT)
-            hit = pnl_pct <= -limit
-            out["daily_loss"] = {
-                "prev_date": prev,
-                "prev_equity": prev_eq,
-                "equity": eq,
-                "pnl_pct": round(pnl_pct, 4),
-                "limit": limit,
-                "hit": hit,
-            }
-            if hit:
-                out["block_new_long_reasons"].append(
-                    f"触及当日亏损限额（{pnl_pct:.2%} ≤ -{limit:.0%}）"
-                )
-    return out
+    holdings, _mv = _portfolio_holdings()
+    return risk_stance.guard(date, budget=budget, account=account, holdings=holdings)
 
 
 @app.post("/api/trade/screenshot/parse")
@@ -1190,32 +1136,11 @@ def api_trade_size(request: Request, body: dict = Body(...)):
 
     budget = trade_store.get_or_compute(date)
     account = trade_store.load_account()
-    equity = account.get("equity")
-    if not budget.get("available"):
-        return {"ok": False, "reason": budget.get("reason") or "预算不可用", "amount": 0}
-    if equity is None or float(equity) <= 0:
-        return {"ok": False, "reason": "请先录入总权益", "amount": 0}
-
     holdings, _ = _portfolio_holdings()
-    used = sum(float(h.get("market_value") or 0) for h in holdings)
-    risk = float((account.get("constants") or {}).get("risk_per_trade")
-                 or trade_budget.DEFAULT_RISK_PER_TRADE)
-    result = trade_budget.size_amount(
-        float(equity),
-        float(budget["cap_total"]),
-        float(budget["cap_single"]),
-        used,
-        risk,
-        stop_pct,
-        boards=boards,
-        phase=str(budget.get("phase") or "升温扩张"),
+    return risk_stance.size_preview(
+        date, budget=budget, account=account, holdings=holdings,
+        stop_pct=stop_pct, boards=boards,
     )
-    result["date"] = date
-    result["phase"] = budget.get("phase")
-    result["cap_total"] = budget.get("cap_total")
-    result["cap_single"] = budget.get("cap_single")
-    result["used"] = round(used, 2)
-    return result
 
 
 def _zt_fallback_date() -> str | None:

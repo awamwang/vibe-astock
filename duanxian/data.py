@@ -74,8 +74,9 @@ def get_emotion_metrics(date: str) -> tuple[str, dict]:
     """派生情绪指标（赚钱效应 / 晋级率 / 连板溢价）"""
     try:
         from . import emotion_metrics as em
+        from . import settled_archive as sa
 
-        m = em.build_metrics(date)
+        m = sa.emotion_half(date)
         return em.render_metrics(m), m
     except Exception as exc:  # noqa: BLE001
         return _degrade("派生情绪指标", date, exc), {}
@@ -88,29 +89,12 @@ def get_market_facts(date: str) -> tuple[str, dict]:
     结构化那份供 UI 直接渲染。事实层是"今天发生了什么"，指标层是"什么温度"，
     两者互补，别互相替代。
 
-    延迟导入同 emotion_metrics（market_facts 反过来要借 data 注入 sys.path）。
+    组装入口在 `settled_archive.facts_half`（定稿日档案）。
     """
     try:
-        from . import market_facts as mf
+        from . import settled_archive as sa
 
-        from . import stats_context as sctx
-        from . import theme_tree as tt
-
-        from . import breadth as bd
-
-        facts = {
-            "breadth": bd.market_breadth(date),
-            "stats_context": sctx.context_for(date),
-            "day_diff": sctx.diff(date),
-            "trend": sctx.trend(10, end=date),
-            "theme_tree": tt.build(date),
-            "seal_quality": mf.seal_quality(date),
-            "loss_effect": mf.loss_effect(date),
-            "feedback_matrix": mf.feedback_matrix(date),
-            "theme_structure": mf.theme_structure(date),
-            "event_ledger": mf.event_ledger(date),
-            "by_board": mf.by_board(date),
-        }
+        facts = sa.facts_half(date)
         return render_market_facts(facts), facts
     except Exception as exc:  # noqa: BLE001
         return _degrade("市场事实表", date, exc), {}

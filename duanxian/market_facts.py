@@ -152,13 +152,23 @@ def pools(date: str) -> Optional[dict]:
         zt = _df_rows(zt_df, _ZT_MAP)
         if not zt:
             return None       # 涨停池空 = 非交易日或数据未更新，别继续
-        zb_df = ak.stock_zt_pool_zbgc_em(date=d)
-        dt_df = ak.stock_zt_pool_dtgc_em(date=d)
-        zb = _df_rows(zb_df, _ZB_MAP)
-        dt = _df_rows(dt_df, _DT_MAP)
-        raw = {"zt": _raw_rows(zt_df), "zb": _raw_rows(zb_df), "dt": _raw_rows(dt_df)}
     except Exception:  # noqa: BLE001
         return None
+
+    zb, zb_raw, dt, dt_raw = [], [], [], []
+    try:
+        zb_df = ak.stock_zt_pool_zbgc_em(date=d)
+        zb = _df_rows(zb_df, _ZB_MAP)
+        zb_raw = _raw_rows(zb_df)
+    except Exception:  # noqa: BLE001  炸板池失败不当成涨停池失败
+        pass
+    try:
+        dt_df = ak.stock_zt_pool_dtgc_em(date=d)
+        dt = _df_rows(dt_df, _DT_MAP)
+        dt_raw = _raw_rows(dt_df)
+    except Exception:  # noqa: BLE001
+        pass
+    raw = {"zt": _raw_rows(zt_df), "zb": zb_raw, "dt": dt_raw}
 
     out = {"zt": zt, "zb": zb, "dt": dt, "raw": raw}
     if trade_calendar.should_write_daily_cache(date):
@@ -208,32 +218,14 @@ def seal_quality(date: str) -> dict:
     }
 
 
-def _settled_rows(date: str) -> Optional[list[dict]]:
-    """`date` 那一场的定稿记录（昨日涨停股在 `date` 的表现）。
-
-    🔴 这条路必须优先于实时行情：实时行情只在"目标日就是最近已收盘那一场"的
-       那一小段时间内可用，一旦今天开盘就变成今天的价、算不了昨天那一场 ——
-       于是"想看 07-29 的复盘"永远看不到，而这是复盘系统的基本功能。
-       详见 emotion_metrics._settled_pool。
-
-    ⚠️ 定稿记录只覆盖**昨日涨停**那批，不含昨日炸板股 ——
-       用它算的块要如实说明少了炸板那一档，别默默当成 0。
-    """
-    from .data import fetch_prev_pool
-
-    try:
-        return fetch_prev_pool(date)
-    except Exception:  # noqa: BLE001
-        return None
-
-
 # ---------------------------------------------------------------- 亏钱效应 / 大面
 def loss_effect(date: str, prev: Optional[str] = None) -> dict:
     """亏钱效应 —— 昨日强势股今天**死在哪**（定稿记录优先，实时行情兜底）"""
     from .data import is_limit_up
+    from .settled_archive import settled_pool
 
     prev = prev or trade_calendar.prev_trade_date(date)
-    rows = _settled_rows(date)
+    rows = settled_pool(date)
     if rows:
         got = [r for r in rows if r.get("ret") is not None]
         if got:
@@ -263,7 +255,8 @@ def loss_effect(date: str, prev: Optional[str] = None) -> dict:
     if pp is None or tp is None:
         return {"available": False, "reason": f"涨停池取数失败（{prev} 或 {date}）"}
 
-    from .emotion_metrics import _COVERAGE_MIN, _coverage, batch_pct
+    from .emotion_metrics import batch_pct
+    from .settled_archive import _COVERAGE_MIN, coverage
 
     prev_zt = pp["zt"]
     codes = [r["code"] for r in prev_zt]
@@ -271,7 +264,7 @@ def loss_effect(date: str, prev: Optional[str] = None) -> dict:
     got = [(r, pct[r["code"]]) for r in prev_zt if r["code"] in pct]
     if not got:
         return {"available": False, "reason": "批量行情全部取数失败"}
-    cov = _coverage([v for _, v in got], len(codes))
+    cov = coverage([v for _, v in got], len(codes))
     if cov["coverage_rate"] is not None and cov["coverage_rate"] < _COVERAGE_MIN:
         return {"available": False,
                 "reason": f"批量行情只取到 {len(got)}/{len(codes)} 只"
@@ -343,9 +336,10 @@ def feedback_matrix(date: str, prev: Optional[str] = None) -> dict:
     定稿记录优先。⚠️ 定稿记录不含昨日炸板股，所以那一档会缺 —— 如实写进 note。
     """
     from .data import is_limit_up
+    from .settled_archive import settled_pool
 
     prev = prev or trade_calendar.prev_trade_date(date)
-    srows = _settled_rows(date)
+    srows = settled_pool(date)
     if srows:
         got = [r for r in srows if r.get("ret") is not None]
         if got:
@@ -391,14 +385,15 @@ def feedback_matrix(date: str, prev: Optional[str] = None) -> dict:
     if pp is None or tp is None:
         return {"available": False, "reason": f"涨停池取数失败（{prev} 或 {date}）"}
 
-    from .emotion_metrics import _COVERAGE_MIN, _coverage, batch_pct
+    from .emotion_metrics import batch_pct
+    from .settled_archive import _COVERAGE_MIN, coverage
 
     today_zt = {r["code"] for r in tp["zt"]}
     today_dt = {r["code"] for r in tp["dt"]}
     rows = pp["zt"] + [dict(r, boards=0) for r in pp["zb"]]   # 昨日炸板股单列一档
     pct = batch_pct([r["code"] for r in rows])
     # 同 loss_effect：覆盖率不够就不出矩阵（P0-5）
-    _cov = _coverage([v for v in pct.values() if v is not None], len(rows))
+    _cov = coverage([v for v in pct.values() if v is not None], len(rows))
     if _cov["coverage_rate"] is not None and _cov["coverage_rate"] < _COVERAGE_MIN:
         return {"available": False,
                 "reason": f"批量行情只取到 {_cov['sample']}/{len(rows)} 只"

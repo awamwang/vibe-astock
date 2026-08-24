@@ -129,12 +129,13 @@ def _with_theme_tree(env: dict | None) -> dict | None:
     if stored.get("available"):
         return env
     try:
+        from . import settled_archive as sa
         from . import theme_tree as tt
 
         cached, _err = tt.load_cached_reasons(str(date))
         if not cached:
             return env
-        rebuilt = tt.build(str(date))
+        rebuilt = sa.theme_tree_of(str(date))
     except Exception:  # noqa: BLE001
         return env
     if not rebuilt.get("available"):

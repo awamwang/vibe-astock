@@ -11,7 +11,7 @@ import os
 import threading
 from typing import Any, Optional
 
-from . import breadth, emotion_metrics as em, market_facts, trade_budget as tb
+from . import trade_budget as tb
 from . import trade_calendar
 from .util import atomic_write_json, china_now
 
@@ -279,110 +279,11 @@ def load_day(date: str) -> Optional[dict]:
     return None
 
 
-def _index_pct_for(date: str) -> Optional[float]:
-    """仅当实时行情属于该已收盘日时取上证涨跌幅；历史日不强行冒充。"""
-    ok, _ = trade_calendar.live_quotes_are_close_of(date)
-    if not ok:
-        return None
-    try:
-        from . import fetchers
-
-        for row in fetchers.fetch_indices():
-            if row.get("code") == "sh000001" and row.get("changePct") is not None:
-                return float(row["changePct"])
-    except Exception:  # noqa: BLE001
-        return None
-    return None
-
-
-def _hist_highest(date: str, lookback: int = 5) -> list[int]:
-    dates = trade_calendar.trade_dates_ending_at(date, lookback + 1) or []
-    out: list[int] = []
-    for d in dates:
-        if d == date:
-            continue
-        s = em.day_summary(d)
-        if s and s.get("highest_consec") is not None:
-            out.append(int(s["highest_consec"]))
-    return out
-
-
 def gather_readings(date: str) -> dict[str, Any]:
-    """组装定档所需读数（纯计算，不调 LLM）。"""
-    prev = trade_calendar.prev_trade_date(date)
-    summary = em.day_summary(date)
-    metrics = em.build_metrics(date, with_cycle=False)
-    me = metrics.get("money_effect") or {}
-    pr = metrics.get("promotion") or {}
-    lg = metrics.get("ladder_gap") or {}
-    try:
-        le = market_facts.loss_effect(date, prev)
-    except Exception as exc:  # noqa: BLE001
-        le = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
-    try:
-        brd = breadth.market_breadth(date)
-    except Exception as exc:  # noqa: BLE001
-        brd = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    """组装定档所需读数。实现在当日风险姿态 module。"""
+    from . import risk_stance as rs
 
-    p12 = None
-    if pr.get("available"):
-        tier = (pr.get("tiers") or {}).get("1进2") or {}
-        p12 = tier.get("rate")
-
-    # 对照前日（修复代理 / 可选）
-    me_prev = pr_prev = le_prev = None
-    p12_prev = med_prev = mld_prev = None
-    if prev:
-        try:
-            m_prev = em.build_metrics(prev, with_cycle=False)
-            me_prev = m_prev.get("money_effect") or {}
-            pr_prev = m_prev.get("promotion") or {}
-            if me_prev.get("available"):
-                med_prev = me_prev.get("median")
-            if pr_prev.get("available"):
-                p12_prev = ((pr_prev.get("tiers") or {}).get("1进2") or {}).get("rate")
-            le_prev = market_facts.loss_effect(prev)
-            if le_prev.get("available"):
-                mld_prev = le_prev.get("market_limit_down")
-        except Exception:  # noqa: BLE001
-            pass
-
-    broken = summary.get("broken_rate") if summary else None
-    highest = None
-    if lg.get("available") and lg.get("highest") is not None:
-        highest = int(lg["highest"])
-    elif summary and summary.get("highest_consec") is not None:
-        highest = int(summary["highest_consec"])
-
-    up = down = None
-    if brd.get("available"):
-        up, down = brd.get("up"), brd.get("down")
-
-    return {
-        "summary_ok": summary is not None,
-        "summary_reason": None if summary else "涨停池摘要不可用",
-        "money_ok": bool(me.get("available")),
-        "money_reason": me.get("reason"),
-        "promotion_ok": bool(pr.get("available")),
-        "promotion_reason": pr.get("reason"),
-        "limit_up": None if not summary else summary.get("limit_up"),
-        "highest": highest,
-        "highest_hist": _hist_highest(date),
-        "broken_rate": broken,
-        "money_median": me.get("median") if me.get("available") else None,
-        "money_median_prev": med_prev,
-        "promotion_1to2": p12,
-        "promotion_1to2_prev": p12_prev,
-        "deep_loss_5_rate": le.get("deep_loss_5_rate") if le.get("available") else None,
-        "market_limit_down": le.get("market_limit_down") if le.get("available") else None,
-        "market_limit_down_prev": mld_prev,
-        "up": up,
-        "down": down,
-        "index_pct": _index_pct_for(date),
-        "breadth_ok": bool(brd.get("available")),
-        "breadth_reason": brd.get("reason"),
-        "prev_date": prev,
-    }
+    return rs.gather_readings(date)
 
 
 def compute_day(

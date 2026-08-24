@@ -662,6 +662,66 @@ class TestCoverageGate:
         assert 0 < em._COVERAGE_MIN < em._COVERAGE_PARTIAL <= 1
 
 
+# ---------------------------------------------------------------- 定稿日档案
+@pytest.mark.unit
+class TestSettledArchive:
+    """覆盖率 / 定稿池 / 组装入口收在 settled_archive；落盘键名不变。"""
+
+    def test_coverage_lives_in_archive_module(self):
+        from duanxian import settled_archive as sa
+
+        c = sa.coverage([1.0] * 30, 50)
+        assert c["partial"] is True and c["sample"] == 30
+        assert sa._COVERAGE_MIN == em._COVERAGE_MIN
+
+    def test_emotion_half_delegates_to_build_metrics(self, monkeypatch):
+        from duanxian import settled_archive as sa
+
+        monkeypatch.setattr(
+            "duanxian.emotion_metrics.build_metrics",
+            lambda d, with_cycle=True: {"date": d, "with_cycle": with_cycle, "money_effect": {"available": False}},
+        )
+        out = sa.emotion_half("2026-08-20", with_cycle=False)
+        assert out["date"] == "2026-08-20" and out["with_cycle"] is False
+
+    def test_archive_shape_keeps_review_keys(self, monkeypatch):
+        from duanxian import settled_archive as sa
+
+        monkeypatch.setattr(sa, "emotion_half", lambda d, with_cycle=True: {"date": d, "money_effect": {}})
+        monkeypatch.setattr(sa, "facts_half", lambda d: {"breadth": {"available": False}, "theme_tree": {}})
+        arch = sa.archive("2026-08-20")
+        assert set(arch) >= {"date", "emotion_metrics", "market_facts"}
+        assert "theme_tree" in arch["market_facts"]
+
+    def test_zt_pool_adapts_from_limit_pools(self, monkeypatch):
+        from duanxian import emotion_metrics as em
+        from duanxian import settled_archive as sa
+
+        monkeypatch.setattr(sa, "limit_pools", lambda _d: {
+            "zt": [
+                {"code": "000001", "name": "平安", "boards": 3, "broken_times": 0},
+                {"code": "000002", "name": "万科", "boards": 1, "broken_times": 2},
+            ],
+            "zb": [{"code": "000003"}],
+            "dt": [],
+        })
+        z = em._zt_pool("2026-08-20")
+        assert z["highest_consec"] == 3
+        assert z["zb_count"] == 1
+        assert {s["code"] for s in z["ladder"]} == {"000001", "000002"}
+        s = em._summarize(z)
+        assert s["limit_up"] == 2
+        assert s["never_broken_rate"] == 0.5
+        assert abs(s["broken_rate"] - 1 / 3) < 1e-9
+
+    def test_zt_pool_none_when_limit_pools_empty(self, monkeypatch):
+        from duanxian import emotion_metrics as em
+        from duanxian import settled_archive as sa
+
+        monkeypatch.setattr(sa, "limit_pools", lambda _d: None)
+        assert em._zt_pool("2026-08-20") is None
+
+
 # ---------------------------------------------------------------- 对话输入约束
 @pytest.mark.unit
 class TestChatSanitize:
@@ -5161,7 +5221,7 @@ class TestWeeklyMetricCharts:
             "up_down_scope": "沪深", "dist_scope": "全A",
             "dist_available": True, "dist_partial": False, "universe": 5120,
         })
-        monkeypatch.setattr("duanxian.emotion_metrics._settled_pool", lambda _d: None)
+        monkeypatch.setattr("duanxian.settled_archive.settled_pool", lambda _d: None)
 
         out = wk.build_metric_charts(["2026-08-18"])
         assert out["available"] is True
@@ -5192,7 +5252,7 @@ class TestWeeklyMetricCharts:
         monkeypatch.setattr("duanxian.review_store.load", lambda _d: None)
         monkeypatch.setattr("duanxian.emotion_metrics.day_summary", lambda _d: None)
         monkeypatch.setattr("duanxian.breadth.market_breadth", lambda _d: {"available": False})
-        monkeypatch.setattr("duanxian.emotion_metrics._settled_pool", lambda _d: None)
+        monkeypatch.setattr("duanxian.settled_archive.settled_pool", lambda _d: None)
 
         row = wk._day_metric_row("2026-08-22")
         assert row["limit_down"] == 13
