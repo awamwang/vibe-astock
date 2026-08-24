@@ -6,6 +6,7 @@
 import { ClipboardList } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { cn } from "@/lib/utils";
+import { pctColor } from "@/lib/colors";
 import type { Valuation, Financials, ValPercentile } from "@/lib/api";
 
 // 从含单位/符号的字符串里取数（"+15.2%" → 15.2；取不到 → null）。
@@ -16,10 +17,7 @@ const num = (s: string | number | null | undefined): number | null => {
 };
 
 // A股红涨绿跌：正=红 负=绿。
-const yoyColor = (s: string | null | undefined) => {
-  const n = num(s);
-  return n == null ? "text-muted-foreground" : n > 0 ? "text-danger" : n < 0 ? "text-success" : "text-muted-foreground";
-};
+const yoyColor = (s: string | null | undefined) => pctColor(num(s));
 
 interface Props {
   val: Valuation;

@@ -51,8 +51,8 @@ app = FastAPI(title="短线每日复盘")
 
 # ---------------------------------------------------------------- VR host（薄适配）
 # 盘面数据 / 首板分析 / 盯盘 / 持仓股 / 自选股 / 个股数据 / 资讯雷达 这几个分栏的
-# 后端放在 `vr/`，host 策略（并路由、钉定稿池、CLI 白名单、userdata 备份）在
-# `duanxian.vr_host`。`vr/` 原样来自开源的 Vibe-Research，日后拉更新就是一次纯拷贝。
+# 后端放在 `vr/`，host 策略（并路由、钉定稿池、CLI 白名单、userdata 备份、请求闸判定）
+# 在 `duanxian.vr_host`。`vr/` 原样来自开源的 Vibe-Research，日后拉更新就是一次纯拷贝。
 # 下列名字从 vr_host 再导出，供测试 monkeypatch / 源码 grep 继续对准 server。
 
 from duanxian import vr_host as _vr_host
@@ -78,23 +78,15 @@ _VR_ROUTES = _vr_install["routes"]
 _POOL_PINNED = _vr_install["pinned"]
 _DISABLED_CLIS = _vr_install["disabled_clis"]
 
-_VR_API_KEY = os.environ.get("VR_API_KEY", "").strip()
-
-# 需要 Origin 校验的方法。我们自有的写操作都在 handler 里手工调 `_origin_ok`，
-# 但 VR 的 handler **我们不改**（要保持上游原样）→ 只能在 middleware 层补。
-_MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
-
 
 @app.middleware("http")
 async def _vr_guard(request: Request, call_next):
-    """给并进来的 VR 路由补两道闸"""
-    if _is_vr_path(request.url.path):
-        if (_VR_API_KEY and request.method != "OPTIONS"
-                and request.url.path != "/api/health"
-                and request.headers.get("authorization", "") != f"Bearer {_VR_API_KEY}"):
-            return JSONResponse({"error": "未授权：缺少或错误的 VR_API_KEY"}, status_code=401)
-        if request.method in _MUTATING and not _origin_ok(request):
-            return JSONResponse({"error": "非法来源"}, status_code=403)
+    """给并进来的 VR 路由补两道闸（判定在 `vr_host.vr_guard_error`）"""
+    err = _vr_host.vr_guard_error(
+        request.url.path, request.method,
+        request.headers.get("authorization", ""), lambda: _origin_ok(request))
+    if err:
+        return JSONResponse({"error": err[1]}, status_code=err[0])
     return await call_next(request)
 
 _lock = threading.Lock()
@@ -175,7 +167,11 @@ def _run_review(date: str, job_id: str) -> None:
 
 
 def _origin_ok(request: Request) -> bool:
-    """只允许本机来源触发昂贵任务，挡掉恶意网页的跨站 POST（#22）。"""
+    """只允许本机来源触发昂贵任务，挡掉恶意网页的跨站 POST（#22）。
+
+    站点级 HTTP 闸：自有写路由逐个手工调用，VR 路由由 `vr_host.vr_guard_error` 注入调用。
+    因为两边都在用，它归 server（HTTP 适配层），不进 VR host 策略。
+    """
     ref = request.headers.get("origin") or request.headers.get("referer") or ""
     if not ref:
         return True  # 无 Origin（如 curl 本地调用）放行

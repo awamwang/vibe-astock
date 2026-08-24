@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 from statistics import median
 from typing import Callable, Optional
@@ -130,10 +131,14 @@ _SERIES_CACHE: dict[tuple[int, str], tuple[list[dict], tuple]] = {}
 _SERIES_CACHE_MAX = 8
 
 
+# 取不到指纹时的自增序号。时钟不行：Windows 的 monotonic 只有约 15ms 粒度，
+# 同一个 tick 内的两次失败会给出相同签名，于是坏状态被当成"没变"缓存住。
+_STAT_FAIL_SEQ = itertools.count()
+
+
 def _file_fingerprint(dir_name: str, day: str) -> tuple:
     """某天那个缓存文件的指纹 `(mtime_ns, size)`。**这是测试用的接缝，测试 patch 它。**"""
     import os
-    import time
 
     path = os.path.expanduser(f"~/.duanxian-agents/cache/{dir_name}/{day}.json")
     try:
@@ -143,7 +148,7 @@ def _file_fingerprint(dir_name: str, day: str) -> tuple:
         # 每次调用都不同 → 签名必不相等 → 强制重算，同时出声
         logger.warning("取不到缓存文件指纹（%s）：%s: %s —— 该窗口这轮不走缓存",
                        path, type(exc).__name__, exc)
-        return ("stat-failed", time.monotonic_ns())
+        return ("stat-failed", next(_STAT_FAIL_SEQ))
 
 
 def _window_state(window: list[str]) -> tuple:

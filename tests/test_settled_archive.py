@@ -116,3 +116,57 @@ class TestSettledArchive:
     def test_zt_pool_none_when_limit_pools_empty(self, monkeypatch):
         monkeypatch.setattr(sa, "limit_pools", lambda _d: None)
         assert em._zt_pool("2026-08-20") is None
+
+
+# ---------------------------------------------------------------- 档案形状 ↔ 前端投影
+@pytest.mark.unit
+class TestArchiveShapeMatchesViewModel:
+    """档案两半的键 = 前端 view-model 的字段。
+
+    这份 dict 原样落进复盘 JSON，前端 `agent.ts` 再照着它声明类型 —— 同一套词汇
+    写在两处。任一侧单独改都不报错：后端新加一张卡，前端不认就永远不渲染；
+    TS 留着后端已删的键，那张卡就永远显示"暂不可用"。两种都是静默的。
+    """
+
+    @staticmethod
+    def _py_keys(fn) -> set[str]:
+        """函数体里 dict 字面量的键 + `out["x"] = ...` 这类后补的键。"""
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        keys = {k.value for n in ast.walk(tree) if isinstance(n, ast.Dict)
+                for k in n.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Assign):
+                continue
+            for t in n.targets:
+                if (isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
+                        and isinstance(t.slice.value, str)):
+                    keys.add(t.slice.value)
+        return keys
+
+    @staticmethod
+    def _ts_fields(interface: str) -> set[str]:
+        import pathlib
+        import re
+
+        src = pathlib.Path("frontend/src/lib/agent.ts").read_text(encoding="utf-8")
+        m = re.search(r"export interface %s \{([^}]*)\}" % interface, src)
+        assert m, f"agent.ts 里找不到 interface {interface}"
+        return set(re.findall(r"^\s*(\w+)\??:", m.group(1), re.M))
+
+    def test_emotion_half_matches_ts(self):
+        assert self._py_keys(em.build_metrics) == self._ts_fields("EmotionMetrics"), \
+            "派生情绪指标的键与 agent.ts 的 EmotionMetrics 对不上"
+
+    def test_facts_half_matches_ts(self):
+        assert self._py_keys(sa.facts_half) == self._ts_fields("MarketFacts"), \
+            "客观事实的键与 agent.ts 的 MarketFacts 对不上"
+
+    def test_extractor_actually_sees_keys(self):
+        """提取器自身失效时上面两条会双双"通过"（空集 == 空集），先钉住它。"""
+        assert "money_effect" in self._py_keys(em.build_metrics)
+        assert "cycle" in self._py_keys(em.build_metrics), "条件写入的键也要算进来"
+        assert "theme_tree" in self._ts_fields("MarketFacts")

@@ -1,4 +1,4 @@
-"""VR host —— 合并 VR 路由、钉定稿涨停池、CLI 白名单、用户数据防护。
+"""VR host —— 合并 VR 路由、钉定稿涨停池、CLI 白名单、用户数据防护、请求闸判定。
 
 `vr/` 保持可整树拷贝同步（ADR-0001）；本模块在外围拥有 host 策略，
 HTTP 领域路由仍留在 `server.py` 薄适配层。
@@ -10,7 +10,7 @@ import json
 import os
 import re
 import sys
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI
 
@@ -260,10 +260,49 @@ def _is_vr_path(path: str) -> bool:
     return any(rx.match(path) for rx in _VR_PATH_RES)
 
 
+# 需要来源校验的方法。我们自有的写操作都在 handler 里手工调 `_origin_ok`，
+# 但 VR 的 handler **我们不改**（要保持上游原样）→ 只能在 middleware 层补。
+_MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+_VR_API_KEY = ""
+
+
+def refresh_vr_api_key() -> str:
+    """按当前环境变量重算 VR 访问口令（server reload 时调用）。"""
+    global _VR_API_KEY
+    _VR_API_KEY = os.environ.get("VR_API_KEY", "").strip()
+    return _VR_API_KEY
+
+
+refresh_vr_api_key()
+
+
+def vr_guard_error(
+    path: str, method: str, auth_header: str, origin_ok: Callable[[], bool],
+) -> Optional[tuple[int, str]]:
+    """并进来的 VR 路由要补的两道闸。返回 `(状态码, 说明)`；None = 放行。
+
+    只作用于 VR 路径：我们自有路由已在 handler 里逐个自校验，再来一遍会把 GET 也卡住。
+
+    `origin_ok` 由宿主注入 —— 本机来源闸是站点级的 HTTP 闸（自有写路由也在用），
+    归 `server`，不属 VR host 策略；这里只决定"这条 VR 请求要不要过它"。
+    """
+    if not _is_vr_path(path):
+        return None
+    if (_VR_API_KEY and method != "OPTIONS"
+            and path != "/api/health"          # 健康检查豁免（同上游口径）
+            and auth_header != f"Bearer {_VR_API_KEY}"):
+        return 401, "未授权：缺少或错误的 VR_API_KEY"
+    if method in _MUTATING and not origin_ok():
+        return 403, "非法来源"
+    return None
+
+
 def install(app: FastAPI, here: str) -> dict[str, Any]:
     """挂上 VR host：并路由、钉定稿池、备份 userdata、灌自选、摘不安全 CLI。"""
     bind(app, here)
     refresh_allowed_cli_kinds()
+    refresh_vr_api_key()
     routes = _merge_vr_routes()
     pinned = _pin_pool_to_settled_session()
     _guard_vr_userdata()

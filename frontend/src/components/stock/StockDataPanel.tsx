@@ -13,6 +13,8 @@ import {
   type GlobalStock, type HkCashflow,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+// A股红涨绿跌（中国平台看美港股也用此惯例）—— 全站一份口径，见 lib/colors.ts
+import { pctColor } from "@/lib/colors";
 import { clearStockDataCache, loadStockDataCache, saveStockDataCache } from "./stockCache";
 
 // 金额格式化（后端资金单位：元 / 万元）
@@ -21,9 +23,6 @@ const yi = (v: number) => `${(v / 1e8).toFixed(2)} 亿`;
 const fmt = (v: number | null | undefined, suffix = "") =>
   v === null || v === undefined ? "—" : `${v}${suffix}`;
 
-// A股红涨绿跌（中国平台看美港股也用此惯例）
-const pctColor = (p: number | null | undefined) =>
-  p != null && p > 0 ? "text-danger" : p != null && p < 0 ? "text-success" : "text-muted-foreground";
 const pctStr = (p: number | null | undefined) => (p == null ? "—" : `${p > 0 ? "+" : ""}${p}%`);
 // 美/港股金额（原生币种）
 const curOf = (market: string) => (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");

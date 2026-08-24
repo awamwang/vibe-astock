@@ -240,7 +240,9 @@ class TestRenderMetrics:
         txt = em.render_metrics({
             "date": "2026-07-24", "prev_date": "2026-07-23",
             "money_effect": {"available": True, "sample": 115, "avg": -0.19,
-                             "median": -1.82, "positive_rate": 0.38, "limit_up_again_rate": 0.16},
+                             "median": -1.82, "positive_rate": 0.38,
+                             "close_success_rate": 0.38, "open_success_rate": 0.44,
+                             "open_sample": 112, "limit_up_again_rate": 0.16},
             "promotion": {"available": True,
                           "tiers": {"1进2": {"base": 101, "promoted": 13, "rate": 0.129},
                                     "2进3": {"base": 9, "promoted": 2, "rate": 0.222}},
@@ -2156,6 +2158,13 @@ class TestTrend:
 class TestFileFingerprint:
     """`_file_fingerprint` 的专测"""
 
+    @pytest.fixture(autouse=True)
+    def _isolated_home(self, tmp_path, monkeypatch):
+        """指纹读的是 `~/.duanxian-agents/cache`。Windows 的 expanduser 不认 HOME、
+        只认 USERPROFILE —— 少设一个，测到的就是本机真实缓存，跟着环境飘。"""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
     def _cache_file(self, tmp_path, dir_name, day, content="x"):
         import pathlib
 
@@ -2387,7 +2396,7 @@ class TestGetCannotForceRefresh:
 
         calls = []
         monkeypatch.setattr(server, "_weekly",
-                            lambda force: calls.append(("weekly", force)) or {"ok": True})
+                            lambda force, days=10: calls.append(("weekly", force)) or {"ok": True})
         return TestClient(server.app), calls
 
     def test_get_with_refresh_query_does_not_force(self, monkeypatch):
@@ -2476,7 +2485,8 @@ class TestCliEntryPersists:
         import pathlib
 
         s = pathlib.Path("main.py").read_text(encoding="utf-8")
-        assert "review_store.save(review_store.serialize(" in s, "要走共享写盘"
+        # 按**意图**断言：序列化 + 共享写盘都要走公共实现，不钉死是否写成一行
+        assert "review_store.serialize(" in s and "review_store.save(" in s, "要走共享写盘"
         assert "res.written" in s and "res.reason" in s, "写没写成要说出来"
 
     def test_both_entries_use_one_serializer(self):
@@ -2531,6 +2541,24 @@ class TestReviewHistory:
 
 class TestCliBackendPreflight:
     """第 14 轮 ：`VIBE_LLM_CLI=codex` 在 server 里单独设是不够的"""
+
+    @pytest.fixture(autouse=True)
+    def _restore_bins_snapshot(self):
+        """这几条会改写 cli_runtime 上那份**完整 CLI 快照**。
+
+        它寄存在模块对象上、跨测试一直活着 —— 不还回去，后面读快照的人拿到的就是
+        这里造的残缺版（真实后果：`/api/cli/available` 把被禁的 kind 误报成"没装"）。
+        """
+        from duanxian import cli_llm
+
+        mod = cli_llm._load_runtime()
+        name = cli_llm._BINS_ATTR_NAME
+        had, snap = hasattr(mod, name), getattr(mod, name, None)
+        yield
+        if had:
+            setattr(mod, name, snap)
+        elif hasattr(mod, name):
+            delattr(mod, name)
 
     def test_error_says_which_second_switch_to_set(self, monkeypatch):
         import sys
@@ -3264,6 +3292,8 @@ class TestReviewOnlyRunsOnSettledSessions:
         assert "already_done" in src, "前端要认这个字段"
         assert "suggest_date" in src, "409 时要指回最近已收盘那一场"
         assert "setNotice" in src, "这类告知要与 err 分开显示"
+        assert "重新复盘" in src, "选中日已有复盘时按钮文案要换成重新复盘"
+        assert 'force' in src and "reviewExists" in src, "重新复盘须带 force，否则后端只回 already_done"
 
 
 @pytest.mark.unit
@@ -3406,7 +3436,7 @@ class TestRealtimeQuotesAreLabeledWithTheirSession:
         """成交额榜那个时间戳是抓取时刻，不是数据日期，得写清楚。"""
         import pathlib
 
-        src = pathlib.Path("frontend/src/pages/DailyReview.tsx").read_text(encoding="utf-8")
+        src = pathlib.Path("frontend/src/pages/ShortBoard.tsx").read_text(encoding="utf-8")
         assert "更新于 {turnover.updated}" in src, "裸展示时间戳会被当成数据日期"
 
 
@@ -3585,7 +3615,7 @@ class TestPerStockPromptsStayAtSectorLevel:
     所以：强弱/阶段判断必须显式限定在**题材板块**层面，并显式禁止外推到个股。
     """
 
-    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/DailyReview.tsx", "pages/Watchlist.tsx")
+    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/ShortBoard.tsx", "pages/Watchlist.tsx")
 
     def _src(self, rel):
         import pathlib

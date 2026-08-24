@@ -74,19 +74,63 @@ class TestVrGuard:
         assert "_vr_guard" in src
         assert server.app.user_middleware, "middleware 没注册上"
 
-    def test_guard_only_touches_vr_paths(self):
+    @staticmethod
+    def _vr_path() -> str:
+        return "/api/quote"
+
+    def test_guard_only_touches_vr_paths(self, monkeypatch):
         """闸只作用于 VR 路径 —— 我们自有路由已在 handler 里自校验，再来一遍
         会把 GET 也卡住。"""
+        monkeypatch.setattr(vr_host, "_VR_API_KEY", "k")
+
+        deny = lambda: False    # noqa: E731  来源不合法
+        assert vr_host.vr_guard_error("/api/review/run", "POST", "", deny) is None
+        assert vr_host.vr_guard_error("/api/review/latest", "GET", "", deny) is None
+
+    def test_origin_gate_only_blocks_mutations(self, monkeypatch):
+        """来源闸只卡写操作：GET 被卡住的话，看盘的人换个域名访问就整块打不开。"""
+        monkeypatch.setattr(vr_host, "_VR_API_KEY", "")
+        deny = lambda: False        # noqa: E731
+        allow = lambda: True        # noqa: E731
+
+        assert vr_host.vr_guard_error(self._vr_path(), "GET", "", deny) is None
+        assert vr_host.vr_guard_error(self._vr_path(), "POST", "", deny) == (403, "非法来源")
+        assert vr_host.vr_guard_error(self._vr_path(), "POST", "", allow) is None
+
+    def test_api_key_gate_exempts_preflight_and_health(self, monkeypatch):
+        """设了口令时：预检要放过（否则浏览器写操作全挂），健康检查豁免（同上游口径）。"""
+        monkeypatch.setattr(vr_host, "_VR_API_KEY", "k")
+        allow = lambda: True        # noqa: E731
+
+        assert vr_host.vr_guard_error(self._vr_path(), "GET", "", allow)[0] == 401
+        assert vr_host.vr_guard_error(self._vr_path(), "GET", "Bearer k", allow) is None
+        assert vr_host.vr_guard_error(self._vr_path(), "OPTIONS", "", allow) is None
+        assert vr_host.vr_guard_error("/api/health", "GET", "", allow) is None
+
+    def test_no_api_key_configured_means_no_401(self, monkeypatch):
+        """没配口令就是单机自用：不能因此把所有 VR 请求都判成未授权。"""
+        monkeypatch.setattr(vr_host, "_VR_API_KEY", "")
+
+        assert vr_host.vr_guard_error(self._vr_path(), "GET", "", lambda: True) is None
+
+    def test_origin_check_is_not_run_for_reads(self, monkeypatch):
+        """读请求不该去算来源 —— 每个请求都走这道 middleware，白算就是白花。"""
+        monkeypatch.setattr(vr_host, "_VR_API_KEY", "")
+        calls = []
+
+        vr_host.vr_guard_error(self._vr_path(), "GET", "", lambda: calls.append(1) or True)
+        assert calls == []
+
+    def test_server_middleware_delegates_the_decision(self):
+        """server 只做 HTTP 管道：判定不许在 middleware 里再写一遍。"""
         import inspect
 
         import server
 
         src = inspect.getsource(server._vr_guard)
-        assert "_is_vr_path(request.url.path)" in src
-        # Origin 只卡写操作，不卡 GET
-        assert "_MUTATING" in src
-        assert "OPTIONS" in src, "预检请求要放过"
-        assert "/api/health" in src, "健康检查要豁免（同上游口径）"
+        assert "vr_guard_error" in src
+        for leaked in ("_is_vr_path", "Bearer", "_MUTATING"):
+            assert leaked not in src, f"闸的判定又漏回 server 了：{leaked}"
 
 
 # ---------------------------------------------------------------- 用户数据防护
