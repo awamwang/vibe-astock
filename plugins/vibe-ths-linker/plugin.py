@@ -34,16 +34,7 @@ _STATE_FILE = _STATE_DIR / "ths-linker-current.json"
 _STOCK_INTERVAL = 1.0
 _SYNC_INTERVAL = 60.0
 _WS_TIMEOUT = 20.0
-
-
-def _is_trading_hours() -> bool:
-    """A 股是否在可交易时段（含集合竞价），与 server 场次口径一致。"""
-    from duanxian import trade_calendar
-    from duanxian.util import china_today, is_a_share_closed
-
-    today = china_today()
-    quotes_of = trade_calendar.quote_trade_day()
-    return bool(quotes_of) and quotes_of == today and not is_a_share_closed()
+_DRAIN_TIMEOUT = 2.0
 
 
 def _ensure_vr_path() -> None:
@@ -128,6 +119,18 @@ class ThsLinkerWsClient:
                 pass
             self._ws = None
 
+    @staticmethod
+    def _is_push(msg: dict) -> bool:
+        mtype = msg.get("type")
+        action = msg.get("action")
+        return (mtype == "stock_code" and action == "push") or (
+            mtype == "trade" and action == "push"
+        )
+
+    def _deliver_push(self, msg: dict) -> None:
+        if self._on_push:
+            self._on_push(msg)
+
     def request(
         self,
         payload: dict,
@@ -149,11 +152,10 @@ class ThsLinkerWsClient:
                 except websocket.WebSocketTimeoutException:
                     continue
                 msg = json.loads(raw)
-                mtype = msg.get("type")
-                if mtype == "stock_code" and msg.get("action") == "push":
-                    if self._on_push:
-                        self._on_push(msg)
+                if self._is_push(msg):
+                    self._deliver_push(msg)
                     continue
+                mtype = msg.get("type")
                 if allowed and mtype not in allowed:
                     continue
                 if action and msg.get("action") and msg.get("action") != action:
@@ -162,18 +164,48 @@ class ThsLinkerWsClient:
             raise TimeoutError(f"等待 {allowed or '响应'} 超时：{payload}")
 
     def drain_initial(self) -> dict | None:
-        """连接后读取服务端主动推送的 stock_code get 快照。"""
+        """连接后读取服务端主动推送：返回 stock_code get，并分发 push。"""
+        stock_get: dict | None = None
+        deadline = time.monotonic() + _DRAIN_TIMEOUT
         with self._lock:
             if self._ws is None:
                 return None
-            try:
-                raw = self._ws.recv()
+            while time.monotonic() < deadline:
+                try:
+                    raw = self._ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    if stock_get is not None:
+                        break
+                    continue
+                except Exception:  # noqa: BLE001
+                    break
                 msg = json.loads(raw)
-                if msg.get("type") == "stock_code" and msg.get("action") == "get":
-                    return msg
-            except Exception:  # noqa: BLE001
-                return None
-        return None
+                mtype = msg.get("type")
+                action = msg.get("action")
+                if mtype == "stock_code" and action == "get":
+                    stock_get = msg
+                    continue
+                if self._is_push(msg):
+                    self._deliver_push(msg)
+                    continue
+            return stock_get
+
+    def pump_pushes(self, timeout: float = _DRAIN_TIMEOUT) -> None:
+        """短暂读取并分发服务端 push（不发送请求）。"""
+        deadline = time.monotonic() + timeout
+        with self._lock:
+            if self._ws is None:
+                return
+            while time.monotonic() < deadline:
+                try:
+                    raw = self._ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    break
+                except Exception:  # noqa: BLE001
+                    break
+                msg = json.loads(raw)
+                if self._is_push(msg):
+                    self._deliver_push(msg)
 
 
 class ThsLinkerBridge:
@@ -181,7 +213,7 @@ class ThsLinkerBridge:
         self._reg = reg
         self._plugin_id = plugin_id
         self._client = ThsLinkerWsClient(_WS_URL)
-        self._client.set_push_handler(self._on_stock_push)
+        self._client.set_push_handler(self._on_ws_push)
         self._instance: dict | None = None
         self._ths_dir = ""
         self._instance_title = ""
@@ -189,6 +221,8 @@ class ThsLinkerBridge:
         self._last_watchlist: tuple[str, ...] | None = None
         self._last_portfolio_sig: str | None = None
         self._last_risk_sig: str | None = None
+        self._ready = False
+        self._pending_pushes: list[dict] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -211,6 +245,9 @@ class ThsLinkerBridge:
         if not self._ths_dir:
             raise RuntimeError("ths-linker 实例缺少 ths_dir，无法定位同花顺安装目录")
         self._apply_stock_from_get(snap)
+        self._ready = True
+        self._flush_pending_pushes()
+        self._client.pump_pushes()
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
         self._thread.start()
@@ -218,16 +255,13 @@ class ThsLinkerBridge:
             self._sync_watchlist()
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
-        try:
-            self._sync_portfolio()
-        except Exception as exc:  # noqa: BLE001
-            print(f"⚠️ [vibe-ths-linker] 启动持仓同步失败：{exc}")
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
 
     def stop(self) -> None:
         self._stop.set()
+        self._ready = False
         self._client.close()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=3.0)
@@ -251,8 +285,6 @@ class ThsLinkerBridge:
                     last_stock = now
                 if now - last_sync >= _SYNC_INTERVAL:
                     self._sync_watchlist()
-                    if _is_trading_hours():
-                        self._sync_portfolio()
                     self._sync_risk_control()
                     last_sync = now
             except Exception as exc:  # noqa: BLE001
@@ -261,7 +293,14 @@ class ThsLinkerBridge:
                 traceback.print_exc()
                 self._report_status("warn", f"同步异常：{err}", traceback.format_exc())
                 try:
+                    self._ready = False
                     self._client.connect()
+                    snap = self._client.drain_initial()
+                    if snap is not None:
+                        self._apply_stock_from_get(snap)
+                    self._ready = True
+                    self._flush_pending_pushes()
+                    self._client.pump_pushes()
                 except Exception as re_exc:  # noqa: BLE001
                     re_err = f"{type(re_exc).__name__}: {re_exc}"
                     print(f"⚠️ [vibe-ths-linker] 重连失败：{re_exc}")
@@ -293,6 +332,25 @@ class ThsLinkerBridge:
             return
         self._on_stock_changed(code, source="poll")
 
+    def _on_ws_push(self, msg: dict) -> None:
+        if not self._ready:
+            self._pending_pushes.append(msg)
+            return
+        self._dispatch_push(msg)
+
+    def _flush_pending_pushes(self) -> None:
+        pending = self._pending_pushes
+        self._pending_pushes = []
+        for msg in pending:
+            self._dispatch_push(msg)
+
+    def _dispatch_push(self, msg: dict) -> None:
+        mtype = msg.get("type")
+        if mtype == "stock_code":
+            self._on_stock_push(msg)
+        elif mtype == "trade":
+            self._on_trade_push(msg)
+
     def _on_stock_push(self, msg: dict) -> None:
         ths_dir = str(msg.get("ths_dir") or "").strip()
         if ths_dir and ths_dir != self._ths_dir:
@@ -300,6 +358,26 @@ class ThsLinkerBridge:
         code = str(msg.get("code") or "").strip()
         if code:
             self._on_stock_changed(code, source="push")
+
+    def _on_trade_push(self, msg: dict) -> None:
+        ths_dir = str(msg.get("ths_dir") or "").strip()
+        if ths_dir and ths_dir != self._ths_dir:
+            return
+        snapshot = msg.get("snapshot")
+        if snapshot is None:
+            holdings = msg.get("holdings")
+            if not isinstance(holdings, list):
+                return
+            snapshot = {"holdings": holdings}
+        if not isinstance(snapshot, dict):
+            return
+        try:
+            self._apply_portfolio_snapshot(snapshot)
+        except Exception as exc:  # noqa: BLE001
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"⚠️ [vibe-ths-linker] 持仓推送同步失败：{err}")
+            traceback.print_exc()
+            self._report_status("warn", f"持仓推送同步失败：{err}", traceback.format_exc())
 
     def _on_stock_changed(self, code: str, *, source: str) -> None:
         if code == self._last_stock_code:
@@ -358,19 +436,10 @@ class ThsLinkerBridge:
             self._last_watchlist = sig
             print(f"[vibe-ths-linker] 自选股已更新 {len(codes)} 只（来源：{source}）")
 
-    def _sync_portfolio(self) -> None:
+    def _apply_portfolio_snapshot(self, snapshot: dict) -> None:
         _ensure_vr_path()
         import portfolio as pf  # noqa: PLC0415
 
-        resp = self._client.request(
-            {"type": "trade", "action": "snapshot", **self._instance_payload()},
-            expect_type="trade_result",
-        )
-        if not resp.get("ok"):
-            raise RuntimeError(resp.get("error") or "trade snapshot 读取失败")
-        snapshot = resp.get("snapshot")
-        if not isinstance(snapshot, dict):
-            raise RuntimeError("trade snapshot 响应缺少 snapshot 字段")
         holdings = [
             {"code": h["code"], "shares": h["shares"], "cost": h["cost"]}
             for h in (snapshot.get("holdings") or [])
@@ -408,7 +477,7 @@ class ThsLinkerBridge:
         result = self._reg.import_portfolio(payload)
         if result.ok:
             self._last_portfolio_sig = sig
-            print(f"[vibe-ths-linker] 持仓已更新 {len(norm_holdings)} 笔")
+            print(f"[vibe-ths-linker] 持仓已更新 {len(norm_holdings)} 笔（trade push）")
 
     def _build_vibe_risk(self) -> dict[str, Any] | None:
         from duanxian import trade_calendar, trade_store as ts  # noqa: PLC0415
