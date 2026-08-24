@@ -78,6 +78,51 @@ class TestLatestSession:
 
 
 @pytest.mark.unit
+class TestResolveAsOf:
+    """展示用场次：日历今天不等于行情所属日时，左侧锚定行情那场。"""
+
+    def test_weekend_is_friday_vs_thursday(self, monkeypatch):
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-08-21")
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-08-21")
+        monkeypatch.setattr(
+            tc, "prev_trade_date",
+            lambda d: {"2026-08-22": "2026-08-21", "2026-08-21": "2026-08-20"}[d])
+        as_of, prev, is_live = tc.resolve_as_of("2026-08-22")
+        assert as_of == "2026-08-21"
+        assert prev == "2026-08-20"
+        assert is_live is False
+
+    def test_weekday_live(self, monkeypatch):
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-08-20")
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-08-19")
+        monkeypatch.setattr(
+            tc, "prev_trade_date",
+            lambda d: "2026-08-19" if d == "2026-08-20" else None)
+        as_of, prev, is_live = tc.resolve_as_of("2026-08-20")
+        assert as_of == "2026-08-20"
+        assert prev == "2026-08-19"
+        assert is_live is True
+
+    def test_holiday_falls_back_to_quote_day(self, monkeypatch):
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-09-30")
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-09-30")
+        monkeypatch.setattr(
+            tc, "prev_trade_date",
+            lambda d: "2026-09-29" if d == "2026-09-30" else None)
+        as_of, prev, is_live = tc.resolve_as_of("2026-10-01")
+        assert as_of == "2026-09-30"
+        assert prev == "2026-09-29"
+        assert is_live is False
+
+    def test_is_calendar_session_live_matches(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-08-22")
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-08-21")
+        monkeypatch.setattr(tc, "latest_session", lambda: "2026-08-21")
+        monkeypatch.setattr(tc, "prev_trade_date", lambda d: "2026-08-20")
+        assert tc.is_calendar_session_live() is False
+
+
+@pytest.mark.unit
 class TestIsSettled:
     """落盘缓存的唯一判据。只判「早于今天」不够——那样当天数据永远不进缓存，"""
 
@@ -3432,17 +3477,17 @@ class TestLiveEmotionCache:
         assert len(calls) == 2
 
     def test_calendar_lookups_are_cached_too(self):
-        """`prev_trade_date` / `is_settled` 每次都打网络 ——
+        """`resolve_as_of` / `is_settled` 每次都可能打网络 ——
         只缓存池子的话热态还是 3.9 秒，跟 5 秒间隔差不多，等于没修。"""
         import inspect
 
         from duanxian import live_emotion as le
 
         src = inspect.getsource(le.snapshot)
-        for name in ("prev_trade_date", "is_settled"):
-            i = src.index(name)
-            # 往前找 200 字符内必须有 _cached，说明是包着调的
-            assert "_cached" in src[max(0, i - 200):i], f"{name} 没走缓存"
+        i = src.index("resolve_as_of")
+        assert "_cached" in src[max(0, i - 200):i + 80], "resolve_as_of 没走缓存"
+        i = src.index("is_settled")
+        assert "_cached" in src[max(0, i - 200):i], "is_settled 没走缓存"
 
 
 @pytest.mark.unit
@@ -3512,6 +3557,8 @@ class TestLiveEmotionArchive:
         assert snap["prev_date"] == "2026-08-19"
         assert snap["yesterday"]["zt_count"] == 36
         assert snap["yesterday"]["promotion_rate"] == 0.25
+        assert snap["promotion_rate"] == 0.5
+        assert snap["promotion_base"] == 2
         # 今日快照已落盘，供明天对照
         assert le._load_archive("2026-08-20").get("zt_count") == 2
 
@@ -3564,6 +3611,47 @@ class TestLiveEmotionArchive:
         assert snap["yesterday"]["zt_count"] == 40
         assert not (tmp_path / "2026-08-22.json").exists()
         assert not (tmp_path / "2026-08-21.json").exists()  # 非 live 不覆盖写
+
+    def test_snapshot_as_of_overrides_calendar(self, monkeypatch):
+        """传入 as_of 时按指定场次取池，不跟日历今天走。"""
+        from duanxian import live_emotion as le
+
+        monkeypatch.setattr(
+            le, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 20, 10, 30))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date",
+            lambda d: "2026-08-18" if d == "2026-08-19" else None)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: True)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-20")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session", lambda: "2026-08-19")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.should_write_daily_cache", lambda d: False)
+
+        def fake_pool(kind, ymd):
+            if kind == "getTopicZTPool" and ymd == "20260819":
+                return [{"c": "000001", "lbc": 3}]
+            if kind == "getTopicZTPool" and ymd == "20260818":
+                return [{"c": "000001"}, {"c": "000002"}]
+            if kind == "getTopicZTPool" and ymd == "20260820":
+                return [{"c": "999999", "lbc": 1}]
+            if kind == "getTopicZBPool":
+                return []
+            if kind == "getTopicDTPool":
+                return []
+            return []
+
+        monkeypatch.setattr(le, "_pool", fake_pool)
+        snap = le.snapshot(as_of="2026-08-19")
+        assert snap["available"] is True
+        assert snap["date"] == "2026-08-19"
+        assert snap["is_live"] is False
+        assert snap["zt_count"] == 1
+        assert snap["promotion_rate"] == 0.5
+        assert snap["max_boards"] == 3
 
 
 @pytest.mark.unit
@@ -3634,21 +3722,6 @@ class TestShortBoardArchive:
         assert y["qcj_leader"] == "昨日龙头"
         assert y["temperature"] == 40
 
-    def test_resolve_as_of_weekend_is_friday_vs_thursday(self, monkeypatch):
-        from duanxian import short_board as sb
-
-        monkeypatch.setattr(
-            "duanxian.trade_calendar.quote_trade_day", lambda: "2026-08-21")
-        monkeypatch.setattr(
-            "duanxian.trade_calendar.latest_session", lambda: "2026-08-21")
-        monkeypatch.setattr(
-            "duanxian.trade_calendar.prev_trade_date",
-            lambda d: {"2026-08-22": "2026-08-21", "2026-08-21": "2026-08-20"}[d])
-        as_of, prev, is_live = sb._resolve_as_of("2026-08-22")
-        assert as_of == "2026-08-21"
-        assert prev == "2026-08-20"
-        assert is_live is False
-
     def test_short_board_reads_archive_off_session(self, tmp_path, monkeypatch):
         from duanxian import short_board as sb
 
@@ -3658,8 +3731,9 @@ class TestShortBoardArchive:
         monkeypatch.setattr(
             sb, "china_now",
             lambda: __import__("datetime").datetime(2026, 8, 22, 12, 30))
-        monkeypatch.setattr(sb, "_resolve_as_of",
-                            lambda _t: ("2026-08-21", "2026-08-20", False))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", False))
         calls = {"merge": 0}
 
         def track_merge(as_of, prev):
@@ -3682,8 +3756,9 @@ class TestShortBoardArchive:
         monkeypatch.setattr(
             sb, "china_now",
             lambda: __import__("datetime").datetime(2026, 8, 22, 12, 30))
-        monkeypatch.setattr(sb, "_resolve_as_of",
-                            lambda _t: ("2026-08-21", "2026-08-20", False))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", False))
         monkeypatch.setattr(sb, "_merge_today", lambda as_of, prev: {
             "temperature": 48, "n_up": 2505, "qcj_temp": 31,
             "_qcj_yesterday": {},

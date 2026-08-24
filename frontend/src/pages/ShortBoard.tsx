@@ -601,7 +601,6 @@ export function ShortBoard() {
         <GlassCard className="mb-6">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <Caliber text={
-              "封板率 / 炸板率与上面那张实时卡同一个算法：分母是摸板家数（涨停 + 炸板），按家数不按次数。\n" +
               "表里的「行业 / 概念」经常只有四个字——行业名称常被截断为四字，不是这里显示不全。"
             } />
             <span>已收盘那一场的定稿 · 连板股 · 客观公开榜单</span>
@@ -609,40 +608,10 @@ export function ShortBoard() {
               <span className="ml-auto">{emotion.date} 收盘定稿 · 只有表格里标（实时）的两列随盘刷新</span>
             )}
           </div>
-          {!emotion || emotion.zt_count === undefined ? (
+          {!emotion || !Array.isArray(emotion.lianban_stocks) ? (
             pending(emoDone)
           ) : (
-            <>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {[
-                  { k: "涨停", v: fmtCountPermille(emotion.zt_count, sentTotal), cls: "text-danger" },
-                  { k: "跌停", v: fmtCountPermille(emotion.dt_count, sentTotal), cls: "text-success" },
-                  { k: "最高连板", v: `${emotion.max_boards} 板`, cls: "text-primary" },
-                  { k: "连板（2板+）", v: `${fmtCountPermille(emotion.lianban_count, sentTotal)} 家`, cls: "text-primary" },
-                ].map((c) => (
-                  <div key={c.k} className="rounded-lg bg-muted/25 p-3 text-center">
-                    <p className="text-[11px] text-muted-foreground">{c.k}</p>
-                    <p className={cn("mt-0.5 font-mono text-xl font-bold", c.cls)}>{c.v}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {[
-                  { k: "封板率", v: emotion.seal_rate, hint: "封住 / 尝试涨停", strong: true },
-                  { k: "炸板率", v: emotion.break_rate, hint: "炸板 / 尝试涨停", strong: false },
-                  { k: "晋级率", v: emotion.promotion_rate,
-                    hint: `前一交易日涨停的票，${emotion.date} 又封住`, strong: true },
-                ].map((c) => (
-                  <div key={c.k} className="rounded-lg bg-muted/20 p-2.5 text-center">
-                    <p className="text-[11px] text-muted-foreground">{c.k}</p>
-                    <p className={cn("mt-0.5 font-mono text-sm font-bold", c.strong ? "text-danger" : "text-success")}>
-                      {c.v == null ? "—" : `${(c.v * 100).toFixed(1)}%`}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground/50">{c.hint}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3">
+            <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <p className="text-[11px] text-muted-foreground">连板股（2 板以上连续涨停）· 客观公开榜单，非推荐 / 非预测</p>
                   <span className="ml-auto">
@@ -712,8 +681,7 @@ export function ShortBoard() {
                     </table>
                   </div>
                 )}
-              </div>
-            </>
+            </div>
           )}
         </GlassCard>
       )}

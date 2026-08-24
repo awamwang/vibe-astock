@@ -189,12 +189,15 @@ def is_latest_closed_session(date: str) -> bool:
     return date == latest_session()
 
 
-def is_calendar_session_live() -> bool:
-    """日历「今天」是否就是左侧实时场次（周末 / 盘前 / 展示上一场时为 False）。
+def resolve_as_of(calendar_today: Optional[str] = None) -> tuple[str, Optional[str], bool]:
+    """锚定展示用场次。
 
-    与 short_board / live_emotion 的 is_live 同口径，供 TTL、归档优先读等全站复用。
+    返回 (as_of, prev, is_live)：
+      · as_of：左侧数字所属交易日（周末/盘前 = 最近有行情的那一场）
+      · prev：as_of 的前一交易日（用来对照；与 as_of 撞车则 None）
+      · is_live：日历今天就是这场
     """
-    today = china_today()
+    today = calendar_today or china_today()
     qd = quote_trade_day()
     latest = latest_session()
     if qd and qd <= today:
@@ -203,7 +206,18 @@ def is_calendar_session_live() -> bool:
         as_of = latest
     else:
         as_of = today
-    return as_of == today
+    prev = prev_trade_date(as_of)
+    if prev and prev >= as_of:
+        prev = None
+    return as_of, prev, as_of == today
+
+
+def is_calendar_session_live() -> bool:
+    """日历「今天」是否就是左侧实时场次（周末 / 盘前 / 展示上一场时为 False）。
+
+    与 resolve_as_of 的 is_live 同口径，供 TTL、归档优先读等全站复用。
+    """
+    return resolve_as_of()[2]
 
 
 def live_quotes_are_close_of(date: str) -> tuple[bool, str]:

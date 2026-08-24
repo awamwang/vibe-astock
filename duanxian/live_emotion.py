@@ -166,44 +166,27 @@ def _metrics_from_pools(
     }
 
 
-def _resolve_as_of(calendar_today: str) -> tuple[str, bool]:
-    """锚定左侧场次。
-
-    返回 (as_of, is_live)。`is_live` 仅当行情所属场次就是日历今天 ——
-    周末/盘前东财常把上一场涨停池填进「今天」的请求日，池非空也不算 live。
-    """
-    from .util import is_weekend
-
-    qd = trade_calendar.quote_trade_day()
-    latest = trade_calendar.latest_session()
-    if qd and qd <= calendar_today:
-        return qd, qd == calendar_today
-    if latest and latest <= calendar_today:
-        return latest, latest == calendar_today
-    if is_weekend(calendar_today):
-        return (latest or calendar_today), False
-    return calendar_today, True
-
-
-def snapshot() -> dict:
+def snapshot(as_of: str | None = None) -> dict:
     """打板情绪快照。非交易时段回退到最近场次，仍给出「最近两场」对照。
 
+    `as_of` 缺省则按日历锚定场次；传入则用该场次（测试与指定场次）。
     成功时附带 `yesterday`（对照场次归档）与 `prev_date`。
     """
     calendar_today = china_now().strftime("%Y-%m-%d")
 
-    def _as_of_pair() -> tuple[str, bool]:
-        return _cached(f"asof:{calendar_today}", _CAL_TTL,
-                       lambda: _resolve_as_of(calendar_today))
-
-    def _prev_of(day: str) -> str | None:
-        return _cached(f"prevday:{day}", _CAL_TTL,
-                       lambda: trade_calendar.prev_trade_date(day))
-
-    as_of, is_live = _as_of_pair()
-    prev_day = _prev_of(as_of)
-    if prev_day and prev_day >= as_of:
-        prev_day = None
+    if as_of is None:
+        as_of, prev_day, is_live = _cached(
+            f"asof:{calendar_today}", _CAL_TTL,
+            lambda: trade_calendar.resolve_as_of(calendar_today),
+        )
+    else:
+        prev_day = _cached(
+            f"prevday:{as_of}", _CAL_TTL,
+            lambda: trade_calendar.prev_trade_date(as_of),
+        )
+        if prev_day and prev_day >= as_of:
+            prev_day = None
+        is_live = as_of == calendar_today
 
     # 非实时场次：有归档则直接读盘，避免周末东财仍返回上一场池子而反复打四个池
     if not is_live:

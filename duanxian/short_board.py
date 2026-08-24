@@ -352,30 +352,6 @@ def _save_archive(date: str, env: dict) -> None:
         pass
 
 
-def _resolve_as_of(calendar_today: str) -> tuple[str, str | None, bool]:
-    """锚定左侧对照场次。
-
-    返回 (as_of, prev, is_live)：
-      · as_of：左侧数字所属交易日（周末/盘前 = 最近有行情的那一场）
-      · prev：as_of 的前一交易日（周末即周四，用来对照）
-      · is_live：日历今天就是这场 —— 只有这时才允许写归档
-    """
-    qd = trade_calendar.quote_trade_day()
-    latest = trade_calendar.latest_session()
-    as_of = None
-    if qd and qd <= calendar_today:
-        as_of = qd
-    elif latest and latest <= calendar_today:
-        as_of = latest
-    else:
-        as_of = calendar_today
-    prev = trade_calendar.prev_trade_date(as_of)
-    # 场次与对照撞车（极端兜底失败）→ 清掉对照，避免自己比自己
-    if prev and prev >= as_of:
-        prev = None
-    return as_of, prev, as_of == calendar_today
-
-
 def _merge_today(as_of: str, prev: str | None) -> dict:
     baoer = _fetch_baoer()
     lt = _fetch_longtou()
@@ -473,7 +449,7 @@ def snapshot() -> dict:
     """
 
     calendar_today = china_now().strftime("%Y-%m-%d")
-    as_of, prev, is_live = _resolve_as_of(calendar_today)
+    as_of, prev, is_live = trade_calendar.resolve_as_of(calendar_today)
     ttl = _TTL if is_live else _OFFSESSION_TTL
 
     def build():
