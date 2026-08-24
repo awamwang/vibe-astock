@@ -258,6 +258,12 @@ export function AgentReview() {
     if (alive.current) setRunning(false);
   }
 
+  // 选中日是否已有复盘：历史列表命中，或当前展示正是该日且非 missing
+  const reviewExists = Boolean(date) && (
+    dates.includes(date)
+    || (!missing && Boolean(data) && (data?.target_date || data?.trade_date) === date)
+  );
+
   async function pollOnce() {
     if (!alive.current) return;
     try {
@@ -266,7 +272,8 @@ export function AgentReview() {
       setElapsed(st.elapsed || 0);
       if (st.running) { timer.current = setTimeout(pollOnce, 3000); return; }
       stopPolling();
-      if (st.error) setErr(st.error); else loadLatest();
+      if (st.error) setErr(st.error);
+      else { loadLatest(date || undefined); void loadDates(); }
     } catch { stopPolling(); if (alive.current) setErr("状态查询失败"); }
   }
 
@@ -276,9 +283,14 @@ export function AgentReview() {
     setRunning(true); setErr(""); setNotice(""); setElapsed(0);
     // 这里不用 agentFetch：它只抛 `HTTP 4xx`，会把「已复盘」「还没收盘」
     // 这些**需要原样告诉用户**的信息丢掉。
+    // 选中日已有复盘时带 force=1，否则后端会直接 already_done 不重跑。
+    const qs = new URLSearchParams();
+    if (date) qs.set("date", date);
+    if (reviewExists) qs.set("force", "1");
+    const q = qs.toString();
     let resp: Response;
     try {
-      resp = await fetch(apiUrl(`/api/review/run${date ? `?date=${date}` : ""}`), { method: "POST" });
+      resp = await fetch(apiUrl(`/api/review/run${q ? `?${q}` : ""}`), { method: "POST" });
     } catch { stopPolling(); if (alive.current) setErr("启动失败"); return; }
     const body = await resp.json().catch(() => null);
     if (!alive.current) return;
@@ -294,7 +306,7 @@ export function AgentReview() {
     if (body?.already_done) {
       stopPolling();
       setNotice(`${body.date} 已复盘，下面就是那天的结果`);
-      setDate(body.date); loadLatest(body.date);
+      setDate(body.date); loadLatest(body.date); void loadDates();
       return;
     }
     pollOnce();
@@ -353,7 +365,7 @@ export function AgentReview() {
           <button onClick={generate} disabled={running}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">
             {running && <Loader2 className="h-4 w-4 animate-spin" />}
-            {running ? `复盘中 ${elapsed}s` : "生成复盘"}
+            {running ? `复盘中 ${elapsed}s` : reviewExists ? "重新复盘" : "生成复盘"}
           </button>
         </div>
       </div>
