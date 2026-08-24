@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from duanxian import risk_stance as rs
 
 
@@ -18,6 +20,7 @@ def _budget(**kw):
     return b
 
 
+@pytest.mark.unit
 class TestGatherReadings:
     def test_uses_archive_emotion_half(self, monkeypatch):
         monkeypatch.setattr("duanxian.trade_calendar.prev_trade_date", lambda _d: None)
@@ -52,6 +55,7 @@ class TestGatherReadings:
         assert out["up"] == 3000
 
 
+@pytest.mark.unit
 class TestGuard:
     def test_unavailable_budget_skips_position(self):
         out = rs.guard(
@@ -87,6 +91,7 @@ class TestGuard:
         assert any("当日亏损限额" in x for x in out["block_new_long_reasons"])
 
 
+@pytest.mark.unit
 class TestSizePreview:
     def test_unavailable_budget(self):
         out = rs.size_preview(
