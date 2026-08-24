@@ -458,7 +458,7 @@ export function ZtKeywordsSettings() {
           <div className="divide-y divide-border/60">
             {phaseDrafts.map((row) => (
               <div key={row.phase} className="py-3 first:pt-0 last:pb-0">
-                <div className="mb-2 text-sm font-medium">{row.phase}</div>
+                <div className="mb-2 text-sm font-bold text-foreground">{row.phase}</div>
                 <div className="mb-2 grid grid-cols-2 gap-2">
                   <label className="block text-[11px] text-muted-foreground">
                     整体仓位 %
