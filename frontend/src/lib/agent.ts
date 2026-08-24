@@ -1,5 +1,6 @@
 import { apiUrl } from "./base";
-// 复盘 agent 的前端类型 + 助手（后端默认 8910，vite 把全部 /api 代理过去）。
+// 复盘档案 view-model：定稿日 JSON（派生情绪指标 / 客观事实 / ReviewData 等）与 agent 助手。
+// 直播盘面见 liveBoard；HTTP 传输见 api。后端默认 8910，vite 把全部 /api 代理过去。
 
 export async function agentFetch<T>(path: string, method: "GET" | "POST" = "GET"): Promise<T> {
   const r = await fetch(apiUrl(path), { method });

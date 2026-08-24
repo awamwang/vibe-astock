@@ -11,11 +11,21 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { finite } from "@/lib/agent";
 import { fmtCountPct, fmtCountPermille, marketTotal } from "@/lib/marketRatio";
+import { api, type MarketOverview, type TurnoverTop, type Quote } from "@/lib/api";
 import {
-  api, type MarketOverview, type ShortTermEmotion, type LianbanStock,
-  type TurnoverTop, type MarketSession, type LiveEmotion, type ShortBoardSnapshot,
-  type ShortBoardEnv, type Quote, type MoodBlocksSnapshot,
-} from "@/lib/api";
+  fetchLiveEmotion,
+  fetchLianbanEmotion,
+  fetchMarketSession,
+  fetchMoodBlocks,
+  fetchShortBoard,
+  type LiveEmotion,
+  type LianbanStock,
+  type MarketSession,
+  type MoodBlocksSnapshot,
+  type ShortBoardEnv,
+  type ShortBoardSnapshot,
+  type ShortTermEmotion,
+} from "@/lib/liveBoard";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { cn } from "@/lib/utils";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -258,7 +268,7 @@ export function ShortBoard() {
 
   const loadBoard = () => {
     mark("board", true);
-    return api.shortBoard().then(setBoard).catch(() => {})
+    return fetchShortBoard().then(setBoard).catch(() => {})
       .finally(() => { setBoardDone(true); mark("board", false); });
   };
   const loadSentiment = () => {
@@ -268,12 +278,12 @@ export function ShortBoard() {
   };
   const loadLiveEmo = () => {
     mark("liveEmo", true);
-    return api.liveEmotion().then(setLiveEmo).catch(() => {})
+    return fetchLiveEmotion().then(setLiveEmo).catch(() => {})
       .finally(() => mark("liveEmo", false));
   };
   const loadEmotion = () => {
     mark("emotion", true);
-    return api.emotion().then(setEmotion).catch(() => {})
+    return fetchLianbanEmotion().then(setEmotion).catch(() => {})
       .finally(() => { setEmoDone(true); mark("emotion", false); });
   };
   const loadTurnover = () => {
@@ -283,7 +293,7 @@ export function ShortBoard() {
   };
   const loadMoodBlocks = () => {
     mark("mood", true);
-    return api.moodBlocks().then(setMoodBlocks).catch(() => {})
+    return fetchMoodBlocks().then(setMoodBlocks).catch(() => {})
       .finally(() => { setMoodDone(true); mark("mood", false); });
   };
   const loadSectors = () => {
@@ -291,7 +301,7 @@ export function ShortBoard() {
     return api.marketOverview().then(setOverview).catch(() => {})
       .finally(() => { setOvDone(true); mark("sectors", false); });
   };
-  const loadSession = () => api.marketSession().then(setSession).catch(() => {});
+  const loadSession = () => fetchMarketSession().then(setSession).catch(() => {});
 
   const loadLive = () => {
     loadBoard();

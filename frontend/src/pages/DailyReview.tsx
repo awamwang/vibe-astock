@@ -8,9 +8,10 @@ import { Caliber } from "@/components/ui/Caliber";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import {
-  api, type IndexQuote, type Quote, type GlobalIndex, type MarketSession,
+  api, type IndexQuote, type Quote, type GlobalIndex,
   type OverseasSnapshot, type OverseasRow,
 } from "@/lib/api";
+import { fetchMarketSession, type MarketSession } from "@/lib/liveBoard";
 import { loadWatchItems, saveWatchItems, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +43,7 @@ export function DailyReview() {
   const loadLive = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
     api.overseas().then(setOversea).catch(() => {});
-    api.marketSession().then(setSession).catch(() => {});
+    fetchMarketSession().then(setSession).catch(() => {});
   };
 
   // 重量组：全球指数兜底（隔夜外围挂了才用）
