@@ -363,8 +363,16 @@ def api_review_dates():
 
     在此之前 `reviews/` 每天存一份、但只有 `latest.json` 有接口 ——
     对一个复盘产品来说「翻回上周三看看」是刚需，却没有入口。
+
+    附带 today / prev_trade_date：前端在「上一交易日已有复盘」时
+    把日期框推到今天，方便接着跑本场。
     """
-    return {"dates": review_store.dates()}
+    today = china_today()
+    return {
+        "dates": review_store.dates(),
+        "today": today,
+        "prev_trade_date": trade_calendar.prev_trade_date(today),
+    }
 
 
 @app.get("/api/review/latest")

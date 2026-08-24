@@ -2505,6 +2505,7 @@ class TestReviewHistory:
 
         d = server.api_review_dates()
         assert isinstance(d.get("dates"), list)
+        assert "today" in d and "prev_trade_date" in d, "前端推进日期框需要 today / 上一交易日"
 
     def test_latest_takes_a_date(self):
         import inspect
@@ -2524,6 +2525,8 @@ class TestReviewHistory:
         assert "loadLatest(v)" in s, "改日期要去读那天的存档"
         assert "setMissing(" in s and "这天还没跑过复盘" in s, "那天没有要说出来"
         assert '<datalist id="review-dates">' in s, "list= 指向的 datalist 必须存在"
+        assert "prevDone" in s and "prev_trade_date" in s, "上一交易日已有复盘时要把日期框推到今天"
+        assert "chipDates" in s and "date === d" in s, "下部日期列表高亮跟日历选中日，选中日置顶"
 
 
 class TestCliBackendPreflight:

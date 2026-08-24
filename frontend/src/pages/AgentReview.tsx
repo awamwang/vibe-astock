@@ -212,12 +212,46 @@ export function AgentReview() {
   // 哪些交易日跑过（历史入口）；日期框旁边列出来，免得靠猜
   async function loadDates() {
     try {
-      const r = await agentFetch<{ dates: string[] }>("/api/review/dates");
+      const r = await agentFetch<{ dates: string[]; today?: string; prev_trade_date?: string | null }>("/api/review/dates");
       if (alive.current) setDates(r.dates || []);
     } catch { /* 拿不到就不显示历史列表，不影响主流程 */ }
   }
 
-  useEffect(() => { loadLatest(); loadDates(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // 首次进入：并行拉最近复盘 + 历史日期；上一交易日已有复盘则日期框推到今天
+  useEffect(() => {
+    async function bootstrap() {
+      const my = ++reqId.current;
+      try {
+        const [r, datesR] = await Promise.all([
+          agentFetch<ReviewData>("/api/review/latest"),
+          agentFetch<{ dates: string[]; today?: string; prev_trade_date?: string | null }>("/api/review/dates"),
+        ]);
+        if (!alive.current || my !== reqId.current) return;
+
+        const archived = datesR.dates || [];
+        setDates(archived);
+
+        const today = datesR.today || localDate();
+        const prev = datesR.prev_trade_date || "";
+        const prevDone = Boolean(prev && archived.includes(prev));
+
+        if (r && (r.target_date || r.trade_date)) {
+          setData(r); setMissing("");
+          const day = r.target_date || r.trade_date || "";
+          // 上一交易日已落盘 → 日期框推到今天，方便接着跑本场；内容仍展示最近一份
+          setDate(prevDone ? today : day);
+          void loadTradeBudget(prevDone ? today : day);
+        }
+      } catch {
+        if (alive.current && my === reqId.current) {
+          setErr("读取历史复盘失败，仍可尝试重新生成");
+          void loadDates();
+        }
+      }
+    }
+    bootstrap();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   function stopPolling() {
     polling.current = false;
@@ -277,6 +311,11 @@ export function AgentReview() {
     breadth?.down,
     breadth?.flat,
   );
+  // 下部快捷日期：选中日（含推进后的今天）置顶，高亮跟日历 date 走，不跟已展示那份复盘走
+  const chipDates = (date
+    ? [date, ...dates.filter((d) => d !== date)]
+    : dates
+  ).slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -300,12 +339,12 @@ export function AgentReview() {
             <datalist id="review-dates">
               {dates.map((d) => <option key={d} value={d} />)}
             </datalist>
-            {dates.length > 1 && (
+            {chipDates.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                {dates.slice(0, 5).map((d) => (
+                {chipDates.map((d) => (
                   <button key={d} onClick={() => { setDate(d); setErr(""); loadLatest(d); }}
                     className={`rounded px-1.5 py-0.5 transition-colors hover:text-primary ${
-                      (data?.target_date || data?.trade_date) === d ? "bg-primary/15 text-primary" : "bg-muted/40"
+                      date === d ? "bg-primary/15 text-primary" : "bg-muted/40"
                     }`}>{d.slice(5)}</button>
                 ))}
               </div>
