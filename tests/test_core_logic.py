@@ -1427,8 +1427,8 @@ class TestSingleBackend:
         src = pathlib.Path("vr/app.py").read_text(encoding="utf-8")
         assert "import astock" in src, "上游是绝对 import，别改成 from . import"
         assert "from . import" not in src
-        server = pathlib.Path("server.py").read_text(encoding="utf-8")
-        assert "sys.path.insert(0, vr_dir)" in server
+        host = pathlib.Path("duanxian/vr_host.py").read_text(encoding="utf-8")
+        assert "sys.path.insert(0, vr_dir)" in host
 
     def test_merge_takes_routes_not_middleware(self):
         """只并路由不并中间件 —— VR 的 CORS 默认 `*`，加上会削弱我们的 Origin 校验。"""
@@ -1695,11 +1695,12 @@ class TestVrUserDataGuard:
         import inspect
 
         import server
+        from duanxian import vr_host
 
         src = inspect.getsource(server._alert)
         assert "file=sys.stderr" in src and "flush=True" in src
-        # 关键告警都要走 _alert，不能用裸 print
-        full = inspect.getsource(server)
+        # 关键告警都要走 _alert，不能用裸 print（实现在 vr_host）
+        full = inspect.getsource(vr_host)
         for marker in ("🔴 VR 持仓文件无法解析", "⚠️ VR 后端并入失败"):
             idx = full.index(marker)
             head = full[max(0, idx - 120):idx]
@@ -1941,12 +1942,14 @@ class TestBlockedCliRemovedFromRuntime:
         try:
             cli_runtime._CLI_DEFS["gemini"] = {"bins": ["gemini"], "delivery": "stdin",
                                                "build_args": lambda _: ["--yolo"], "env": {}}
-            _orig_alert = server._alert
-            server._alert = alerts.append  # type: ignore[assignment]
+            from duanxian import vr_host
+
+            _orig_alert = vr_host._alert
+            vr_host._alert = alerts.append  # type: ignore[assignment]
             try:
                 removed = server._disable_unsafe_clis()
             finally:
-                server._alert = _orig_alert  # type: ignore[assignment]
+                vr_host._alert = _orig_alert  # type: ignore[assignment]
             assert "gemini" in removed, "上游新来的必须被摘掉"
             assert "gemini" not in cli_runtime._CLI_DEFS
             assert any("gemini" in a for a in alerts), "被摘掉了还得有人知道"
@@ -2002,7 +2005,7 @@ class TestNoDuplicateVrAppImport:
         import re
 
         stmt = re.compile(r"^\s*(?:import\s+vr\.app|from\s+vr\.app\s+import|from\s+vr\s+import\s+app)\b")
-        for f in ("server.py", "tests/test_core_logic.py"):
+        for f in ("server.py", "duanxian/vr_host.py", "tests/test_core_logic.py"):
             for n, line in enumerate(pathlib.Path(f).read_text(encoding="utf-8").splitlines(), 1):
                 assert not stmt.match(line), f"{f}:{n} 有 `import vr.app`：{line.strip()}"
 
@@ -3059,6 +3062,8 @@ class TestCliBackendPreflight:
             # 造出"装着但被闸摘掉"的状态
             mod._CLI_DEFS.pop("codex", None)
             setattr(mod, cli_llm._BINS_ATTR_NAME, {"codex": ["codex"], "claude": ["claude"]})
+            monkeypatch.setattr(mod, "_find_bin",
+                                lambda b: "/usr/local/bin/codex" if b == "codex" else None)
             with pytest.raises(RuntimeError) as ei:
                 cli_llm._check_available("codex")
             msg = str(ei.value)
@@ -3086,9 +3091,11 @@ class TestCliBackendPreflight:
         """那个属性名不能两边各写一份 —— 漂移了会失效成"报未检测到" """
         import pathlib
 
+        host = pathlib.Path("duanxian/vr_host.py").read_text(encoding="utf-8")
         srv = pathlib.Path("server.py").read_text(encoding="utf-8")
-        assert '"_vibe_all_cli_bins"' not in srv, "server 里又硬编码了一份"
-        assert "_BINS_ATTR_NAME as _BINS_ATTR" in srv
+        assert '"_vibe_all_cli_bins"' not in host and '"_vibe_all_cli_bins"' not in srv, \
+            "host/server 里又硬编码了一份"
+        assert "_BINS_ATTR_NAME as _BINS_ATTR" in host
 
     def test_preflight_runs_before_the_call(self):
         import inspect
