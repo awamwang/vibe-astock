@@ -27,14 +27,14 @@ _NEXT_DEFENSIVE = {
     "退潮杀伤": "退潮杀伤",
 }
 
-# 文档区间低端
-_CAPS: dict[str, tuple[float, float]] = {
-    "冰点观察": (0.20, 0.05),
-    "修复确认": (0.40, 0.08),
-    "升温扩张": (0.60, 0.10),
-    "高潮拥挤": (0.40, 0.08),
-    "过热防守": (0.00, 0.05),
-    "退潮杀伤": (0.00, 0.05),
+# 总仓默认（文档区间低端）；单票默认 = 总仓 / 2，均可在自定义配置里分别覆盖
+_CAP_TOTAL: dict[str, float] = {
+    "冰点观察": 0.20,
+    "修复确认": 0.40,
+    "升温扩张": 0.60,
+    "高潮拥挤": 0.40,
+    "过热防守": 0.20,
+    "退潮杀伤": 0.00,
 }
 
 _ACTIONS: dict[str, dict[str, list[str]]] = {
@@ -74,10 +74,42 @@ DEFAULT_MAX_DD_HARD = 0.12
 _BOARD_DISCOUNT = {1: 1.0, 2: 0.7}  # ≥3 → 0.4
 
 
-def caps_for(phase: str) -> tuple[float, float]:
-    if phase not in _CAPS:
+def default_caps(phase: str) -> tuple[float, float]:
+    """内置默认：总仓用硬规则表，单票为总仓一半。"""
+    if phase not in _CAP_TOTAL:
         raise ValueError(f"未知档位 {phase!r}，只能是 {PHASES}")
-    return _CAPS[phase]
+    total = _CAP_TOTAL[phase]
+    return total, round(total / 2.0, 4)
+
+
+def default_prompt(phase: str) -> str:
+    """内置提示词：由允许 / 禁止动作拼出。"""
+    act = _ACTIONS[phase]
+    lines: list[str] = []
+    if act["allow"]:
+        lines.append("允许：" + "、".join(act["allow"]))
+    if act["forbid"]:
+        lines.append("禁止：" + "、".join(act["forbid"]))
+    return "\n".join(lines)
+
+
+def _resolved(phase: str) -> dict[str, Any]:
+    from . import trade_phase_config as tpc
+
+    return tpc.row_for(phase)
+
+
+def caps_for(phase: str) -> tuple[float, float]:
+    if phase not in PHASES:
+        raise ValueError(f"未知档位 {phase!r}，只能是 {PHASES}")
+    row = _resolved(phase)
+    return float(row["cap_total"]), float(row["cap_single"])
+
+
+def prompt_for(phase: str) -> str:
+    if phase not in PHASES:
+        raise ValueError(f"未知档位 {phase!r}，只能是 {PHASES}")
+    return str(_resolved(phase).get("prompt") or "")
 
 
 def actions_for(phase: str) -> dict[str, list[str]]:
@@ -292,6 +324,7 @@ def build_budget(
             "phase": None,
             "cap_total": None,
             "cap_single": None,
+            "prompt": None,
             "allow": [],
             "forbid": [],
             "expansion_allowed": False,
@@ -335,6 +368,7 @@ def build_budget(
                 "phase": None,
                 "cap_total": None,
                 "cap_single": None,
+                "prompt": None,
                 "allow": [],
                 "forbid": [],
                 "expansion_allowed": False,
@@ -349,6 +383,7 @@ def build_budget(
 
     cap_t, cap_s = caps_for(phase)
     act = actions_for(phase)
+    prompt = prompt_for(phase)
     expansion = phase not in _NO_EXPANSION and phase != "冰点观察"
     # 冰点允许分批试错，但不算「扩张性开仓」；高潮/过热/退潮禁止新开扩张
     if phase == "冰点观察":
@@ -374,6 +409,7 @@ def build_budget(
         "phase": phase,
         "cap_total": cap_t,
         "cap_single": cap_s,
+        "prompt": prompt,
         "allow": act["allow"],
         "forbid": act["forbid"],
         "expansion_allowed": expansion,

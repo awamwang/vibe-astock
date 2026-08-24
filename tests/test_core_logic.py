@@ -4473,8 +4473,14 @@ class TestThemeNormalize:
         assert "/api/config/theme-aliases" in be
         assert "/config/zt-keywords" in fe
         assert "/api/config/zt-keywords" in be
+        assert "/config/trade-phases" in fe
+        assert "/api/config/trade-phases" in be
         assert "题材别名" in page
         assert "上涨关键词" in page
+        assert "仓位预算档位" in page
+        assert "整体仓位" in page
+        assert "单独仓位" in page
+        assert "提示词" in page
         assert "自定义配置" in page
         assert "自定义配置" in nav
 

@@ -77,16 +77,22 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
             </div>
           </div>
 
-          <div className="mt-3 grid gap-2 border-t border-dashed border-border pt-2 text-[12px] md:grid-cols-2">
-            <div>
-              <span className="text-muted-foreground">允许：</span>
-              {(b.allow || []).join("、") || "—"}
+          {b.prompt ? (
+            <div className="mt-3 whitespace-pre-wrap border-t border-dashed border-border pt-2 text-[12px] leading-relaxed">
+              {b.prompt}
             </div>
-            <div>
-              <span className="text-muted-foreground">禁止：</span>
-              <span className="text-danger">{(b.forbid || []).join("、") || "—"}</span>
+          ) : (
+            <div className="mt-3 grid gap-2 border-t border-dashed border-border pt-2 text-[12px] md:grid-cols-2">
+              <div>
+                <span className="text-muted-foreground">允许：</span>
+                {(b.allow || []).join("、") || "—"}
+              </div>
+              <div>
+                <span className="text-muted-foreground">禁止：</span>
+                <span className="text-danger">{(b.forbid || []).join("、") || "—"}</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {b.repair_proxy && (
             <div className={cn(

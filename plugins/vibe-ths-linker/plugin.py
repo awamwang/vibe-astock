@@ -512,12 +512,20 @@ class ThsLinkerBridge:
         phase = str(budget.get("phase") or "")
         forbid = [str(x) for x in (budget.get("forbid") or []) if str(x).strip()]
         allow = [str(x) for x in (budget.get("allow") or []) if str(x).strip()]
+        prompt_lines = [
+            ln.strip()
+            for ln in str(budget.get("prompt") or "").splitlines()
+            if ln.strip()
+        ]
         market_prompts: list[str] = []
         if phase:
             market_prompts.append(f"档位：{phase}")
-        market_prompts.extend(forbid[:8])
-        stock_buy_prompts = list(forbid[:6])
-        if allow:
+        if prompt_lines:
+            market_prompts.extend(prompt_lines[:8])
+        else:
+            market_prompts.extend(forbid[:8])
+        stock_buy_prompts = list(prompt_lines[:6] if prompt_lines else forbid[:6])
+        if not prompt_lines and allow:
             stock_buy_prompts.append("允许：" + "、".join(allow[:4]))
         sell_prompts: list[str] = []
         if phase in ("过热防守", "退潮杀伤", "高潮拥挤"):

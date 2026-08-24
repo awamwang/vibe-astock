@@ -7,6 +7,14 @@ import pytest
 from duanxian import trade_budget as tb
 
 
+@pytest.fixture(autouse=True)
+def _isolate_phase_config(tmp_path, monkeypatch):
+    from duanxian import trade_phase_config as tpc
+
+    monkeypatch.setattr(tpc, "_CONFIG_PATH", str(tmp_path / "trade_phases.json"))
+    monkeypatch.setattr(tpc, "_TABLE", None)
+
+
 def _base(**kw):
     r = {
         "summary_ok": True,
@@ -88,7 +96,7 @@ class TestBuildBudget:
         assert out["available"]
         assert out["phase"] == "升温扩张"
         assert out["cap_total"] == 0.60
-        assert out["cap_single"] == 0.10
+        assert out["cap_single"] == 0.30
 
     def test_width_divergence_demotes(self):
         out = tb.build_budget(_base(
@@ -174,3 +182,69 @@ class TestDemote:
     def test_floor(self):
         assert tb.demote("退潮杀伤") == "退潮杀伤"
         assert tb.demote("过热防守") == "退潮杀伤"
+
+
+class TestPhaseDefaults:
+    def test_single_is_half_total(self):
+        for p in tb.PHASES:
+            total, single = tb.default_caps(p)
+            assert single == pytest.approx(round(total / 2.0, 4))
+
+    def test_overheat_total_is_20(self):
+        total, single = tb.default_caps("过热防守")
+        assert total == 0.20
+        assert single == 0.10
+
+
+class TestPhaseConfig:
+    def test_overlay_total_keeps_default_single_and_prompt(self):
+        from duanxian import trade_phase_config as tpc
+
+        tpc.save_table([{"phase": "升温扩张", "cap_total": 0.50}])
+        row = tpc.row_for("升温扩张")
+        assert row["cap_total"] == 0.50
+        assert row["cap_single"] == 0.30
+        assert "顺势加仓" in row["prompt"]
+
+    def test_overlay_prompt_keeps_default_caps(self):
+        from duanxian import trade_phase_config as tpc
+
+        tpc.save_table([{"phase": "冰点观察", "prompt": "只做低吸"}])
+        row = tpc.row_for("冰点观察")
+        assert row["cap_total"] == 0.20
+        assert row["cap_single"] == 0.10
+        assert row["prompt"] == "只做低吸"
+
+    def test_build_budget_uses_overlay(self):
+        from duanxian import trade_phase_config as tpc
+
+        tpc.save_table([{
+            "phase": "升温扩张",
+            "cap_total": 0.55,
+            "cap_single": 0.12,
+            "prompt": "自定义提示",
+        }])
+        out = tb.build_budget(_base(
+            highest=4, highest_hist=[3, 4], broken_rate=0.2,
+            money_median=0.8, index_pct=-0.5,
+        ))
+        assert out["phase"] == "升温扩张"
+        assert out["cap_total"] == 0.55
+        assert out["cap_single"] == 0.12
+        assert out["prompt"] == "自定义提示"
+
+    def test_reset_clears_overlay(self):
+        from duanxian import trade_phase_config as tpc
+
+        tpc.save_table([{"phase": "过热防守", "cap_total": 0.05}])
+        tpc.reset_table()
+        total, single = tb.caps_for("过热防守")
+        assert total == 0.20
+        assert single == 0.10
+
+    def test_invalid_cap_rejected(self):
+        from duanxian.trade_phase_config import TradePhaseConfigError, save_table
+
+        with pytest.raises(TradePhaseConfigError, match="0%"):
+            save_table([{"phase": "冰点观察", "cap_total": 1.5}])
+

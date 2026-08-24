@@ -645,13 +645,14 @@ def api_verify_save(request: Request, date: str, body: dict = Body(...)):
 
 @app.get("/api/trade/phases")
 def api_trade_phases():
-    """六档清单与默认 Cap（前端下拉 / 说明）。"""
+    """六档清单与当前 Cap / 提示词（含自定义配置）。"""
     rows = []
     for p in trade_budget.PHASES:
         ct, cs = trade_budget.caps_for(p)
         act = trade_budget.actions_for(p)
         rows.append({
             "phase": p, "cap_total": ct, "cap_single": cs,
+            "prompt": trade_budget.prompt_for(p),
             "allow": act["allow"], "forbid": act["forbid"],
         })
     return {"phases": rows}
@@ -1093,6 +1094,40 @@ def api_zt_keywords_reset():
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
     return {"data": {"keywords": saved, "count": len(saved)}}
+
+
+@app.get("/api/config/trade-phases")
+def api_trade_phase_config_get():
+    """读取仓位预算六档的总仓、单票、提示词。"""
+    from duanxian import trade_phase_config as tpc
+
+    return {"data": tpc.export_config()}
+
+
+@app.post("/api/config/trade-phases")
+def api_trade_phase_config_save(body: dict = Body(...)):
+    """保存仓位档位配置。总仓、单票、提示词可分别提交。"""
+    from duanxian.trade_phase_config import TradePhaseConfigError, save_table
+
+    try:
+        saved = save_table((body or {}).get("phases"))
+    except TradePhaseConfigError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"phases": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/trade-phases/reset")
+def api_trade_phase_config_reset():
+    """恢复内置默认仓位档位（总仓原值，单票为总仓一半）。"""
+    from duanxian import trade_phase_config as tpc
+
+    try:
+        saved = tpc.reset_table()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"phases": saved, "count": len(saved)}}
 
 
 @app.get("/api/experience/meta")

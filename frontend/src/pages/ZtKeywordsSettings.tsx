@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -7,7 +7,7 @@ import {
   addZtKeyword, removeZtKeyword, setZtKeywordsCache,
   LOCKED_ZT_KEYWORDS,
 } from "@/lib/zt-keywords";
-import { api, type ThemeAliasEntry } from "@/lib/api";
+import { api, type ThemeAliasEntry, type TradePhaseConfigRow } from "@/lib/api";
 
 function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   return [...entries].sort((a, b) => {
@@ -23,6 +23,35 @@ function entriesFromAliases(aliases: Record<string, string>): ThemeAliasEntry[] 
   );
 }
 
+type PhaseDraft = {
+  phase: string;
+  capTotalPct: string;
+  capSinglePct: string;
+  prompt: string;
+};
+
+function ratioToPctStr(v: number): string {
+  const n = Math.round((Number(v) || 0) * 10000) / 100;
+  return String(n);
+}
+
+function draftsFromRows(rows: TradePhaseConfigRow[]): PhaseDraft[] {
+  return rows.map((row) => ({
+    phase: row.phase,
+    capTotalPct: ratioToPctStr(row.cap_total),
+    capSinglePct: ratioToPctStr(row.cap_single),
+    prompt: row.prompt || "",
+  }));
+}
+
+function parsePct(raw: string, label: string): number {
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    throw new Error(`${label}须为 0–100 的数字`);
+  }
+  return Math.round(n * 100) / 10000;
+}
+
 export function ZtKeywordsSettings() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
@@ -33,6 +62,10 @@ export function ZtKeywordsSettings() {
   const [aliasLoading, setAliasLoading] = useState(true);
   const [aliasDraft, setAliasDraft] = useState({ alias: "", canonical: "" });
   const [aliasSaving, setAliasSaving] = useState(false);
+
+  const [phaseDrafts, setPhaseDrafts] = useState<PhaseDraft[]>([]);
+  const [phaseLoading, setPhaseLoading] = useState(true);
+  const [phaseSaving, setPhaseSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +99,23 @@ export function ZtKeywordsSettings() {
         }
       } finally {
         if (!cancelled) setAliasLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.tradePhaseConfig();
+        if (!cancelled) setPhaseDrafts(draftsFromRows(cfg.phases || []));
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取仓位档位配置失败");
+        }
+      } finally {
+        if (!cancelled) setPhaseLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -163,6 +213,48 @@ export function ZtKeywordsSettings() {
     await persistAliases(next);
   };
 
+  const updatePhaseDraft = (phase: string, patch: Partial<PhaseDraft>) => {
+    setPhaseDrafts((rows) => rows.map((row) => (row.phase === phase ? { ...row, ...patch } : row)));
+  };
+
+  const persistPhases = async () => {
+    let payload: TradePhaseConfigRow[];
+    try {
+      payload = phaseDrafts.map((row) => ({
+        phase: row.phase,
+        cap_total: parsePct(row.capTotalPct, `${row.phase} 整体仓位`),
+        cap_single: parsePct(row.capSinglePct, `${row.phase} 单独仓位`),
+        prompt: row.prompt.trim(),
+      }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "仓位数字不合法");
+      return;
+    }
+    setPhaseSaving(true);
+    try {
+      const r = await api.saveTradePhaseConfig(payload);
+      setPhaseDrafts(draftsFromRows(r.phases || payload));
+      toast.success("仓位档位已保存");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setPhaseSaving(false);
+    }
+  };
+
+  const resetPhases = async () => {
+    setPhaseSaving(true);
+    try {
+      const r = await api.resetTradePhaseConfig();
+      setPhaseDrafts(draftsFromRows(r.phases || []));
+      toast.success("已恢复默认仓位档位");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setPhaseSaving(false);
+    }
+  };
+
   const resetAliases = async () => {
     setAliasSaving(true);
     try {
@@ -180,7 +272,7 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="首板深入分析的上涨关键词，以及题材涨停统计时的等价别名"
+        subtitle="上涨关键词、题材别名，以及仓位预算六档的总仓、单票与提示词"
       />
 
       <GlassCard className="mb-4">
@@ -260,7 +352,7 @@ export function ZtKeywordsSettings() {
         </div>
       </GlassCard>
 
-      <GlassCard>
+      <GlassCard className="mb-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <GitMerge className="h-4 w-4 text-primary" /> 题材别名
         </h3>
@@ -344,6 +436,86 @@ export function ZtKeywordsSettings() {
             type="button"
             onClick={() => void resetAliases()}
             disabled={aliasSaving}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 恢复默认
+          </button>
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <SlidersHorizontal className="h-4 w-4 text-primary" /> 仓位预算档位
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          总仓、单票、提示词可分别改。未改时总仓用内置默认，单票为总仓一半。
+          保存后对新计算的预算生效；已落盘场次请在「持仓与预算」刷新。
+        </p>
+
+        {phaseLoading ? (
+          <p className="text-xs text-muted-foreground">正在读取仓位档位…</p>
+        ) : (
+          <div className="divide-y divide-border/60">
+            {phaseDrafts.map((row) => (
+              <div key={row.phase} className="py-3 first:pt-0 last:pb-0">
+                <div className="mb-2 text-sm font-medium">{row.phase}</div>
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <label className="block text-[11px] text-muted-foreground">
+                    整体仓位 %
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={row.capTotalPct}
+                      onChange={(e) => updatePhaseDraft(row.phase, { capTotalPct: e.target.value })}
+                      disabled={phaseSaving}
+                      className="mt-1 w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                    />
+                  </label>
+                  <label className="block text-[11px] text-muted-foreground">
+                    单独仓位 %
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={row.capSinglePct}
+                      onChange={(e) => updatePhaseDraft(row.phase, { capSinglePct: e.target.value })}
+                      disabled={phaseSaving}
+                      className="mt-1 w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                    />
+                  </label>
+                </div>
+                <label className="block text-[11px] text-muted-foreground">
+                  提示词
+                  <textarea
+                    value={row.prompt}
+                    onChange={(e) => updatePhaseDraft(row.phase, { prompt: e.target.value })}
+                    maxLength={500}
+                    rows={2}
+                    disabled={phaseSaving}
+                    className="mt-1 w-full resize-y rounded-lg border border-border bg-black/20 px-3 py-2 text-sm leading-relaxed outline-none focus:border-primary/50 disabled:opacity-50"
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void persistPhases()}
+            disabled={phaseSaving || phaseLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetPhases()}
+            disabled={phaseSaving || phaseLoading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认

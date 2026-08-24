@@ -289,6 +289,7 @@ export interface TradeDaySnapshot extends TradeAccountFields {
 /** 仓位预算六档（硬规则，与 AI 五档分开） */
 export interface TradePhaseRow {
   phase: string; cap_total: number; cap_single: number;
+  prompt?: string;
   allow: string[]; forbid: string[];
 }
 export interface TradeRepairProxy {
@@ -306,6 +307,7 @@ export interface TradeBudget {
   phase?: string | null;
   cap_total?: number | null;
   cap_single?: number | null;
+  prompt?: string | null;
   allow?: string[];
   forbid?: string[];
   expansion_allowed?: boolean;
@@ -560,6 +562,11 @@ export const api = {
     request<{ keywords: string[]; count: number }>("/config/zt-keywords", "POST", { keywords }),
   resetZtKeywords: () =>
     request<{ keywords: string[]; count: number }>("/config/zt-keywords/reset", "POST", {}),
+  tradePhaseConfig: () => get<TradePhaseConfig>("/config/trade-phases"),
+  saveTradePhaseConfig: (phases: TradePhaseConfigRow[]) =>
+    request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases", "POST", { phases }),
+  resetTradePhaseConfig: () =>
+    request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases/reset", "POST", {}),
   experienceMeta: () => get<ExperienceMeta>("/experience/meta"),
   experienceTopic: (name: string) =>
     get<ExperienceTopic>(`/experience/topic?name=${encodeURIComponent(name)}`),
@@ -631,6 +638,18 @@ export interface ThemeAliasConfig {
   entries: ThemeAliasEntry[];
   path: string;
   defaults: Record<string, string>;
+}
+export interface TradePhaseConfigRow {
+  phase: string;
+  cap_total: number;
+  cap_single: number;
+  prompt: string;
+}
+export interface TradePhaseConfig {
+  schema: number;
+  path: string;
+  phases: TradePhaseConfigRow[];
+  defaults: TradePhaseConfigRow[];
 }
 export interface ExperienceMeta {
   root: string;

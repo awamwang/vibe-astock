@@ -357,6 +357,7 @@ def build_budget_payload(budget_env: dict) -> dict:
         "override_reason": budget_env.get("override_reason"),
         "cap_total_pct": budget_env.get("cap_total"),
         "cap_single_pct": budget_env.get("cap_single"),
+        "prompt": budget_env.get("prompt"),
         "allow": budget_env.get("allow") or [],
         "forbid": budget_env.get("forbid") or [],
         "expansion_allowed": budget_env.get("expansion_allowed"),
