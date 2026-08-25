@@ -107,6 +107,11 @@ def gather_readings(date: str) -> dict[str, Any]:
     if brd.get("available"):
         up, down = brd.get("up"), brd.get("down")
 
+    from . import sentiment_score as ss
+
+    s_pack = ss.score_for(date)
+    s_val = s_pack.get("s") if s_pack.get("available") else None
+
     return {
         "summary_ok": summary is not None,
         "summary_reason": None if summary else "涨停池摘要不可用",
@@ -127,6 +132,10 @@ def gather_readings(date: str) -> dict[str, Any]:
         "market_limit_down_prev": mld_prev,
         "limit_up_source": zt_dt.get("limit_up_source"),
         "limit_down_source": zt_dt.get("limit_down_source"),
+        "s": s_val,
+        "s_ok": bool(s_pack.get("available")),
+        "s_method": s_pack.get("method"),
+        "s_detail": s_pack,
         "up": up,
         "down": down,
         "index_pct": _index_pct_for(date),

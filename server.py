@@ -1092,6 +1092,51 @@ def api_zt_keywords_reset():
     return {"data": {"keywords": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/sentiment-s")
+def api_sentiment_s_config_get():
+    """读取合成情绪分 S 的算法与序列状态。"""
+    from duanxian import sentiment_score as ss
+
+    return {"data": ss.export_config()}
+
+
+@app.post("/api/config/sentiment-s")
+def api_sentiment_s_config_save(request: Request, body: dict = Body(...)):
+    """保存 S 算法。method 见 export_config.methods。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    from duanxian import sentiment_score as ss
+
+    try:
+        return {"data": ss.set_method((body or {}).get("method"))}
+    except ss.SentimentScoreError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
+@app.post("/api/config/sentiment-s/refresh")
+def api_sentiment_s_refresh(request: Request, body: dict = Body(None)):
+    """回拉趣财经序列并用东财补炸板/高度。enrich_limit 限制本轮新补天数。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    from duanxian import sentiment_score as ss
+
+    body = body or {}
+    limit = body.get("enrich_limit")
+    try:
+        enrich_limit = None if limit is None or limit == "" else int(limit)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "enrich_limit 须为整数或空"}, status_code=400)
+    try:
+        return {"data": ss.refresh_series(enrich_limit=enrich_limit)}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"error": f"{type(exc).__name__}: {exc}", "detail": str(exc)},
+            status_code=500,
+        )
+
+
 @app.get("/api/config/trade-phases")
 def api_trade_phase_config_get():
     """读取仓位预算六档的总仓、单票、提示词。"""

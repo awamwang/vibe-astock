@@ -75,6 +75,17 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
               <div className="text-2xl font-extrabold tabular-nums">{pct(b.cap_single)}</div>
               <div className="text-[11px] text-muted-foreground">单票上限</div>
             </div>
+            {b.readings?.s_ok && b.readings.s != null && (
+              <div>
+                <div className="text-2xl font-extrabold tabular-nums">{b.readings.s}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  S
+                  {b.readings.s_method === "percentile_qcj_em" ? "·分位"
+                    : b.readings.s_method === "qcj_degree" ? "·趣财经°"
+                      : ""}
+                </div>
+              </div>
+            )}
           </div>
 
           {b.prompt ? (

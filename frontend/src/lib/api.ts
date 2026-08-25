@@ -318,6 +318,12 @@ export interface TradeBudget {
   block_new_long_reasons?: string[];
   width_divergence?: { hit?: boolean; skipped?: boolean; reason?: string } | null;
   generated_at?: string;
+  readings?: {
+    s?: number | null;
+    s_ok?: boolean;
+    s_method?: string | null;
+    [key: string]: unknown;
+  };
 }
 export interface TradeConstants {
   risk_per_trade: number;
@@ -567,6 +573,13 @@ export const api = {
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases", "POST", { phases }),
   resetTradePhaseConfig: () =>
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases/reset", "POST", {}),
+  sentimentSConfig: () => get<SentimentSConfig>("/config/sentiment-s"),
+  saveSentimentSConfig: (method: string) =>
+    request<SentimentSConfig>("/config/sentiment-s", "POST", { method }),
+  refreshSentimentSSeries: (enrichLimit?: number | null) =>
+    request<SentimentSRefreshResult>("/config/sentiment-s/refresh", "POST", {
+      enrich_limit: enrichLimit === undefined ? 30 : enrichLimit,
+    }),
   experienceMeta: () => get<ExperienceMeta>("/experience/meta"),
   experienceTopic: (name: string) =>
     get<ExperienceTopic>(`/experience/topic?name=${encodeURIComponent(name)}`),
@@ -650,6 +663,32 @@ export interface TradePhaseConfig {
   path: string;
   phases: TradePhaseConfigRow[];
   defaults: TradePhaseConfigRow[];
+}
+export interface SentimentSMethod {
+  id: string;
+  label: string;
+  desc: string;
+}
+export interface SentimentSSeriesMeta {
+  days: number;
+  enriched_days: number;
+  first?: string | null;
+  last?: string | null;
+  updated_at?: string | null;
+}
+export interface SentimentSConfig {
+  schema: number;
+  path: string;
+  method: string;
+  methods: SentimentSMethod[];
+  series_path: string;
+  series_meta: SentimentSSeriesMeta;
+}
+export interface SentimentSRefreshResult {
+  ok: boolean;
+  enriched_this_run: number;
+  meta: SentimentSSeriesMeta;
+  updated_at?: string;
 }
 export interface ExperienceMeta {
   root: string;

@@ -261,7 +261,14 @@ def _height_near_peak(readings: dict) -> bool:
 
 
 def classify_rule_phase(readings: dict) -> tuple[str, list[str]]:
-    """硬规则定档（永不自动产出「修复确认」）。返回 (档位, 命中理由)。"""
+    """定档。若读数带可用 S 且算法非硬规则，走 S 区间；否则纯涨停生态硬规则。"""
+    from . import sentiment_score as ss
+
+    s = _f(readings.get("s"))
+    method = str(readings.get("s_method") or ss.METHOD_HARD)
+    if s is not None and method != ss.METHOD_HARD and readings.get("s_ok"):
+        return ss.classify_with_s(readings, s)
+
     reasons: list[str] = []
     h = int(readings.get("highest") or 0)
     br = _f(readings.get("broken_rate")) or 0.0

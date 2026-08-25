@@ -52,6 +52,13 @@ class TestGatherReadings:
                 "limit_up_source": "qcj_archive", "limit_down_source": "qcj_archive",
             },
         )
+        monkeypatch.setattr(
+            "duanxian.sentiment_score.score_for",
+            lambda _d, **_k: {
+                "available": False, "s": None, "method": "hard_rules",
+                "reason": "当前算法为硬规则，不计算 S",
+            },
+        )
 
         out = rs.gather_readings("2026-08-20")
         assert out["money_ok"] is True
@@ -62,6 +69,7 @@ class TestGatherReadings:
         assert out["market_limit_down"] == 3
         assert out["limit_down_source"] == "qcj_archive"
         assert out["up"] == 3000
+        assert out["s_method"] == "hard_rules"
 
     def test_falls_back_when_qcj_missing(self, monkeypatch):
         monkeypatch.setattr("duanxian.trade_calendar.prev_trade_date", lambda _d: None)
@@ -91,6 +99,13 @@ class TestGatherReadings:
             lambda _d: {
                 "limit_up": None, "limit_down": None,
                 "limit_up_source": None, "limit_down_source": None,
+            },
+        )
+        monkeypatch.setattr(
+            "duanxian.sentiment_score.score_for",
+            lambda _d, **_k: {
+                "available": False, "s": None, "method": "hard_rules",
+                "reason": "当前算法为硬规则，不计算 S",
             },
         )
 

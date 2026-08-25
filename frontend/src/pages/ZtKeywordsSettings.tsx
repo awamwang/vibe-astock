@@ -7,7 +7,7 @@ import {
   addZtKeyword, removeZtKeyword, setZtKeywordsCache,
   LOCKED_ZT_KEYWORDS,
 } from "@/lib/zt-keywords";
-import { api, type ThemeAliasEntry, type TradePhaseConfigRow } from "@/lib/api";
+import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig } from "@/lib/api";
 
 function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   return [...entries].sort((a, b) => {
@@ -67,6 +67,12 @@ export function ZtKeywordsSettings() {
   const [phaseLoading, setPhaseLoading] = useState(true);
   const [phaseSaving, setPhaseSaving] = useState(false);
 
+  const [sCfg, setSCfg] = useState<SentimentSConfig | null>(null);
+  const [sMethod, setSMethod] = useState("hard_rules");
+  const [sLoading, setSLoading] = useState(true);
+  const [sSaving, setSSaving] = useState(false);
+  const [sRefreshing, setSRefreshing] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -120,6 +126,57 @@ export function ZtKeywordsSettings() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.sentimentSConfig();
+        if (!cancelled) {
+          setSCfg(cfg);
+          setSMethod(cfg.method || "hard_rules");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取情绪分 S 配置失败");
+        }
+      } finally {
+        if (!cancelled) setSLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const persistSentimentS = async () => {
+    setSSaving(true);
+    try {
+      const cfg = await api.saveSentimentSConfig(sMethod);
+      setSCfg(cfg);
+      setSMethod(cfg.method);
+      toast.success("情绪分算法已保存；请到「持仓与预算」重算场次");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSSaving(false);
+    }
+  };
+
+  const refreshSentimentSeries = async () => {
+    setSRefreshing(true);
+    try {
+      const r = await api.refreshSentimentSSeries(30);
+      const cfg = await api.sentimentSConfig();
+      setSCfg(cfg);
+      toast.success(
+        `序列已更新：${r.meta.days} 日，本轮补东财 ${r.enriched_this_run} 日`
+        + `（已补全 ${r.meta.enriched_days}）`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "刷新序列失败");
+    } finally {
+      setSRefreshing(false);
+    }
+  };
 
   const persistKeywords = async (next: string[]) => {
     setTagsSaving(true);
@@ -439,6 +496,73 @@ export function ZtKeywordsSettings() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认
+          </button>
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <SlidersHorizontal className="h-4 w-4 text-primary" /> 合成情绪分 S
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          定档主输入可选。硬规则不用 S；趣财经°直接用 temperatureDegree；
+          历史分位用趣财经约 220 日序列 + 东财池补炸板率/最高连板后等权合成。
+          改算法后请在「持仓与预算」重算当日预算。
+        </p>
+
+        {sLoading || !sCfg ? (
+          <p className="text-xs text-muted-foreground">正在读取情绪分配置…</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-2">
+              {sCfg.methods.map((m) => (
+                <label
+                  key={m.id}
+                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/60 px-3 py-2 hover:bg-muted/30"
+                >
+                  <input
+                    type="radio"
+                    name="sentiment-s-method"
+                    className="mt-1"
+                    checked={sMethod === m.id}
+                    onChange={() => setSMethod(m.id)}
+                    disabled={sSaving || sRefreshing}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-foreground">{m.label}</span>
+                    <span className="block text-[11px] leading-relaxed text-muted-foreground">{m.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              分位序列：{sCfg.series_meta.days} 日
+              {sCfg.series_meta.first && sCfg.series_meta.last
+                ? `（${sCfg.series_meta.first} → ${sCfg.series_meta.last}）`
+                : ""}
+              ，东财已补 {sCfg.series_meta.enriched_days} 日
+              {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void persistSentimentS()}
+            disabled={sSaving || sLoading || sRefreshing}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            保存算法
+          </button>
+          <button
+            type="button"
+            onClick={() => void refreshSentimentSeries()}
+            disabled={sSaving || sLoading || sRefreshing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className={`h-4 w-4 ${sRefreshing ? "animate-spin" : ""}`} />
+            {sRefreshing ? "刷新中…" : "刷新分位序列（每轮补 30 日东财）"}
           </button>
         </div>
       </GlassCard>
