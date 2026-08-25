@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import os
+from contextlib import asynccontextmanager
 import re
 import sys
 import threading
@@ -47,10 +48,6 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost"} | {
     h.strip() for h in os.environ.get("VIBE_ALLOW_HOSTS", "").split(",") if h.strip()
 }
 
-app = FastAPI(title="短线每日复盘")
-
-
-@app.on_event("startup")
 def _startup_aktools():
     """随本后端拉起 / 复用本机 AKTools（默认 127.0.0.1:8988）。"""
     from duanxian import aktools_service as aks
@@ -67,11 +64,20 @@ def _startup_aktools():
     ms.ensure_fresh_background()
 
 
-@app.on_event("shutdown")
 def _shutdown_aktools():
     from duanxian import aktools_service as aks
 
     aks.stop_if_owned()
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _startup_aktools()
+    yield
+    _shutdown_aktools()
+
+
+app = FastAPI(title="短线每日复盘", lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------- VR host（薄适配）
