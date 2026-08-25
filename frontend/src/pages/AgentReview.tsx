@@ -1,6 +1,8 @@
 import { apiUrl } from "@/lib/base";
 import { useEffect, useRef, useState } from "react";
-import { Swords, Loader2, AlertTriangle, Target, CheckSquare } from "lucide-react";
+import {
+  Swords, Loader2, AlertTriangle, Target, CheckSquare, Check, X, Minus,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentChat } from "@/components/AgentChat";
 import {
@@ -15,7 +17,8 @@ import { TrendPanel } from "@/components/TrendPanel";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
 import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
-  type FocusDirection, type ReviewData, type VerificationItem, type JobStatus,
+  type FocusDirection, type Reflection, type ReviewData, type VerificationItem,
+  type VerificationResult, type JobStatus,
 } from "@/lib/agent";
 import { fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { api, type TradeBudget } from "@/lib/api";
@@ -27,12 +30,16 @@ import { api, type TradeBudget } from "@/lib/api";
  *  空单位是 0~1 的比率（晋级率 0.13 = 13%）。混着直接印就会出现「0.13」这种读者
  *  得自己换算的数 —— 与「历史统计位置」那一列犯过的是同一个错。
  */
+function formatMetricValue(n: number | null | undefined, unit?: string | null): string {
+  const v = finite(n);
+  if (v == null) return "—";
+  if (unit === "%") return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
+  if (!unit) return `${Math.round(v * 100)}%`;
+  return `${v}${unit}`;
+}
+
 function statText(v: VerificationItem): string {
-  const n = finite(v.base_value);
-  if (n == null) return "—";
-  if (v.unit === "%") return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
-  if (!v.unit) return `${Math.round(n * 100)}%`;
-  return `${n}${v.unit}`;
+  return formatMetricValue(v.base_value, v.unit);
 }
 
 function epsText(v: VerificationItem): string {
@@ -42,6 +49,17 @@ function epsText(v: VerificationItem): string {
   if (!v.unit) return `${Math.round(e * 100)} 个百分点`;
   if (v.unit === "%") return `${e} 个百分点`;
   return `${e}${v.unit}`;
+}
+
+function pctText(n: number | null | undefined): string {
+  const v = finite(n);
+  if (v == null) return "—";
+  return `${Math.round(v * 100)}%`;
+}
+
+function shortDate(d?: string | null): string {
+  if (!d || d.length < 10) return d || "—";
+  return d.slice(5);
 }
 
 const METRIC_LABEL: Record<string, string> = {
@@ -55,6 +73,77 @@ const METRIC_LABEL: Record<string, string> = {
   theme_concentration: "头部题材集中度",
   market_limit_down: "全市场跌停家数",
 };
+
+/** 上期验证结果：昨晚立的条件，今天对过账了没有。 */
+function VerificationResults({ reflection }: { reflection?: Reflection | null }) {
+  const items = safeArray<VerificationResult>(reflection?.verification);
+  if (!reflection || items.length === 0) return null;
+
+  const s = reflection.verification_summary;
+  const decided = s?.decided ?? 0;
+  const hit = s?.hit ?? 0;
+  const rate = finite(s?.rate);
+  const edge = finite(s?.edge);
+
+  return (
+    <div className="mt-5 border-t-2 border-foreground pt-2.5">
+      <h4 className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-bold">
+        <CheckSquare className="h-4 w-4 text-primary" /> 上期验证结果
+        <span className="text-[11px] font-normal text-muted-foreground">
+          {shortDate(reflection.prediction_date)} 立的条件 · {shortDate(reflection.eval_date)} 核验
+          {decided > 0 && (
+            <> · 命中 {hit}/{decided}{rate != null ? `（${pctText(rate)}）` : ""}</>
+          )}
+          {edge != null && (
+            <> · 超额 {edge > 0 ? "+" : ""}{Math.round(edge * 100)}pp</>
+          )}
+        </span>
+      </h4>
+      {s?.edge_note && decided > 0 && (
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">{s.edge_note}</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {items.map((v, i) => {
+          const ok = v.verified;
+          const badge = ok === true
+            ? { cls: "bg-primary/15 text-primary", icon: Check, text: "成立" }
+            : ok === false
+              ? { cls: "bg-warning/15 text-warning", icon: X, text: "未成立" }
+              : { cls: "bg-muted text-muted-foreground", icon: Minus, text: "不足判定" };
+          const Icon = badge.icon;
+          return (
+            <div key={i} className="flex-1 basis-[240px] rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-[13px] font-semibold">
+                  {v.label || METRIC_LABEL[v.metric] || v.metric}
+                </div>
+                <span className={cn("inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-bold", badge.cls)}>
+                  <Icon className="h-3 w-3" /> {badge.text}
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] tabular-nums text-foreground/70">
+                预期{v.expect || "—"}
+                <span className="mx-1 text-muted-foreground">·</span>
+                实际{v.actual ?? "—"}
+              </div>
+              <div className="mt-0.5 text-[11px] tabular-nums text-foreground/70">
+                {formatMetricValue(v.prev_value, v.unit)}
+                <span className="mx-1 text-muted-foreground">→</span>
+                {formatMetricValue(v.cur_value, v.unit)}
+              </div>
+              {v.baseline_note && (
+                <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{v.baseline_note}</div>
+              )}
+              {!v.baseline_note && v.reason && (
+                <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{v.reason}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const DISCLAIMER =
   "本页由多 agent AI 基于公开盘面数据（涨跌停/龙虎榜/资金流/题材）现场生成，结论为 AI 判断，仅供参考，不构成投资建议；市场有风险，决策与盈亏自负。";
@@ -338,7 +427,7 @@ export function AgentReview() {
             <Swords className="h-6 w-6 text-primary" /> 短线复盘看板
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            情绪温度 · 明日验证条件
+            情绪温度 · 上期验证 · 明日验证条件
             {data && ` · 交易日 ${data.target_date || data.trade_date} · 生成于 ${data.generated_at}`}
           </p>
         </div>
@@ -491,14 +580,14 @@ export function AgentReview() {
               </div>
             </div>
 
-            {}
+            <VerificationResults reflection={data?.reflection} />
+
             {safeArray<VerificationItem>(focus.verification_items).length > 0 && (
               <div className="mt-5 border-t-2 border-foreground pt-2.5">
                 <h4 className="mb-2 flex items-center gap-1.5 text-sm font-bold">
                   <CheckSquare className="h-4 w-4 text-info" /> 明日验证条件
-                  {}
                   <span className="text-[11px] font-normal text-muted-foreground">
-                    明天用这几个读数检验今晚的判断，明天回来自己对一下
+                    明天用这几个读数检验今晚的判断；结果会出现在下一场复盘的「上期验证结果」里
                   </span>
                 </h4>
                 <div className="flex flex-wrap gap-2">
