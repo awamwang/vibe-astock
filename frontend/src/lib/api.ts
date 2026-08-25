@@ -574,8 +574,13 @@ export const api = {
   resetTradePhaseConfig: () =>
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases/reset", "POST", {}),
   sentimentSConfig: () => get<SentimentSConfig>("/config/sentiment-s"),
-  saveSentimentSConfig: (method: string) =>
-    request<SentimentSConfig>("/config/sentiment-s", "POST", { method }),
+  saveSentimentSConfig: (method: string, opts?: { fusionintelApiKey?: string }) => {
+    const body: Record<string, string> = { method };
+    if (opts && "fusionintelApiKey" in opts) {
+      body.fusionintel_api_key = opts.fusionintelApiKey ?? "";
+    }
+    return request<SentimentSConfig>("/config/sentiment-s", "POST", body);
+  },
   refreshSentimentSSeries: (enrichLimit?: number | null) =>
     request<SentimentSRefreshResult>("/config/sentiment-s/refresh", "POST", {
       enrich_limit: enrichLimit === undefined ? 30 : enrichLimit,
@@ -668,6 +673,7 @@ export interface SentimentSMethod {
   id: string;
   label: string;
   desc: string;
+  needs_api_key?: boolean;
 }
 export interface SentimentSSeriesMeta {
   days: number;
@@ -683,6 +689,8 @@ export interface SentimentSConfig {
   methods: SentimentSMethod[];
   series_path: string;
   series_meta: SentimentSSeriesMeta;
+  has_fusionintel_api_key?: boolean;
+  fusionintel_api_key_masked?: string;
 }
 export interface SentimentSRefreshResult {
   ok: boolean;

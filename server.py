@@ -1102,13 +1102,18 @@ def api_sentiment_s_config_get():
 
 @app.post("/api/config/sentiment-s")
 def api_sentiment_s_config_save(request: Request, body: dict = Body(...)):
-    """保存 S 算法。method 见 export_config.methods。"""
+    """保存 S 算法。method 见 export_config.methods；FusionIntel 可带 fusionintel_api_key。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
     from duanxian import sentiment_score as ss
 
+    body = body or {}
+    # 仅当请求显式带了该字段时才改 Key；缺省字段 = 保持原 Key
+    key_kw: dict = {}
+    if "fusionintel_api_key" in body:
+        key_kw["fusionintel_api_key"] = body.get("fusionintel_api_key")
     try:
-        return {"data": ss.set_method((body or {}).get("method"))}
+        return {"data": ss.set_method(body.get("method"), **key_kw)}
     except ss.SentimentScoreError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
     except OSError as exc:

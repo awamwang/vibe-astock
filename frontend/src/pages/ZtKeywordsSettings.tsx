@@ -69,6 +69,7 @@ export function ZtKeywordsSettings() {
 
   const [sCfg, setSCfg] = useState<SentimentSConfig | null>(null);
   const [sMethod, setSMethod] = useState("hard_rules");
+  const [sFusionKey, setSFusionKey] = useState("");
   const [sLoading, setSLoading] = useState(true);
   const [sSaving, setSSaving] = useState(false);
   const [sRefreshing, setSRefreshing] = useState(false);
@@ -148,11 +149,23 @@ export function ZtKeywordsSettings() {
   }, []);
 
   const persistSentimentS = async () => {
+    if (sMethod === "fusionintel") {
+      const typed = sFusionKey.trim();
+      if (!typed && !sCfg?.has_fusionintel_api_key) {
+        toast.error("选择 FusionIntel 须填写 API Key");
+        return;
+      }
+    }
     setSSaving(true);
     try {
-      const cfg = await api.saveSentimentSConfig(sMethod);
+      const opts =
+        sMethod === "fusionintel" && sFusionKey.trim()
+          ? { fusionintelApiKey: sFusionKey.trim() }
+          : undefined;
+      const cfg = await api.saveSentimentSConfig(sMethod, opts);
       setSCfg(cfg);
       setSMethod(cfg.method);
+      setSFusionKey("");
       toast.success("情绪分算法已保存；请到「持仓与预算」重算场次");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
@@ -506,7 +519,8 @@ export function ZtKeywordsSettings() {
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           定档主输入可选。硬规则不用 S；趣财经°直接用 temperatureDegree；
-          历史分位用趣财经约 220 日序列 + 东财池补炸板率/最高连板后等权合成。
+          历史分位用趣财经约 220 日序列 + 东财池补炸板率/最高连板后等权合成；
+          FusionIntel 用聚变智研宏观恐贪原样当 S（须保存 API Key）。
           改算法后请在「持仓与预算」重算当日预算。
         </p>
 
@@ -535,6 +549,24 @@ export function ZtKeywordsSettings() {
                 </label>
               ))}
             </div>
+            {sMethod === "fusionintel" && (
+              <label className="block text-[11px] text-muted-foreground">
+                FusionIntel API Key
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={sFusionKey}
+                  onChange={(e) => setSFusionKey(e.target.value)}
+                  disabled={sSaving || sRefreshing}
+                  placeholder={
+                    sCfg.has_fusionintel_api_key
+                      ? `已保存 ${sCfg.fusionintel_api_key_masked || "****"}，留空则保持`
+                      : "sk_…（fusionintel.net 注册获取）"
+                  }
+                  className="mt-1 w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
+                />
+              </label>
+            )}
             <p className="text-[11px] text-muted-foreground">
               分位序列：{sCfg.series_meta.days} 日
               {sCfg.series_meta.first && sCfg.series_meta.last

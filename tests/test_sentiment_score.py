@@ -12,6 +12,7 @@ from duanxian import trade_budget as tb
 def iso_cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "_CONFIG_PATH", str(tmp_path / "sentiment_s.json"))
     monkeypatch.setattr(ss, "_SERIES_PATH", str(tmp_path / "series.json"))
+    monkeypatch.setattr(ss, "_FUSION_CACHE_PATH", str(tmp_path / "fusionintel.json"))
     yield
 
 
@@ -20,8 +21,10 @@ class TestSentimentScoreConfig:
     def test_default_hard_rules(self, iso_cfg):
         assert ss.get_method() == ss.METHOD_HARD
         cfg = ss.export_config()
-        assert len(cfg["methods"]) == 3
+        assert len(cfg["methods"]) == 4
         assert cfg["method"] == ss.METHOD_HARD
+        assert cfg["has_fusionintel_api_key"] is False
+        assert any(m["id"] == ss.METHOD_FUSION and m["needs_api_key"] for m in cfg["methods"])
 
     def test_set_method(self, iso_cfg):
         out = ss.set_method(ss.METHOD_PCT)
@@ -31,6 +34,24 @@ class TestSentimentScoreConfig:
     def test_reject_unknown(self, iso_cfg):
         with pytest.raises(ss.SentimentScoreError):
             ss.set_method("nope")
+
+    def test_fusionintel_requires_api_key(self, iso_cfg):
+        with pytest.raises(ss.SentimentScoreError, match="API Key"):
+            ss.set_method(ss.METHOD_FUSION)
+
+    def test_fusionintel_saves_api_key(self, iso_cfg):
+        out = ss.set_method(ss.METHOD_FUSION, fusionintel_api_key="sk_test_abcdefgh")
+        assert out["method"] == ss.METHOD_FUSION
+        assert out["has_fusionintel_api_key"] is True
+        assert "sk_t" in out["fusionintel_api_key_masked"]
+        # 完整 Key 不出现在导出里（掩码可含末 4 位）
+        assert "sk_test_abcdefgh" not in str(out)
+        assert ss.get_fusionintel_api_key() == "sk_test_abcdefgh"
+        # 再保存其它算法时保留 Key；切回 FusionIntel 可不重填
+        ss.set_method(ss.METHOD_HARD)
+        assert ss.get_fusionintel_api_key() == "sk_test_abcdefgh"
+        out2 = ss.set_method(ss.METHOD_FUSION)
+        assert out2["method"] == ss.METHOD_FUSION
 
 
 @pytest.mark.unit
@@ -63,6 +84,41 @@ class TestPercentileScore:
         }])
         out = ss.score_for("2026-08-25", method=ss.METHOD_QCJ)
         assert out["available"] and out["s"] == 42
+
+
+@pytest.mark.unit
+class TestFusionIntelScore:
+    def test_score_from_cache(self, iso_cfg, monkeypatch):
+        ss.set_method(ss.METHOD_FUSION, fusionintel_api_key="sk_unit_test")
+        monkeypatch.setattr(
+            ss,
+            "_fusion_rows_for_score",
+            lambda _key: [
+                {"date": "2026-08-22", "s": 33.0, "price": 3000.0},
+                {"date": "2026-08-25", "s": 41.5, "price": 3100.0},
+            ],
+        )
+        out = ss.score_for("2026-08-25", method=ss.METHOD_FUSION)
+        assert out["available"] is True
+        assert out["s"] == 41.5
+        assert out["method"] == ss.METHOD_FUSION
+
+    def test_score_falls_back_to_prior_day(self, iso_cfg, monkeypatch):
+        ss.set_method(ss.METHOD_FUSION, fusionintel_api_key="sk_unit_test")
+        monkeypatch.setattr(
+            ss,
+            "_fusion_rows_for_score",
+            lambda _key: [{"date": "2026-08-22", "s": 28.0, "price": None}],
+        )
+        out = ss.score_for("2026-08-25", method=ss.METHOD_FUSION)
+        assert out["available"] is True
+        assert out["s"] == 28.0
+        assert out["data_date"] == "2026-08-22"
+
+    def test_missing_key(self, iso_cfg):
+        out = ss.score_for("2026-08-25", method=ss.METHOD_FUSION)
+        assert out["available"] is False
+        assert "API Key" in out["reason"]
 
 
 @pytest.mark.unit

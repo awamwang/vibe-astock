@@ -4,6 +4,7 @@
 `hard_rules`：不用 S，维持涨停生态硬规则树。
 `qcj_degree`：趣财经 temperatureDegree 原样当 S。
 `percentile_qcj_em`：趣财经 ~220 日序列 + 东财池补炸板/高度，分位等权合成。
+`fusionintel`：聚变智研 A 股宏观恐贪指数（需 API Key）。
 """
 
 from __future__ import annotations
@@ -18,25 +19,42 @@ from .util import atomic_write_json, china_now
 _CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
 _CONFIG_PATH = os.path.join(_CONFIG_DIR, "sentiment_s.json")
 _SERIES_PATH = os.path.expanduser("~/.duanxian-agents/cache/sentiment_s/series.json")
+_FUSION_CACHE_PATH = os.path.expanduser(
+    "~/.duanxian-agents/cache/sentiment_s/fusionintel.json"
+)
 _SCHEMA = 1
 _LOCK = threading.Lock()
 
 METHOD_HARD = "hard_rules"
 METHOD_QCJ = "qcj_degree"
 METHOD_PCT = "percentile_qcj_em"
+METHOD_FUSION = "fusionintel"
 
-METHODS: dict[str, dict[str, str]] = {
+_FUSION_URL = (
+    "https://api.fusionintel.net/v1/feargreed/a_stock_macro/shi_feargreedindex"
+)
+_FUSION_PERIOD = "90d"
+
+METHODS: dict[str, dict[str, Any]] = {
     METHOD_HARD: {
         "label": "硬规则（无 S）",
         "desc": "只用涨停生态判定树，不计算合成分。当前默认。",
+        "needs_api_key": False,
     },
     METHOD_QCJ: {
         "label": "趣财经情绪分°",
         "desc": "直接用趣财经 temperatureDegree（0–100）作为 S。",
+        "needs_api_key": False,
     },
     METHOD_PCT: {
         "label": "历史分位（趣财经 + 东财）",
         "desc": "趣财经序列回拉 + 东财池补炸板率/最高连板，分位等权合成 0–100。",
+        "needs_api_key": False,
+    },
+    METHOD_FUSION: {
+        "label": "FusionIntel 恐贪",
+        "desc": "聚变智研 A 股宏观恐贪指数（0–100）原样当 S；须填写并保存 API Key。",
+        "needs_api_key": True,
     },
 }
 
@@ -49,11 +67,20 @@ _PCT_FIELDS = (
     ("qcj_temp", False),
 )
 
-_DEFAULT = {"schema": _SCHEMA, "method": METHOD_HARD}
+_DEFAULT = {"schema": _SCHEMA, "method": METHOD_HARD, "fusionintel_api_key": ""}
 
 
 class SentimentScoreError(ValueError):
     """情绪分配置非法。"""
+
+
+def _mask_api_key(key: str) -> str:
+    key = str(key or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return f"{key[:4]}…{key[-4:]}"
 
 
 def _read_config() -> dict:
@@ -67,7 +94,12 @@ def _read_config() -> dict:
         method = str(env.get("method") or METHOD_HARD).strip()
         if method not in METHODS:
             method = METHOD_HARD
-        return {"schema": _SCHEMA, "method": method}
+        key = str(env.get("fusionintel_api_key") or "").strip()
+        return {
+            "schema": _SCHEMA,
+            "method": method,
+            "fusionintel_api_key": key,
+        }
     except Exception:  # noqa: BLE001
         return dict(_DEFAULT)
 
@@ -76,12 +108,39 @@ def get_method() -> str:
     return str(_read_config().get("method") or METHOD_HARD)
 
 
-def set_method(method: str) -> dict:
+def get_fusionintel_api_key() -> str:
+    return str(_read_config().get("fusionintel_api_key") or "").strip()
+
+
+def set_method(method: str, *, fusionintel_api_key: Optional[str] = None) -> dict:
+    """保存算法；选 FusionIntel 时须已有或本次传入非空 API Key。
+
+    `fusionintel_api_key`：
+    - None：不改动已存 Key
+    - 非空字符串：覆盖写入
+    - 空字符串：清空已存 Key（若同时选 FusionIntel 会报错）
+    """
     method = str(method or "").strip()
     if method not in METHODS:
         raise SentimentScoreError(f"未知算法 {method!r}，只能是 {tuple(METHODS)}")
+
+    prev = _read_config()
+    if fusionintel_api_key is None:
+        key = str(prev.get("fusionintel_api_key") or "").strip()
+    else:
+        key = str(fusionintel_api_key).strip()
+
+    if method == METHOD_FUSION and not key:
+        raise SentimentScoreError(
+            "选择 FusionIntel 须填写 API Key（可在 https://fusionintel.net/ 注册获取）"
+        )
+
     os.makedirs(_CONFIG_DIR, exist_ok=True)
-    payload = {"schema": _SCHEMA, "method": method}
+    payload = {
+        "schema": _SCHEMA,
+        "method": method,
+        "fusionintel_api_key": key,
+    }
     if not atomic_write_json(_CONFIG_PATH, payload):
         raise OSError(f"写入情绪分配置失败：{_CONFIG_PATH}")
     return export_config()
@@ -89,16 +148,24 @@ def set_method(method: str) -> dict:
 
 def export_config() -> dict[str, Any]:
     cfg = _read_config()
+    key = str(cfg.get("fusionintel_api_key") or "").strip()
     return {
         "schema": _SCHEMA,
         "path": _CONFIG_PATH,
         "method": cfg["method"],
         "methods": [
-            {"id": mid, "label": meta["label"], "desc": meta["desc"]}
+            {
+                "id": mid,
+                "label": meta["label"],
+                "desc": meta["desc"],
+                "needs_api_key": bool(meta.get("needs_api_key")),
+            }
             for mid, meta in METHODS.items()
         ],
         "series_path": _SERIES_PATH,
         "series_meta": series_meta(),
+        "has_fusionintel_api_key": bool(key),
+        "fusionintel_api_key_masked": _mask_api_key(key),
     }
 
 
@@ -348,6 +415,165 @@ def _score_qcj_degree(date: str, rows: list[dict]) -> dict[str, Any]:
     }
 
 
+def _load_fusion_cache() -> dict:
+    if not os.path.isfile(_FUSION_CACHE_PATH):
+        return {"schema": _SCHEMA, "rows": [], "updated_at": None, "period": None}
+    try:
+        with open(_FUSION_CACHE_PATH, encoding="utf-8") as fh:
+            env = json.load(fh)
+        if isinstance(env, dict) and isinstance(env.get("rows"), list):
+            return env
+    except Exception:  # noqa: BLE001
+        pass
+    return {"schema": _SCHEMA, "rows": [], "updated_at": None, "period": None}
+
+
+def _save_fusion_cache(rows: list[dict], *, period: str) -> dict:
+    os.makedirs(os.path.dirname(_FUSION_CACHE_PATH), exist_ok=True)
+    env = {
+        "schema": _SCHEMA,
+        "period": period,
+        "rows": rows,
+        "updated_at": china_now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_day": china_now().strftime("%Y-%m-%d"),
+    }
+    atomic_write_json(_FUSION_CACHE_PATH, env)
+    return env
+
+
+def _parse_fusion_rows(payload: Any) -> list[dict]:
+    """解析 FusionIntel 响应为 [{date, s, price}, ...]。"""
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("data")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        date_s: Optional[str] = None
+        s_val: Optional[float] = None
+        price: Optional[float] = None
+        if isinstance(item, (list, tuple)) and len(item) >= 3:
+            date_s = str(item[0] or "").strip()[:10]
+            try:
+                price = None if item[1] is None else float(item[1])
+            except (TypeError, ValueError):
+                price = None
+            try:
+                s_val = None if item[2] is None else float(item[2])
+            except (TypeError, ValueError):
+                s_val = None
+        elif isinstance(item, dict):
+            date_s = str(item.get("date") or "").strip()[:10]
+            try:
+                s_val = float(item.get("feargreed_index", item.get("s")))
+            except (TypeError, ValueError):
+                s_val = None
+            try:
+                p = item.get("price")
+                price = None if p is None else float(p)
+            except (TypeError, ValueError):
+                price = None
+        if not date_s or s_val is None:
+            continue
+        out.append({"date": date_s, "s": round(s_val, 2), "price": price})
+    out.sort(key=lambda r: r["date"])
+    return out
+
+
+def _fetch_fusionintel(api_key: str, *, period: str = _FUSION_PERIOD) -> list[dict]:
+    import requests
+
+    r = requests.get(
+        _FUSION_URL,
+        params={"period": period},
+        headers={
+            "X-API-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "vibe-astock-sentiment-s/1.0",
+        },
+        timeout=20,
+    )
+    if r.status_code in (401, 403):
+        raise SentimentScoreError("FusionIntel API Key 无效或无权限")
+    r.raise_for_status()
+    rows = _parse_fusion_rows(r.json())
+    if not rows:
+        raise RuntimeError("FusionIntel 返回空序列")
+    return rows
+
+
+def _fusion_rows_for_score(api_key: str) -> list[dict]:
+    """当日已拉过则用缓存，否则请求并落盘。"""
+    with _LOCK:
+        cache = _load_fusion_cache()
+        today = china_now().strftime("%Y-%m-%d")
+        rows = cache.get("rows") or []
+        if rows and cache.get("updated_day") == today:
+            return rows
+        rows = _fetch_fusionintel(api_key)
+        _save_fusion_cache(rows, period=_FUSION_PERIOD)
+        return rows
+
+
+def _score_fusionintel(date: str) -> dict[str, Any]:
+    api_key = get_fusionintel_api_key()
+    if not api_key:
+        return {
+            "available": False,
+            "reason": "未配置 FusionIntel API Key（设置页选择该算法并保存 Key）",
+            "s": None,
+            "method": METHOD_FUSION,
+        }
+    try:
+        rows = _fusion_rows_for_score(api_key)
+    except SentimentScoreError as exc:
+        return {
+            "available": False,
+            "reason": str(exc),
+            "s": None,
+            "method": METHOD_FUSION,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "reason": f"拉取 FusionIntel 失败：{type(exc).__name__}: {exc}",
+            "s": None,
+            "method": METHOD_FUSION,
+        }
+
+    exact = next((r for r in rows if r.get("date") == date), None)
+    if exact is not None:
+        return {
+            "available": True,
+            "s": float(exact["s"]),
+            "method": METHOD_FUSION,
+            "source": "fusionintel",
+            "data_date": date,
+            "sample_days": len(rows),
+        }
+    # 取不超过目标日的最近一日（节假日 / 延迟更新）
+    prior = [r for r in rows if str(r.get("date") or "") <= date]
+    if prior:
+        hit = prior[-1]
+        return {
+            "available": True,
+            "s": float(hit["s"]),
+            "method": METHOD_FUSION,
+            "source": "fusionintel",
+            "data_date": hit["date"],
+            "sample_days": len(rows),
+            "note": f"无 {date}，沿用 {hit['date']}",
+        }
+    return {
+        "available": False,
+        "reason": f"FusionIntel 序列中无 ≤ {date} 的数据",
+        "s": None,
+        "method": METHOD_FUSION,
+        "sample_days": len(rows),
+    }
+
+
 def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
     """计算某场次 S。method 默认读配置。"""
     method = method or get_method()
@@ -360,6 +586,8 @@ def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
             "s": None,
             "method": METHOD_HARD,
         }
+    if method == METHOD_FUSION:
+        return _score_fusionintel(date)
 
     rows = _load_series().get("rows") or []
     if not rows:

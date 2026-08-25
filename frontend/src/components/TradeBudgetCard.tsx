@@ -82,7 +82,8 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
                   S
                   {b.readings.s_method === "percentile_qcj_em" ? "·分位"
                     : b.readings.s_method === "qcj_degree" ? "·趣财经°"
-                      : ""}
+                      : b.readings.s_method === "fusionintel" ? "·FusionIntel"
+                        : ""}
                 </div>
               </div>
             )}
