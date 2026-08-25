@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from . import breadth, emotion_metrics as em, market_facts, trade_budget as tb
+from . import breadth, emotion_metrics as em, market_facts, short_board, trade_budget as tb
 from . import trade_calendar
 
 
@@ -67,8 +67,17 @@ def gather_readings(date: str) -> dict[str, Any]:
         tier = (pr.get("tiers") or {}).get("1进2") or {}
         p12 = tier.get("rate")
 
-    me_prev = pr_prev = le_prev = None
+    me_prev = pr_prev = None
     p12_prev = med_prev = mld_prev = None
+    # 涨跌停：与 ShortBoard「情绪全景」同口径（趣财经优先），不用定稿亏钱效应里常空的 market_limit_down
+    zt_dt = short_board.zt_dt_for(date)
+    limit_up = zt_dt.get("limit_up")
+    market_ld = zt_dt.get("limit_down")
+    if limit_up is None and summary:
+        limit_up = summary.get("limit_up")
+    if market_ld is None and le.get("available"):
+        market_ld = le.get("market_limit_down")
+
     if prev:
         try:
             m_prev = sa.emotion_half(prev, with_cycle=False)
@@ -78,9 +87,12 @@ def gather_readings(date: str) -> dict[str, Any]:
                 med_prev = me_prev.get("median")
             if pr_prev.get("available"):
                 p12_prev = ((pr_prev.get("tiers") or {}).get("1进2") or {}).get("rate")
-            le_prev = market_facts.loss_effect(prev)
-            if le_prev.get("available"):
-                mld_prev = le_prev.get("market_limit_down")
+            prev_zt_dt = short_board.zt_dt_for(prev)
+            mld_prev = prev_zt_dt.get("limit_down")
+            if mld_prev is None:
+                le_prev = market_facts.loss_effect(prev)
+                if le_prev.get("available"):
+                    mld_prev = le_prev.get("market_limit_down")
         except Exception:  # noqa: BLE001
             pass
 
@@ -102,7 +114,7 @@ def gather_readings(date: str) -> dict[str, Any]:
         "money_reason": me.get("reason"),
         "promotion_ok": bool(pr.get("available")),
         "promotion_reason": pr.get("reason"),
-        "limit_up": None if not summary else summary.get("limit_up"),
+        "limit_up": limit_up,
         "highest": highest,
         "highest_hist": _hist_highest(date),
         "broken_rate": broken,
@@ -111,8 +123,10 @@ def gather_readings(date: str) -> dict[str, Any]:
         "promotion_1to2": p12,
         "promotion_1to2_prev": p12_prev,
         "deep_loss_5_rate": le.get("deep_loss_5_rate") if le.get("available") else None,
-        "market_limit_down": le.get("market_limit_down") if le.get("available") else None,
+        "market_limit_down": market_ld,
         "market_limit_down_prev": mld_prev,
+        "limit_up_source": zt_dt.get("limit_up_source"),
+        "limit_down_source": zt_dt.get("limit_down_source"),
         "up": up,
         "down": down,
         "index_pct": _index_pct_for(date),

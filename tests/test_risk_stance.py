@@ -45,14 +45,58 @@ class TestGatherReadings:
         )
         monkeypatch.setattr(rs, "_hist_highest", lambda _d, lookback=5: [3, 4])
         monkeypatch.setattr(rs, "_index_pct_for", lambda _d: 0.4)
+        monkeypatch.setattr(
+            "duanxian.short_board.zt_dt_for",
+            lambda _d: {
+                "limit_up": 47, "limit_down": 3,
+                "limit_up_source": "qcj_archive", "limit_down_source": "qcj_archive",
+            },
+        )
 
         out = rs.gather_readings("2026-08-20")
         assert out["money_ok"] is True
         assert out["money_median"] == 1.2
         assert out["promotion_1to2"] == 0.3
         assert out["highest"] == 4
-        assert out["limit_up"] == 40
+        assert out["limit_up"] == 47
+        assert out["market_limit_down"] == 3
+        assert out["limit_down_source"] == "qcj_archive"
         assert out["up"] == 3000
+
+    def test_falls_back_when_qcj_missing(self, monkeypatch):
+        monkeypatch.setattr("duanxian.trade_calendar.prev_trade_date", lambda _d: None)
+        monkeypatch.setattr("duanxian.emotion_metrics.day_summary", lambda _d: {
+            "limit_up": 40, "highest_consec": 4, "broken_rate": 0.2,
+        })
+        monkeypatch.setattr(
+            "duanxian.settled_archive.emotion_half",
+            lambda _d, with_cycle=False: {
+                "money_effect": {"available": True, "median": 1.2},
+                "promotion": {"available": True, "tiers": {"1进2": {"rate": 0.3}}},
+                "ladder_gap": {"available": True, "highest": 4},
+            },
+        )
+        monkeypatch.setattr(
+            "duanxian.market_facts.loss_effect",
+            lambda *_a, **_k: {"available": True, "deep_loss_5_rate": 0.08, "market_limit_down": 11},
+        )
+        monkeypatch.setattr(
+            "duanxian.breadth.market_breadth",
+            lambda _d: {"available": True, "up": 3000, "down": 2000},
+        )
+        monkeypatch.setattr(rs, "_hist_highest", lambda _d, lookback=5: [3, 4])
+        monkeypatch.setattr(rs, "_index_pct_for", lambda _d: 0.4)
+        monkeypatch.setattr(
+            "duanxian.short_board.zt_dt_for",
+            lambda _d: {
+                "limit_up": None, "limit_down": None,
+                "limit_up_source": None, "limit_down_source": None,
+            },
+        )
+
+        out = rs.gather_readings("2026-08-20")
+        assert out["limit_up"] == 40
+        assert out["market_limit_down"] == 11
 
 
 @pytest.mark.unit

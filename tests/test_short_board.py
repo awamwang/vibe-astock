@@ -121,3 +121,48 @@ class TestShortBoardArchive:
         assert snap["today"]["temperature"] == 48
         assert snap["yesterday"]["temperature"] == 40
         assert not (tmp_path / "2026-08-22.json").exists()
+
+
+@pytest.mark.unit
+class TestZtDtFor:
+    """情绪全景同口径：涨跌停优先趣财经。"""
+
+    @pytest.fixture(autouse=True)
+    def _iso(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._cache.clear()
+        monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
+        yield
+        sb._cache.clear()
+
+    def test_prefers_archive_qcj(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-25", {"qcj_zt": 47, "qcj_dt": 3, "n_sjdt": 99})
+        monkeypatch.setattr(sb, "_fetch_qcj", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应打 API")))
+        out = sb.zt_dt_for("2026-08-25")
+        assert out["limit_up"] == 47
+        assert out["limit_down"] == 3
+        assert out["limit_down_source"] == "qcj_archive"
+
+    def test_zero_is_kept(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-25", {"qcj_zt": 40, "qcj_dt": 0})
+        monkeypatch.setattr(sb, "_fetch_qcj", lambda *_a, **_k: {})
+        out = sb.zt_dt_for("2026-08-25")
+        assert out["limit_down"] == 0
+
+    def test_api_then_longtou_fallback(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-25", {"n_sjzt": 50, "n_sjdt": 11})
+        monkeypatch.setattr(sb, "_fetch_qcj", lambda *_a, **_k: {
+            "today": {"qcj_zt": 47, "qcj_dt": None},
+        })
+        out = sb.zt_dt_for("2026-08-25")
+        assert out["limit_up"] == 47
+        assert out["limit_up_source"] == "qcj_api"
+        assert out["limit_down"] == 11
+        assert out["limit_down_source"] == "longtou_archive"

@@ -442,6 +442,44 @@ def _snapshot_from_archive(
     }
 
 
+def zt_dt_for(date: str) -> dict:
+    """某场次涨停 / 跌停家数 —— 与 ShortBoard「情绪全景」同口径。
+
+    优先趣财经 `qcj_zt` / `qcj_dt`（归档 → API 序列），再退到开盘啦实际涨跌停
+    `n_sjzt` / `n_sjdt`。有值就用（含合法 0），缺才换源；不做「0 跳过看下一源」。
+    """
+    date = str(date)
+    archived = _load_archive(date)
+    zt = archived.get("qcj_zt")
+    dt = archived.get("qcj_dt")
+    src_zt = "qcj_archive" if zt is not None else None
+    src_dt = "qcj_archive" if dt is not None else None
+
+    if zt is None or dt is None:
+        qcj = _fetch_qcj(date, None)
+        today = qcj.get("today") or {}
+        if zt is None and today.get("qcj_zt") is not None:
+            zt = today["qcj_zt"]
+            src_zt = "qcj_api"
+        if dt is None and today.get("qcj_dt") is not None:
+            dt = today["qcj_dt"]
+            src_dt = "qcj_api"
+
+    if zt is None and archived.get("n_sjzt") is not None:
+        zt = int(archived["n_sjzt"])
+        src_zt = "longtou_archive"
+    if dt is None and archived.get("n_sjdt") is not None:
+        dt = int(archived["n_sjdt"])
+        src_dt = "longtou_archive"
+
+    return {
+        "limit_up": None if zt is None else int(zt),
+        "limit_down": None if dt is None else int(dt),
+        "limit_up_source": src_zt,
+        "limit_down_source": src_dt,
+    }
+
+
 def snapshot() -> dict:
     """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。
 
