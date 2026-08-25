@@ -66,6 +66,7 @@ _PCT_FIELDS = (
     ("broken_rate", True),
     ("qcj_temp", False),
     ("margin_chg", False),  # 融资余额日变化（百分点）；缺历史时该分量自动跳过
+    ("amount_vs_ma20", False),  # 两市成交额 / 20 日均（>1 偏放量）
 )
 
 _DEFAULT = {"schema": _SCHEMA, "method": METHOD_HARD, "fusionintel_api_key": ""}
@@ -310,6 +311,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
         if not qcj:
             raise RuntimeError("趣财经情绪序列为空")
         margin_by = ms.margin_map()
+        amount_by = ms.amount_metrics_map()
         old = {r["date"]: r for r in (_load_series().get("rows") or []) if r.get("date")}
         merged: list[dict] = []
         pending = 0
@@ -317,12 +319,15 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
             d = row["date"]
             prev = old.get(d) or {}
             mrow = margin_by.get(d) or {}
+            amrow = amount_by.get(d) or {}
             item = {
                 **row,
                 "highest": prev.get("highest"),
                 "broken_rate": prev.get("broken_rate"),
                 "em_ok": bool(prev.get("em_ok")),
                 "margin_chg": mrow.get("margin_chg", prev.get("margin_chg")),
+                "amount_yi": amrow.get("amount_yi", prev.get("amount_yi")),
+                "amount_vs_ma20": amrow.get("amount_vs_ma20", prev.get("amount_vs_ma20")),
             }
             need = not item["em_ok"] or item.get("highest") is None or item.get("broken_rate") is None
             if need and (enrich_limit is None or pending < enrich_limit):
@@ -362,6 +367,7 @@ def _row_components(row: dict) -> dict[str, Optional[float]]:
         "broken_rate": None if row.get("broken_rate") is None else float(row["broken_rate"]),
         "qcj_temp": None if row.get("qcj_temp") is None else float(row["qcj_temp"]),
         "margin_chg": None if row.get("margin_chg") is None else float(row["margin_chg"]),
+        "amount_vs_ma20": None if row.get("amount_vs_ma20") is None else float(row["amount_vs_ma20"]),
     }
 
 

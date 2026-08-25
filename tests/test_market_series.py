@@ -110,6 +110,26 @@ class TestMarketSeriesEnsure:
         assert out["mode"] == "full"
         assert ms.index_pct_for("2026-08-21") == pytest.approx(1.0)
 
+    def test_amount_metrics_ma20(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_AMOUNT_PATH", str(tmp_path / "market_amount.json"))
+        rows = []
+        for i in range(20):
+            rows.append({"date": f"2026-08-{i + 1:02d}", "amount_yi": 100.0 + i})
+        rows.append({"date": "2026-08-21", "amount_yi": 150.0})
+        ms._save_json(str(tmp_path / "market_amount.json"), rows)
+        m = ms.amount_metrics_for("2026-08-21")
+        assert m is not None
+        assert m["amount_yi"] == 150.0
+        assert m["ma20_yi"] == pytest.approx(109.5)
+        assert m["amount_vs_ma20"] == pytest.approx(round(150.0 / 109.5, 4))
+
+    def test_parse_exchange_amount(self):
+        sse = [{"单日情况": "成交金额", "股票": 1000.0}]
+        sz = [{"证券类别": "股票", "成交金额": 2.5e11}]
+        assert ms._parse_sse_amount_yi(sse) == 1000.0
+        assert ms._parse_szse_amount_yi(sz) == 2500.0
+
     def test_margin_incremental_merge(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
         margin_path = tmp_path / "margin_sse.json"
