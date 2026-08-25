@@ -1,6 +1,8 @@
 """合成情绪分 S（0–100）—— 定档可选主输入。
 
 算法界面可选，落盘 `~/.duanxian-agents/config/sentiment_s.json`。
+分位序列落盘 `~/.duanxian-agents/cache/series.db`（SQLite，表 `sentiment_s`）。
+旧版 `cache/sentiment_s/series.json` 首次读取时自动迁入。
 `hard_rules`：不用 S，维持涨停生态硬规则树。
 `qcj_degree`：趣财经 temperatureDegree 原样当 S。
 `percentile_qcj_em`：趣财经 ~220 日序列 + 东财池补炸板/高度，分位等权合成。
@@ -14,16 +16,20 @@ import os
 import threading
 from typing import Any, Optional
 
+from . import series_store as store
 from .util import atomic_write_json, china_now
 
 _CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
 _CONFIG_PATH = os.path.join(_CONFIG_DIR, "sentiment_s.json")
 _SERIES_PATH = os.path.expanduser("~/.duanxian-agents/cache/sentiment_s/series.json")
+_SERIES_NAME = store.SERIES_SENTIMENT
 _FUSION_CACHE_PATH = os.path.expanduser(
     "~/.duanxian-agents/cache/sentiment_s/fusionintel.json"
 )
 _SCHEMA = 1
 _LOCK = threading.Lock()
+# 测试可改写为临时 db 路径
+_DB_PATH: Optional[str] = None
 
 METHOD_HARD = "hard_rules"
 METHOD_QCJ = "qcj_degree"
@@ -167,7 +173,8 @@ def export_config() -> dict[str, Any]:
             }
             for mid, meta in METHODS.items()
         ],
-        "series_path": _SERIES_PATH,
+        "series_path": _DB_PATH or store.DB_PATH,
+        "series_legacy_path": _SERIES_PATH,
         "series_meta": series_meta(),
         "market_series": {
             "margin": st.get("margin"),
@@ -193,27 +200,12 @@ def series_meta() -> dict[str, Any]:
 
 
 def _load_series() -> dict:
-    if not os.path.isfile(_SERIES_PATH):
-        return {"schema": _SCHEMA, "rows": [], "updated_at": None}
-    try:
-        with open(_SERIES_PATH, encoding="utf-8") as fh:
-            env = json.load(fh)
-        if isinstance(env, dict) and isinstance(env.get("rows"), list):
-            return env
-    except Exception:  # noqa: BLE001
-        pass
-    return {"schema": _SCHEMA, "rows": [], "updated_at": None}
+    store.migrate_json_file(_SERIES_NAME, _SERIES_PATH, path=_DB_PATH)
+    return store.load_envelope(_SERIES_NAME, path=_DB_PATH)
 
 
 def _save_series(rows: list[dict]) -> dict:
-    os.makedirs(os.path.dirname(_SERIES_PATH), exist_ok=True)
-    env = {
-        "schema": _SCHEMA,
-        "rows": rows,
-        "updated_at": china_now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    atomic_write_json(_SERIES_PATH, env)
-    return env
+    return store.replace_rows(_SERIES_NAME, rows, source="sentiment_score", path=_DB_PATH)
 
 
 def _fetch_qcj_rows() -> list[dict]:

@@ -550,10 +550,12 @@ export const api = {
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),
   backupStatus: () => get<BackupStatus>("/backup/status"),
-  backupOpen: (kind: "root" | "cache") =>
+  backupOpen: (kind: "root" | "cache" | "series") =>
     request<{ ok: boolean; path: string; kind: string }>("/backup/open", "POST", { kind }),
   backupExport: (destDir: string) =>
     request<BackupExportResult>("/backup/export", "POST", { dest_dir: destDir }),
+  backupExportSeries: (destDir: string) =>
+    request<SeriesExportResult>("/backup/export-series", "POST", { dest_dir: destDir }),
   backupImportPath: (path: string) =>
     request<BackupImportResult>("/backup/import", "POST", { path }),
   backupImportZip: (contentB64: string) =>
@@ -751,15 +753,34 @@ export interface ExperienceCommitResult {
 export interface BackupFolder {
   name: string; files: number; bytes: number;
 }
+export interface SeriesOverviewItem {
+  name: string;
+  days: number;
+  first?: string | null;
+  last?: string | null;
+  updated_at?: string | null;
+  source?: string | null;
+}
+export interface SeriesOverview {
+  db_path: string;
+  byte_count: number;
+  total_days: number;
+  series: SeriesOverviewItem[];
+}
 export interface BackupStatus {
   root: string; cache_dir: string; exists: boolean;
   file_count: number; byte_count: number; skipped_logs: number;
   folders: BackupFolder[];
+  series?: SeriesOverview;
 }
 export interface BackupExportResult {
   ok: boolean; path: string; filename: string;
   file_count: number; byte_count: number; skipped_logs: number;
   created_at?: string;
+}
+export interface SeriesExportResult {
+  ok: boolean; path: string; file_count: number; row_count: number;
+  files: string[]; db_path: string;
 }
 export interface BackupImportResult {
   ok: boolean; imported: number; byte_count: number;

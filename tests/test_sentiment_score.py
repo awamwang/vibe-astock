@@ -12,6 +12,7 @@ from duanxian import trade_budget as tb
 def iso_cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "_CONFIG_PATH", str(tmp_path / "sentiment_s.json"))
     monkeypatch.setattr(ss, "_SERIES_PATH", str(tmp_path / "series.json"))
+    monkeypatch.setattr(ss, "_DB_PATH", str(tmp_path / "series.db"))
     monkeypatch.setattr(ss, "_FUSION_CACHE_PATH", str(tmp_path / "fusionintel.json"))
     yield
 

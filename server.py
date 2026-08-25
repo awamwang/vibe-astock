@@ -1519,6 +1519,24 @@ def api_backup_export(request: Request, body: Optional[dict] = Body(None)):
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
 
 
+@app.post("/api/backup/export-series")
+def api_backup_export_series(request: Request, body: Optional[dict] = Body(None)):
+    """把 SQLite 长序列导出为可读 JSON 目录。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import backup
+    from duanxian.backup import BackupError
+
+    dest = str((body or {}).get("dest_dir") or "")
+    try:
+        return {"data": backup.export_series_json(dest)}
+    except BackupError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
 @app.get("/api/backup/download")
 def api_backup_download(request: Request):
     """把非日志数据打包成 zip，由浏览器下载。"""

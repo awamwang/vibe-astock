@@ -4651,11 +4651,14 @@ class TestDataBackup:
         assert "/backup/status" in fe
         assert "/backup/open" in fe
         assert "/backup/export" in fe
+        assert "/backup/export-series" in fe
         assert "/backup/import" in fe
         assert "downloadBackup" in fe
+        assert "backupExportSeries" in fe
         assert "/api/backup/status" in be
         assert "/api/backup/open" in be
         assert "/api/backup/export" in be
+        assert "/api/backup/export-series" in be
         assert "/api/backup/import" in be
         assert "/api/backup/download" in be
         assert 'label: "数据管理"' in nav
@@ -4664,6 +4667,7 @@ class TestDataBackup:
         assert "数据管理" in page
         assert "打开" in page
         assert "打包到目录" in page
+        assert "导出长序列 JSON" in page
         assert "从路径导入" in page
         assert "选择压缩包" in page
 
@@ -4678,8 +4682,31 @@ class TestDataBackup:
         assert out["kind"] == "cache"
         assert (tmp_path / "duanxian-agents" / "cache").is_dir()
         assert opened
+        out2 = backup.open_data_dir("series", root=str(tmp_path / "duanxian-agents"))
+        assert out2["kind"] == "series"
         with pytest.raises(BackupError, match="只能打开"):
             backup.open_data_dir("tmp", root=str(tmp_path / "duanxian-agents"))
+
+    def test_export_series_json(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        from duanxian import backup
+        from duanxian import series_store as store
+
+        root = tmp_path / "duanxian-agents"
+        dest = tmp_path / "series-out"
+        db = root / "cache" / "series.db"
+        monkeypatch.setattr(backup, "DATA_ROOT", str(root))
+        store.replace_rows(
+            store.SERIES_MARGIN,
+            [{"date": "2026-08-20", "margin_balance": 1.0}],
+            path=str(db),
+        )
+        result = backup.export_series_json(str(dest), root=str(root))
+        assert result["ok"] is True
+        assert result["row_count"] == 1
+        assert (Path(result["path"]) / "margin_sse.json").is_file()
+        assert (Path(result["path"]) / "manifest.json").is_file()
 
 
 @pytest.mark.unit

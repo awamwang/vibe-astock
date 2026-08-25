@@ -1,7 +1,8 @@
 """市场日序列缓存 —— 两融、上证涨跌幅等（供 S 分位与宽度背离）。
 
 优先 AKTools HTTP；不可用时回退本地 akshare。
-落盘：`~/.duanxian-agents/cache/market_series/`
+长序列落盘：`~/.duanxian-agents/cache/series.db`（SQLite）。
+旧版按文件 JSON（`cache/market_series/*.json`）首次读取时自动迁入。
 """
 
 from __future__ import annotations
@@ -12,12 +13,15 @@ import threading
 from typing import Any, Optional
 
 from . import aktools_client as akc
-from .util import atomic_write_json, china_now
+from . import series_store as store
 
 _CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_series")
 _MARGIN_PATH = os.path.join(_CACHE_DIR, "margin_sse.json")
 _INDEX_PATH = os.path.join(_CACHE_DIR, "sh000001.json")
 _AMOUNT_PATH = os.path.join(_CACHE_DIR, "market_amount.json")
+_MARGIN_SERIES = store.SERIES_MARGIN
+_INDEX_SERIES = store.SERIES_INDEX
+_AMOUNT_SERIES = store.SERIES_AMOUNT
 _BREADTH_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/breadth")
 _SHORT_BOARD_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
 _AMOUNT_MA_WINDOW = 20
@@ -26,6 +30,8 @@ _SCHEMA = 1
 _LOCK = threading.Lock()
 _BG_LOCK = threading.Lock()
 _BG_RUNNING = False
+# 测试可改写为临时 db 路径
+_DB_PATH: Optional[str] = None
 
 
 def _ymd_compact(date: str) -> str:
@@ -45,29 +51,55 @@ def _ymd_dash(raw: str) -> Optional[str]:
     return None
 
 
+def _series_for_path(path: str) -> Optional[str]:
+    name = os.path.basename(path)
+    if name == "margin_sse.json" or path == _MARGIN_PATH:
+        return _MARGIN_SERIES
+    if name == "sh000001.json" or path == _INDEX_PATH:
+        return _INDEX_SERIES
+    if name == "market_amount.json" or path == _AMOUNT_PATH:
+        return _AMOUNT_SERIES
+    return None
+
+
+def _legacy_path_for(series: str) -> str:
+    if series == _MARGIN_SERIES:
+        return _MARGIN_PATH
+    if series == _INDEX_SERIES:
+        return _INDEX_PATH
+    if series == _AMOUNT_SERIES:
+        return _AMOUNT_PATH
+    return ""
+
+
+def _load_series(series: str) -> dict:
+    store.migrate_json_file(series, _legacy_path_for(series), path=_DB_PATH)
+    return store.load_envelope(series, path=_DB_PATH)
+
+
+def _save_series(series: str, rows: list[dict]) -> dict:
+    return store.replace_rows(
+        series,
+        rows,
+        source="aktools" if akc.available() else "akshare",
+        path=_DB_PATH,
+    )
+
+
 def _load_json(path: str) -> dict:
-    if not os.path.isfile(path):
+    """兼容旧调用：按路径映射到 SQLite 序列。"""
+    series = _series_for_path(path)
+    if not series:
         return {"schema": _SCHEMA, "rows": [], "updated_at": None}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            env = json.load(fh)
-        if isinstance(env, dict) and isinstance(env.get("rows"), list):
-            return env
-    except Exception:  # noqa: BLE001
-        pass
-    return {"schema": _SCHEMA, "rows": [], "updated_at": None}
+    return _load_series(series)
 
 
 def _save_json(path: str, rows: list[dict]) -> dict:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    env = {
-        "schema": _SCHEMA,
-        "rows": rows,
-        "updated_at": china_now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source": "aktools" if akc.available() else "akshare",
-    }
-    atomic_write_json(path, env)
-    return env
+    """兼容旧调用：按路径映射到 SQLite 序列。"""
+    series = _series_for_path(path)
+    if not series:
+        raise ValueError(f"未知市场序列路径：{path}")
+    return _save_series(series, rows)
 
 
 def _merge_by_date(existing: list[dict], incoming: list[dict]) -> list[dict]:
@@ -797,28 +829,36 @@ def series_status() -> dict[str, Any]:
     mr = m.get("rows") or []
     ir = idx.get("rows") or []
     ar = amt.get("rows") or []
+    db_path = _DB_PATH or store.DB_PATH
     return {
         "aktools": aks.runtime_status(),
+        "db_path": db_path,
         "margin": {
             "days": len(mr),
             "first": mr[0]["date"] if mr else None,
             "last": mr[-1]["date"] if mr else None,
             "updated_at": m.get("updated_at"),
-            "path": _MARGIN_PATH,
+            "path": db_path,
+            "series": _MARGIN_SERIES,
+            "legacy_path": _MARGIN_PATH,
         },
         "index": {
             "days": len(ir),
             "first": ir[0]["date"] if ir else None,
             "last": ir[-1]["date"] if ir else None,
             "updated_at": idx.get("updated_at"),
-            "path": _INDEX_PATH,
+            "path": db_path,
+            "series": _INDEX_SERIES,
+            "legacy_path": _INDEX_PATH,
         },
         "amount": {
             "days": len(ar),
             "first": ar[0]["date"] if ar else None,
             "last": ar[-1]["date"] if ar else None,
             "updated_at": amt.get("updated_at"),
-            "path": _AMOUNT_PATH,
+            "path": db_path,
+            "series": _AMOUNT_SERIES,
+            "legacy_path": _AMOUNT_PATH,
             "needs_refresh": amount_needs_refresh(),
             "ma_window": _AMOUNT_MA_WINDOW,
             "ma_ready": len(ar) >= _AMOUNT_MA_WINDOW,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Archive, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
+  Archive, Database, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -10,7 +10,15 @@ import {
 } from "@/lib/api";
 
 const DEST_KEY = "va-backup-dest";
+const SERIES_DEST_KEY = "va-series-export-dest";
 const SRC_KEY = "va-backup-src";
+
+const SERIES_LABELS: Record<string, string> = {
+  margin_sse: "两融余额",
+  sh000001: "上证日线",
+  market_amount: "两市成交额",
+  sentiment_s: "情绪分位序列",
+};
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -88,11 +96,13 @@ export function DataBackup() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [destDir, setDestDir] = useState(() => readLocal(DEST_KEY));
+  const [seriesDestDir, setSeriesDestDir] = useState(() => readLocal(SERIES_DEST_KEY) || readLocal(DEST_KEY));
   const [srcPath, setSrcPath] = useState(() => readLocal(SRC_KEY));
   const [exporting, setExporting] = useState(false);
+  const [exportingSeries, setExportingSeries] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [opening, setOpening] = useState<"root" | "cache" | null>(null);
+  const [opening, setOpening] = useState<"root" | "cache" | "series" | null>(null);
   const zipRef = useRef<HTMLInputElement>(null);
 
   const reload = () =>
@@ -103,9 +113,9 @@ export function DataBackup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const busy = exporting || downloading || importing || opening !== null;
+  const busy = exporting || exportingSeries || downloading || importing || opening !== null;
 
-  const openDir = async (kind: "root" | "cache") => {
+  const openDir = async (kind: "root" | "cache" | "series") => {
     setOpening(kind);
     try {
       const r = await api.backupOpen(kind);
@@ -133,6 +143,25 @@ export function DataBackup() {
       toast.error(e instanceof Error ? e.message : "导出失败");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const doExportSeries = async () => {
+    const dest = seriesDestDir.trim() || destDir.trim();
+    if (!dest) {
+      toast.error("请填写长序列导出目录");
+      return;
+    }
+    writeLocal(SERIES_DEST_KEY, dest);
+    setExportingSeries(true);
+    try {
+      const r = await api.backupExportSeries(dest);
+      toast.success(`已导出长序列 ${r.row_count} 行 → ${r.path}`);
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "导出长序列失败");
+    } finally {
+      setExportingSeries(false);
     }
   };
 
@@ -188,6 +217,8 @@ export function DataBackup() {
     }
   };
 
+  const series = status?.series;
+
   return (
     <div>
       <PageHeader
@@ -216,6 +247,13 @@ export function DataBackup() {
             opening={opening === "cache"}
             disabled={busy && opening !== "cache"}
             onOpen={() => void openDir("cache")}
+          />
+          <DirRow
+            label="长序列库（series.db）"
+            path={series?.db_path}
+            opening={opening === "series"}
+            disabled={busy && opening !== "series"}
+            onOpen={() => void openDir("series")}
           />
         </div>
         {!loaded ? (
@@ -249,11 +287,56 @@ export function DataBackup() {
 
       <GlassCard className="mb-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <FolderOutput className="h-4 w-4 text-primary" /> 导出
+          <Database className="h-4 w-4 text-primary" /> 长序列（SQLite）
         </h3>
         <p className="mb-3 text-xs text-muted-foreground">
-          填写本机目录，会在该目录生成 <code className="rounded bg-muted/50 px-1">duanxian-agents-日期时间.zip</code>。
-          也可以直接下载到浏览器默认下载位置。
+          两融、上证、成交额、情绪分位等增长型序列存在
+          <code className="mx-0.5 rounded bg-muted/50 px-1">cache/series.db</code>
+          。完整备份已含该库；下面可单独导出为可读 JSON，方便查阅或迁移。
+        </p>
+        {series && (series.total_days ?? 0) > 0 ? (
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            {series.series.map((s) => (
+              <div key={s.name} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+                <div className="font-medium">{SERIES_LABELS[s.name] || s.name}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {s.days} 日
+                  {s.first && s.last ? ` · ${s.first} → ${s.last}` : ""}
+                  {s.updated_at ? ` · 更新 ${s.updated_at}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mb-3 text-sm text-muted-foreground">尚无长序列数据（刷新分位或市场序列后会出现）。</p>
+        )}
+        <div className="mb-2 text-xs text-muted-foreground">
+          库体积 {fmtBytes(series?.byte_count ?? 0)} · 合计 {series?.total_days ?? 0} 行
+        </div>
+        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">长序列导出目录</label>
+        <input
+          value={seriesDestDir}
+          onChange={(e) => setSeriesDestDir(e.target.value)}
+          placeholder="例如 D:\备份 或留空则用上方导出目录"
+          className="mb-3 w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+        />
+        <button
+          disabled={busy}
+          onClick={doExportSeries}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25 disabled:opacity-50"
+        >
+          {exportingSeries ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOutput className="h-4 w-4" />}
+          {exportingSeries ? "正在导出…" : "导出长序列 JSON"}
+        </button>
+      </GlassCard>
+
+      <GlassCard className="mb-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <FolderOutput className="h-4 w-4 text-primary" /> 导出全量备份
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          填写本机目录，会在该目录生成 <code className="rounded bg-muted/50 px-1">duanxian-agents-日期时间.zip</code>
+          （含 series.db 与按日 JSON）。也可以直接下载到浏览器默认下载位置。
         </p>
         <label className="mb-1.5 block text-xs font-medium text-muted-foreground">导出目录</label>
         <input

@@ -28,6 +28,7 @@ class TestAktoolsService:
 class TestMarketSeriesEnsure:
     def test_needs_refresh_when_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(tmp_path / "margin_sse.json"))
         monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
         monkeypatch.setattr(ms, "_target_trade_date", lambda: "2026-08-21")
@@ -35,6 +36,7 @@ class TestMarketSeriesEnsure:
 
     def test_ensure_fresh_skips_when_current(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         margin_path = tmp_path / "margin_sse.json"
         index_path = tmp_path / "sh000001.json"
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(margin_path))
@@ -48,6 +50,7 @@ class TestMarketSeriesEnsure:
 
     def test_margin_chg_from_rows(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(tmp_path / "margin_sse.json"))
         monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
         monkeypatch.setattr(ms.akc, "available", lambda timeout=2.0: False)
@@ -81,6 +84,7 @@ class TestMarketSeriesEnsure:
 
     def test_index_pct_from_rows(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(tmp_path / "margin_sse.json"))
         monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
         monkeypatch.setattr(ms.akc, "available", lambda timeout=2.0: False)
@@ -112,6 +116,7 @@ class TestMarketSeriesEnsure:
 
     def test_amount_metrics_ma20(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         monkeypatch.setattr(ms, "_AMOUNT_PATH", str(tmp_path / "market_amount.json"))
         rows = []
         for i in range(20):
@@ -132,6 +137,7 @@ class TestMarketSeriesEnsure:
 
     def test_margin_incremental_merge(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         margin_path = tmp_path / "margin_sse.json"
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(margin_path))
         monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
@@ -181,3 +187,24 @@ class TestMarketSeriesEnsure:
         row = ms.margin_for("2026-08-22")
         assert row is not None
         assert row["margin_chg"] == pytest.approx(10.0)
+
+    def test_migrates_legacy_json(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
+        margin_path = tmp_path / "margin_sse.json"
+        monkeypatch.setattr(ms, "_MARGIN_PATH", str(margin_path))
+        monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
+        import json
+
+        margin_path.write_text(
+            json.dumps({
+                "schema": 1,
+                "rows": [{"date": "2026-08-20", "margin_balance": 1.0, "margin_chg": None}],
+                "updated_at": "2026-08-20 15:00:00",
+            }),
+            encoding="utf-8",
+        )
+        row = ms.margin_for("2026-08-20")
+        assert row is not None
+        assert row["margin_balance"] == 1.0
+        assert (tmp_path / "series.db").is_file()

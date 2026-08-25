@@ -101,6 +101,21 @@ def overview(root: Optional[str] = None) -> dict[str, Any]:
         bucket["bytes"] += size
         total_files += 1
         total_bytes += size
+
+    series_info: dict[str, Any]
+    try:
+        from . import series_store as store
+
+        db_path = str(base / "cache" / "series.db")
+        series_info = store.overview(path=db_path)
+    except Exception:  # noqa: BLE001
+        series_info = {
+            "db_path": str(base / "cache" / "series.db"),
+            "byte_count": 0,
+            "series": [],
+            "total_days": 0,
+        }
+
     return {
         "root": str(base),
         "cache_dir": str(base / "cache"),
@@ -112,6 +127,7 @@ def overview(root: Optional[str] = None) -> dict[str, Any]:
             {"name": name, "files": info["files"], "bytes": info["bytes"]}
             for name, info in sorted(folders.items())
         ],
+        "series": series_info,
     }
 
 
@@ -188,6 +204,23 @@ def export_to_dir(dest_dir: str, root: Optional[str] = None) -> dict[str, Any]:
         raise BackupError("导出目录不能落在数据根目录内部")
     dest.mkdir(parents=True, exist_ok=True)
     return write_zip_file(dest / _archive_name(), root=str(base))
+
+
+def export_series_json(dest_dir: str, root: Optional[str] = None) -> dict[str, Any]:
+    """导出长序列为可读 JSON 目录（从 series.db 抽出）。"""
+    dest = _resolve_dest_dir(dest_dir)
+    base = _norm(root or DATA_ROOT)
+    if dest == base or base in dest.parents:
+        raise BackupError("导出目录不能落在数据根目录内部")
+    from . import series_store as store
+
+    db_path = str(base / "cache" / "series.db")
+    try:
+        return store.export_json_bundle(str(dest), path=db_path)
+    except ValueError as exc:
+        raise BackupError(str(exc)) from exc
+    except OSError as exc:
+        raise BackupError(f"导出长序列失败：{exc}") from exc
 
 
 def _resolve_dest_dir(raw: str) -> Path:
@@ -371,15 +404,16 @@ def _reveal_dir(path: Path) -> None:
 
 
 def open_data_dir(kind: str, root: Optional[str] = None) -> dict[str, Any]:
-    """打开数据根目录或 cache 缓存目录。目录不存在时先创建。"""
+    """打开数据根目录、cache 或长序列库所在目录。目录不存在时先创建。"""
     key = (kind or "root").strip().lower()
     base = _norm(root or DATA_ROOT)
     mapping = {
         "root": base,
         "cache": base / "cache",
+        "series": base / "cache",
     }
     if key not in mapping:
-        raise BackupError("只能打开数据根目录或 cache 目录")
+        raise BackupError("只能打开数据根目录、cache 或长序列目录")
     path = mapping[key]
     try:
         path.mkdir(parents=True, exist_ok=True)
