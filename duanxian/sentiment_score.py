@@ -716,8 +716,133 @@ def _score_fusionintel(date: str) -> dict[str, Any]:
     }
 
 
+# 东财涨停池近窗量级；定档自动补齐时每轮上限，避免窗外空打拖慢
+_AUTO_EM_ENRICH_LIMIT = 16
+
+
+def _pct_needs_auto_refresh(date: str, rows: list[dict]) -> bool:
+    """历史分位定档前：序列空、缺目标日、或近窗仍缺东财时需要自动刷新。"""
+    if not rows:
+        return True
+    by = {r["date"]: r for r in rows if r.get("date")}
+    if date not in by:
+        return True
+    recent = sorted(by.keys())[-_AUTO_EM_ENRICH_LIMIT:]
+    return any(_needs_em_enrich(by[d]) for d in recent)
+
+
+def _merge_market_into_rows(rows: list[dict]) -> list[dict]:
+    """把已刷新的两融/成交额并回分位行，免整段重拉趣财经。"""
+    from . import market_series as ms
+
+    margin_by = ms.margin_map()
+    amount_by = ms.amount_metrics_map()
+    changed = False
+    out: list[dict] = []
+    for r in rows:
+        item = dict(r)
+        d = item.get("date")
+        if d:
+            mrow = margin_by.get(d) or {}
+            amrow = amount_by.get(d) or {}
+            if item.get("margin_chg") is None and mrow.get("margin_chg") is not None:
+                item["margin_chg"] = mrow["margin_chg"]
+                changed = True
+            if item.get("amount_vs_ma20") is None and amrow.get("amount_vs_ma20") is not None:
+                item["amount_yi"] = amrow.get("amount_yi", item.get("amount_yi"))
+                item["amount_vs_ma20"] = amrow["amount_vs_ma20"]
+                changed = True
+        out.append(item)
+    if changed:
+        _save_series(out)
+        return list(_load_series().get("rows") or [])
+    return out
+
+
+def _patch_target_day_em(date: str, rows: list[dict]) -> list[dict]:
+    """目标日缺高度/炸板时：先落盘趣财经龙头高度，再按需打东财（失败不覆盖已有高度）。"""
+    by = {r["date"]: r for r in rows if r.get("date")}
+    row = by.get(date)
+    if not row or (row.get("em_ok") and row.get("highest") is not None):
+        return rows
+    changed = False
+    if row.get("highest") is None:
+        h = row.get("qcj_highest")
+        if h is None:
+            h = _parse_leader_day_top(row.get("leader_top"))
+        if h is not None:
+            row = {
+                **row,
+                "highest": int(h),
+                "highest_source": row.get("highest_source") or "qcj_leader",
+            }
+            changed = True
+    if not row.get("em_ok") and not row.get("em_miss"):
+        patch = _enrich_one(date)
+        if patch.get("em_ok") and (
+            patch.get("highest") is not None or patch.get("broken_rate") is not None
+        ):
+            row = {
+                **row,
+                "highest": (
+                    patch["highest"]
+                    if patch.get("highest") is not None
+                    else row.get("highest")
+                ),
+                "broken_rate": (
+                    patch["broken_rate"]
+                    if patch.get("broken_rate") is not None
+                    else row.get("broken_rate")
+                ),
+                "em_ok": True,
+                "em_miss": False,
+                "highest_source": (
+                    "em" if patch.get("highest") is not None else row.get("highest_source")
+                ),
+            }
+        else:
+            row = {**row, "em_miss": True}
+        changed = True
+    if not changed:
+        return rows
+    by[date] = row
+    merged = sorted(by.values(), key=lambda r: r["date"])
+    _save_series(merged)
+    return merged
+
+
+def _ensure_percentile_for_score(date: str) -> list[dict]:
+    """六档定档用历史分位时自动补齐：市场序列 + 近窗东财/趣财经。"""
+    from . import market_series as ms
+
+    try:
+        ms.ensure_fresh()
+    except Exception:  # noqa: BLE001
+        pass
+
+    rows = list(_load_series().get("rows") or [])
+    if _pct_needs_auto_refresh(date, rows):
+        try:
+            refresh_series(enrich_limit=_AUTO_EM_ENRICH_LIMIT)
+            rows = list(_load_series().get("rows") or [])
+        except Exception:  # noqa: BLE001
+            pass
+    elif rows:
+        try:
+            rows = _merge_market_into_rows(rows)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if rows:
+        rows = _patch_target_day_em(date, rows)
+    return rows
+
+
 def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
-    """计算某场次 S。method 默认读配置。"""
+    """计算某场次 S。method 默认读配置。
+
+    历史分位（percentile_qcj_em）在定档路径会自动补齐近窗东财与市场序列。
+    """
     method = method or get_method()
     if method not in METHODS:
         method = METHOD_HARD
@@ -731,10 +856,21 @@ def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
     if method == METHOD_FUSION:
         return _score_fusionintel(date)
 
+    if method == METHOD_PCT:
+        rows = _ensure_percentile_for_score(date)
+        if not rows:
+            return {
+                "available": False,
+                "reason": "拉取分位序列失败（请检查趣财经/网络）",
+                "s": None,
+                "method": method,
+            }
+        return _score_percentile(date, rows)
+
     rows = _load_series().get("rows") or []
     if not rows:
         try:
-            refresh_series(enrich_limit=0)  # 先只拉趣财经，不堵在东财
+            refresh_series(enrich_limit=0)  # 趣财经°只需序列，不堵在东财
             rows = _load_series().get("rows") or []
         except Exception as exc:  # noqa: BLE001
             return {
@@ -746,54 +882,6 @@ def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
 
     if method == METHOD_QCJ:
         return _score_qcj_degree(date, rows)
-    if method == METHOD_PCT:
-        # 目标日缺高度/炸板时：先落盘趣财经龙头高度，再按需打东财（失败不覆盖已有高度）
-        by = {r["date"]: r for r in rows}
-        row = by.get(date)
-        if row and (not row.get("em_ok") or row.get("highest") is None):
-            changed = False
-            if row.get("highest") is None:
-                h = row.get("qcj_highest")
-                if h is None:
-                    h = _parse_leader_day_top(row.get("leader_top"))
-                if h is not None:
-                    row = {
-                        **row,
-                        "highest": int(h),
-                        "highest_source": row.get("highest_source") or "qcj_leader",
-                    }
-                    changed = True
-            if not row.get("em_ok") and not row.get("em_miss"):
-                patch = _enrich_one(date)
-                if patch.get("em_ok") and (
-                    patch.get("highest") is not None or patch.get("broken_rate") is not None
-                ):
-                    row = {
-                        **row,
-                        "highest": (
-                            patch["highest"]
-                            if patch.get("highest") is not None
-                            else row.get("highest")
-                        ),
-                        "broken_rate": (
-                            patch["broken_rate"]
-                            if patch.get("broken_rate") is not None
-                            else row.get("broken_rate")
-                        ),
-                        "em_ok": True,
-                        "em_miss": False,
-                        "highest_source": (
-                            "em" if patch.get("highest") is not None else row.get("highest_source")
-                        ),
-                    }
-                else:
-                    row = {**row, "em_miss": True}
-                changed = True
-            if changed:
-                by[date] = row
-                rows = sorted(by.values(), key=lambda r: r["date"])
-                _save_series(rows)
-        return _score_percentile(date, rows)
     return {
         "available": False,
         "reason": f"未知算法 {method}",

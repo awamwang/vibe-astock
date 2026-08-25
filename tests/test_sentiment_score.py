@@ -58,6 +58,11 @@ class TestSentimentScoreConfig:
 @pytest.mark.unit
 class TestPercentileScore:
     def test_percentile_from_series(self, iso_cfg, monkeypatch):
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        monkeypatch.setattr(ms, "margin_map", lambda: {})
+        monkeypatch.setattr(ms, "amount_metrics_map", lambda: {})
         rows = []
         for i, (zt, dt, h, br, temp) in enumerate([
             (20, 30, 2, 0.5, 10),
@@ -77,6 +82,39 @@ class TestPercentileScore:
         assert out["available"] is True
         assert out["s"] is not None
         assert out["s"] > 70  # 序列里最热的一天
+
+    def test_score_auto_refreshes_when_pending(self, iso_cfg, monkeypatch):
+        """定档用历史分位时，近窗缺东财会自动 refresh_series。"""
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        called: list[int] = []
+
+        def _fake_refresh(*, enrich_limit=None):
+            called.append(enrich_limit if enrich_limit is not None else -1)
+            rows = [
+                {
+                    "date": f"2026-08-{10 + i:02d}",
+                    "limit_up": 40 + i, "limit_down": 2, "highest": 3 + i,
+                    "broken_rate": 0.2, "qcj_temp": 40 + i, "em_ok": True,
+                }
+                for i in range(5)
+            ]
+            ss._save_series(rows)
+            return {"ok": True, "enriched_this_run": 5, "missed_this_run": 0}
+
+        monkeypatch.setattr(ss, "refresh_series", _fake_refresh)
+        ss._save_series([
+            {
+                "date": "2026-08-14", "limit_up": 50, "limit_down": 2,
+                "highest": None, "broken_rate": None, "qcj_temp": 50,
+                "em_ok": False, "em_miss": False,
+            },
+        ])
+        out = ss.score_for("2026-08-14", method=ss.METHOD_PCT)
+        assert called == [ss._AUTO_EM_ENRICH_LIMIT]
+        assert out["available"] is True
+        assert out["s"] is not None
 
     def test_qcj_degree(self, iso_cfg):
         ss._save_series([{
@@ -127,6 +165,11 @@ class TestQcjHighestBackfill:
         assert out["meta"]["highest_days"] == 2
 
     def test_score_for_does_not_wipe_qcj_highest(self, iso_cfg, monkeypatch):
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        monkeypatch.setattr(ms, "margin_map", lambda: {})
+        monkeypatch.setattr(ms, "amount_metrics_map", lambda: {})
         ss._save_series([{
             "date": "2025-09-18", "qcj_temp": 53, "limit_up": 53, "limit_down": 0,
             "leader_top": "16天8板", "qcj_highest": 8,
