@@ -88,7 +88,68 @@ class TestPercentileScore:
 
 
 @pytest.mark.unit
-class TestRefreshSeriesEnrichOrder:
+class TestQcjHighestBackfill:
+    def test_parse_leader_day_top(self):
+        assert ss._parse_leader_day_top("5天5板") == 5
+        assert ss._parse_leader_day_top("16天8板") == 8
+        assert ss._parse_leader_day_top("7天6板") == 6
+        assert ss._parse_leader_day_top("") is None
+        assert ss._parse_leader_day_top(None) is None
+
+    def test_backfill_fills_missing_only(self, iso_cfg, monkeypatch):
+        qcj = [
+            {
+                "date": "2026-08-01", "qcj_temp": 10, "limit_up": 20, "limit_down": 5,
+                "consec_boards": 1, "leader_top": "4天4板", "qcj_highest": 4,
+            },
+            {
+                "date": "2026-08-25", "qcj_temp": 50, "limit_up": 60, "limit_down": 1,
+                "consec_boards": 4, "leader_top": "5天5板", "qcj_highest": 5,
+            },
+        ]
+        monkeypatch.setattr(ss, "_fetch_qcj_rows", lambda: qcj)
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        monkeypatch.setattr(ms, "margin_map", lambda: {})
+        monkeypatch.setattr(ms, "amount_metrics_map", lambda: {})
+        ss._save_series([
+            {**qcj[0], "em_ok": False, "em_miss": True, "highest": None, "broken_rate": None},
+            {**qcj[1], "em_ok": True, "em_miss": False, "highest": 6, "broken_rate": 0.2, "highest_source": "em"},
+        ])
+        monkeypatch.setattr(ss, "_enrich_one", lambda _d: {"highest": None, "broken_rate": None, "em_ok": False})
+        out = ss.refresh_series(enrich_limit=0)
+        assert out["qcj_highest_filled"] == 1
+        rows = {r["date"]: r for r in ss._load_series()["rows"]}
+        assert rows["2026-08-01"]["highest"] == 4
+        assert rows["2026-08-01"]["highest_source"] == "qcj_leader"
+        assert rows["2026-08-25"]["highest"] == 6  # 保留东财
+        assert out["meta"]["highest_days"] == 2
+
+    def test_score_for_does_not_wipe_qcj_highest(self, iso_cfg, monkeypatch):
+        ss._save_series([{
+            "date": "2025-09-18", "qcj_temp": 53, "limit_up": 53, "limit_down": 0,
+            "leader_top": "16天8板", "qcj_highest": 8,
+            "highest": 8, "highest_source": "qcj_leader",
+            "broken_rate": None, "em_ok": False, "em_miss": True,
+        }] + [
+            {
+                "date": f"2026-08-{10 + i:02d}", "qcj_temp": 40 + i, "limit_up": 40 + i,
+                "limit_down": 2, "highest": 4 + i, "broken_rate": 0.2, "em_ok": True,
+            }
+            for i in range(5)
+        ])
+        monkeypatch.setattr(
+            ss, "_enrich_one",
+            lambda _d: {"highest": None, "broken_rate": None, "em_ok": False},
+        )
+        out = ss.score_for("2025-09-18", method=ss.METHOD_PCT)
+        assert out["available"] is True
+        assert out["components"]["highest"]["value"] == 8
+        assert out["components"]["highest"]["skipped"] is False
+        row = next(r for r in ss._load_series()["rows"] if r["date"] == "2025-09-18")
+        assert row["highest"] == 8
+
     def test_newest_first_and_bulk_miss(self, iso_cfg, monkeypatch):
         """从新往旧补；成功后更早空窗直接记 miss，避免卡在旧日。"""
         qcj = [

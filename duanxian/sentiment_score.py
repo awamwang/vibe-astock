@@ -54,7 +54,7 @@ METHODS: dict[str, dict[str, Any]] = {
     },
     METHOD_PCT: {
         "label": "历史分位（趣财经 + 东财）",
-        "desc": "趣财经序列回拉 + 东财近窗补炸板率/最高连板，分位等权合成 0–100。",
+        "desc": "趣财经序列 + 龙头高度回补；近窗东财补炸板率/最高板，分位等权合成 0–100。",
         "needs_api_key": False,
     },
     METHOD_FUSION: {
@@ -192,11 +192,15 @@ def series_meta() -> dict[str, Any]:
     enriched = sum(1 for r in rows if r.get("em_ok"))
     missed = sum(1 for r in rows if r.get("em_miss") and not r.get("em_ok"))
     pending = sum(1 for r in rows if _needs_em_enrich(r))
+    highest_n = sum(1 for r in rows if r.get("highest") is not None)
+    broken_n = sum(1 for r in rows if r.get("broken_rate") is not None)
     return {
         "days": len(rows),
         "enriched_days": enriched,
         "miss_days": missed,
         "pending_days": pending,
+        "highest_days": highest_n,
+        "broken_rate_days": broken_n,
         "first": rows[0]["date"] if rows else None,
         "last": rows[-1]["date"] if rows else None,
         "updated_at": env.get("updated_at"),
@@ -210,6 +214,26 @@ def _load_series() -> dict:
 
 def _save_series(rows: list[dict]) -> dict:
     return store.replace_rows(_SERIES_NAME, rows, source="sentiment_score", path=_DB_PATH)
+
+
+def _parse_leader_day_top(text: Any) -> Optional[int]:
+    """趣财经 leaderDayTop（如『5天5板』『16天8板』）→ 板高。
+
+    取末尾「N板」；与东财涨停池 max(连板数) 多数日一致，偶有偏差，
+    仅作东财窗口外的一次性落盘回补。
+    """
+    import re
+
+    if text is None:
+        return None
+    m = re.search(r"(\d+)\s*板", str(text).strip())
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if n > 0 else None
 
 
 def _fetch_qcj_rows() -> list[dict]:
@@ -232,6 +256,7 @@ def _fetch_qcj_rows() -> list[dict]:
         zt = row.get("limitUpCount")
         dt = row.get("limitDownCount")
         consec = row.get("consecutiveLimitCount")
+        leader_top = str(row.get("leaderDayTop") or "").strip() or None
         try:
             qcj_temp = None if temp is None else float(temp)
         except (TypeError, ValueError):
@@ -253,11 +278,30 @@ def _fetch_qcj_rows() -> list[dict]:
             "qcj_temp": qcj_temp,
             "limit_up": limit_up,
             "limit_down": limit_down,
-            "consec_boards": consec_n,  # 连板家数（非最高板）；最高板靠东财补
+            "consec_boards": consec_n,  # 连板家数（非最高板）
+            "leader_top": leader_top,
+            "qcj_highest": _parse_leader_day_top(leader_top),
             "level": str(row.get("sentimentLevel") or "") or None,
         })
     out.sort(key=lambda r: r["date"])
     return out
+
+
+def _backfill_highest_from_qcj(by_date: dict[str, dict]) -> int:
+    """东财未覆盖日：用趣财经龙头高度一次性补 highest（落盘后不再依赖外网池）。"""
+    filled = 0
+    for item in by_date.values():
+        if item.get("highest") is not None:
+            continue
+        h = item.get("qcj_highest")
+        if h is None:
+            h = _parse_leader_day_top(item.get("leader_top"))
+        if h is None:
+            continue
+        item["highest"] = int(h)
+        item["highest_source"] = "qcj_leader"
+        filled += 1
+    return filled
 
 
 def _enrich_one(date: str) -> dict[str, Any]:
@@ -335,6 +379,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
                 "broken_rate": prev.get("broken_rate"),
                 "em_ok": bool(prev.get("em_ok")),
                 "em_miss": bool(prev.get("em_miss")) and not bool(prev.get("em_ok")),
+                "highest_source": prev.get("highest_source"),
                 "margin_chg": mrow.get("margin_chg", prev.get("margin_chg")),
                 "amount_yi": amrow.get("amount_yi", prev.get("amount_yi")),
                 "amount_vs_ma20": amrow.get("amount_vs_ma20", prev.get("amount_vs_ma20")),
@@ -365,6 +410,8 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
                 item.get("highest") is not None or item.get("broken_rate") is not None
             ):
                 item["em_miss"] = False
+                if item.get("highest") is not None:
+                    item["highest_source"] = "em"
                 enriched_ok += 1
             else:
                 item["em_ok"] = False
@@ -385,6 +432,9 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
                     item["em_ok"] = False
                     item["em_miss"] = True
 
+        # 东财/akshare 同窗补不了更早：用趣财经龙头高度一次性回补 highest 并落盘
+        qcj_filled = _backfill_highest_from_qcj(by_date)
+
         merged = [by_date[r["date"]] for r in qcj]
         env = _save_series(merged)
         return {
@@ -392,6 +442,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
             "enriched_this_run": enriched_ok,
             "missed_this_run": missed,
             "tried_this_run": enriched_ok + missed,
+            "qcj_highest_filled": qcj_filled,
             "meta": series_meta(),
             "updated_at": env.get("updated_at"),
             "margin_joined": sum(1 for r in merged if r.get("margin_chg") is not None),
@@ -696,15 +747,52 @@ def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
     if method == METHOD_QCJ:
         return _score_qcj_degree(date, rows)
     if method == METHOD_PCT:
-        # 目标日缺东财分量时补一天
+        # 目标日缺高度/炸板时：先落盘趣财经龙头高度，再按需打东财（失败不覆盖已有高度）
         by = {r["date"]: r for r in rows}
         row = by.get(date)
         if row and (not row.get("em_ok") or row.get("highest") is None):
-            patch = _enrich_one(date)
-            row = {**row, **patch}
-            by[date] = row
-            rows = sorted(by.values(), key=lambda r: r["date"])
-            _save_series(rows)
+            changed = False
+            if row.get("highest") is None:
+                h = row.get("qcj_highest")
+                if h is None:
+                    h = _parse_leader_day_top(row.get("leader_top"))
+                if h is not None:
+                    row = {
+                        **row,
+                        "highest": int(h),
+                        "highest_source": row.get("highest_source") or "qcj_leader",
+                    }
+                    changed = True
+            if not row.get("em_ok") and not row.get("em_miss"):
+                patch = _enrich_one(date)
+                if patch.get("em_ok") and (
+                    patch.get("highest") is not None or patch.get("broken_rate") is not None
+                ):
+                    row = {
+                        **row,
+                        "highest": (
+                            patch["highest"]
+                            if patch.get("highest") is not None
+                            else row.get("highest")
+                        ),
+                        "broken_rate": (
+                            patch["broken_rate"]
+                            if patch.get("broken_rate") is not None
+                            else row.get("broken_rate")
+                        ),
+                        "em_ok": True,
+                        "em_miss": False,
+                        "highest_source": (
+                            "em" if patch.get("highest") is not None else row.get("highest_source")
+                        ),
+                    }
+                else:
+                    row = {**row, "em_miss": True}
+                changed = True
+            if changed:
+                by[date] = row
+                rows = sorted(by.values(), key=lambda r: r["date"])
+                _save_series(rows)
         return _score_percentile(date, rows)
     return {
         "available": False,

@@ -189,6 +189,7 @@ export function ZtKeywordsSettings() {
       toast.success(
         `序列已更新：${r.meta.days} 日，本轮补东财 ${r.enriched_this_run} 日`
         + (r.missed_this_run ? `（窗口外跳过 ${r.missed_this_run}）` : "")
+        + (r.qcj_highest_filled ? `，趣财经补高度 ${r.qcj_highest_filled} 日` : "")
         + `（已补全 ${r.meta.enriched_days}） · ${marketHint}`,
       );
     } catch (e) {
@@ -581,8 +582,14 @@ export function ZtKeywordsSettings() {
                 ? `（${sCfg.series_meta.first} → ${sCfg.series_meta.last}）`
                 : ""}
               ，东财已补 {sCfg.series_meta.enriched_days} 日
+              {typeof sCfg.series_meta.highest_days === "number"
+                ? ` · 最高板 ${sCfg.series_meta.highest_days} 日`
+                : ""}
+              {typeof sCfg.series_meta.broken_rate_days === "number"
+                ? ` · 炸板率 ${sCfg.series_meta.broken_rate_days} 日`
+                : ""}
               {(sCfg.series_meta.miss_days ?? 0) > 0
-                ? `（窗口外 ${sCfg.series_meta.miss_days} 日不可补）`
+                ? `（东财窗口外 ${sCfg.series_meta.miss_days} 日）`
                 : ""}
               {(sCfg.series_meta.pending_days ?? 0) > 0
                 ? `，待补 ${sCfg.series_meta.pending_days} 日`
@@ -590,7 +597,7 @@ export function ZtKeywordsSettings() {
               {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
             </p>
             <p className="text-[11px] text-muted-foreground">
-              东财涨停池仅保留近窗历史；从新往旧补，窗口外日期会跳过。
+              东财/akshare 涨停池仅近窗；更早最高板用趣财经龙头高度一次性回补并落盘，炸板率仍仅近窗可补。
             </p>
             {sCfg.market_series && (
               <p className="text-[11px] text-muted-foreground">

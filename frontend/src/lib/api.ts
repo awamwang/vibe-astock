@@ -682,6 +682,8 @@ export interface SentimentSSeriesMeta {
   enriched_days: number;
   miss_days?: number;
   pending_days?: number;
+  highest_days?: number;
+  broken_rate_days?: number;
   first?: string | null;
   last?: string | null;
   updated_at?: string | null;
@@ -712,6 +714,7 @@ export interface SentimentSRefreshResult {
   enriched_this_run: number;
   missed_this_run?: number;
   tried_this_run?: number;
+  qcj_highest_filled?: number;
   meta: SentimentSSeriesMeta;
   updated_at?: string;
   margin_joined?: number;
