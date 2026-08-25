@@ -196,26 +196,72 @@ class TestMarketSeriesEnsure:
         assert row is not None
         assert row["margin_chg"] == pytest.approx(10.0)
 
-    def test_migrates_legacy_json(self, tmp_path, monkeypatch):
+    def test_index_incremental_via_csindex(self, tmp_path, monkeypatch):
+        """区间首选挂掉时，走中证 csindex 增量合并。"""
         monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
         monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
-        margin_path = tmp_path / "margin_sse.json"
-        monkeypatch.setattr(ms, "_MARGIN_PATH", str(margin_path))
-        monkeypatch.setattr(ms, "_INDEX_PATH", str(tmp_path / "sh000001.json"))
-        import json
-
-        margin_path.write_text(
-            json.dumps({
-                "schema": 1,
-                "rows": [{"date": "2026-08-20", "margin_balance": 1.0, "margin_chg": None}],
-                "updated_at": "2026-08-20 15:00:00",
-            }),
-            encoding="utf-8",
+        index_path = tmp_path / "sh000001.json"
+        monkeypatch.setattr(ms, "_INDEX_PATH", str(index_path))
+        monkeypatch.setattr(ms, "_MARGIN_PATH", str(tmp_path / "margin_sse.json"))
+        monkeypatch.setattr(ms, "_target_trade_date", lambda: "2026-08-25")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.next_trade_date",
+            lambda d: "2026-08-25" if d == "2026-08-24" else None,
         )
-        row = ms.margin_for("2026-08-20")
-        assert row is not None
-        assert row["margin_balance"] == 1.0
-        assert (tmp_path / "series.db").is_file()
+        ms._save_json(
+            str(index_path),
+            [{"date": "2026-08-24", "close": 3882.0, "pct": -0.5}],
+        )
+
+        def fake_public(item_id, **params):
+            if item_id == "stock_zh_index_hist_csindex":
+                return [
+                    {"日期": "2026-08-25", "收盘": 3889.44},
+                ]
+            raise RuntimeError(f"boom {item_id}")
+
+        monkeypatch.setattr(ms.akc, "available", lambda timeout=2.0: True)
+        monkeypatch.setattr(ms.akc, "public", fake_public)
+
+        out = ms.refresh_index()
+        assert out["ok"] is True
+        assert out["mode"] == "incremental"
+        assert out["last"] == "2026-08-25"
+        assert ms.index_pct_for("2026-08-25") == pytest.approx(
+            round((3889.44 / 3882.0 - 1.0) * 100.0, 4)
+        )
+
+    def test_index_incremental_falls_back_to_full_tip(self, tmp_path, monkeypatch):
+        """区间源全空时，回退全量 stock_zh_index_daily 取末尾合并。"""
+        monkeypatch.setattr(ms, "_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
+        index_path = tmp_path / "sh000001.json"
+        monkeypatch.setattr(ms, "_INDEX_PATH", str(index_path))
+        monkeypatch.setattr(ms, "_MARGIN_PATH", str(tmp_path / "margin_sse.json"))
+        monkeypatch.setattr(ms, "_target_trade_date", lambda: "2026-08-25")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.next_trade_date",
+            lambda d: "2026-08-25" if d == "2026-08-24" else None,
+        )
+        ms._save_json(
+            str(index_path),
+            [{"date": "2026-08-24", "close": 3882.0, "pct": -0.5}],
+        )
+        monkeypatch.setattr(ms, "_fetch_index_ranged_raw", lambda *_a, **_k: [])
+        monkeypatch.setattr(
+            ms,
+            "_fetch_index_full_raw",
+            lambda: [
+                {"date": "2026-08-24", "close": 3882.0},
+                {"date": "2026-08-25", "close": 3889.44},
+            ],
+        )
+
+        out = ms.refresh_index()
+        assert out["ok"] is True
+        assert out["mode"] == "full_tip"
+        assert out["last"] == "2026-08-25"
+        assert out["added"] == 1
 
 
 @pytest.mark.unit

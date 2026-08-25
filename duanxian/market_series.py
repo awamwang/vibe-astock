@@ -295,49 +295,108 @@ def _parse_index_raw(raw: list) -> list[dict]:
     return tmp
 
 
+def _ak_records(fn, **kwargs: Any) -> Optional[list]:
+    """调用 akshare 函数，成功返回 records；失败或空表返回 None。"""
+    try:
+        df = fn(**kwargs)
+    except Exception:  # noqa: BLE001
+        return None
+    if df is None or not len(df):
+        return None
+    try:
+        raw = df.to_dict(orient="records")
+    except Exception:  # noqa: BLE001
+        return None
+    return raw if isinstance(raw, list) and raw else None
+
+
+def _aktools_records(item_id: str, **params: Any) -> Optional[list]:
+    if not akc.available():
+        return None
+    try:
+        raw = akc.public(item_id, **params)
+    except Exception:  # noqa: BLE001
+        return None
+    return raw if isinstance(raw, list) and raw else None
+
+
+def _fetch_index_ranged_raw(start_c: str, end_c: str) -> list:
+    """上证区间增量：多源依次尝试，任一有数据即返回。
+
+    优先级：
+    1. index_zh_a_hist（东财，原路径；近期常 500/断连）
+    2. stock_zh_index_hist_csindex（中证指数，支持起止日，AKTools 可用）
+    3. stock_zh_index_daily_em（东财日线带起止日）
+    """
+    import akshare as ak
+
+    trials: list[tuple[str, dict[str, Any], Any]] = [
+        (
+            "index_zh_a_hist",
+            {
+                "symbol": "000001",
+                "period": "daily",
+                "start_date": start_c,
+                "end_date": end_c,
+            },
+            ak.index_zh_a_hist,
+        ),
+        (
+            "stock_zh_index_hist_csindex",
+            {"symbol": "000001", "start_date": start_c, "end_date": end_c},
+            ak.stock_zh_index_hist_csindex,
+        ),
+        (
+            "stock_zh_index_daily_em",
+            {"symbol": "sh000001", "start_date": start_c, "end_date": end_c},
+            ak.stock_zh_index_daily_em,
+        ),
+    ]
+    for item_id, kw, ak_fn in trials:
+        raw = _aktools_records(item_id, **kw)
+        if raw:
+            return raw
+        raw = _ak_records(ak_fn, **kw)
+        if raw:
+            return raw
+    return []
+
+
+def _fetch_index_full_raw() -> list:
+    """上证全量日线（新浪 stock_zh_index_daily）。"""
+    raw = _aktools_records("stock_zh_index_daily", symbol="sh000001")
+    if raw:
+        return raw
+    import akshare as ak
+
+    return _ak_records(ak.stock_zh_index_daily, symbol="sh000001") or []
+
+
 def _fetch_index_rows(*, start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
     start_c = _ymd_compact(start) if start else None
     end_c = _ymd_compact(end) if end else None
     ranged = bool(start_c or end_c)
-    raw: Any = None
 
     if ranged:
-        if akc.available():
-            try:
-                raw = akc.public(
-                    "index_zh_a_hist",
-                    symbol="000001",
-                    period="daily",
-                    start_date=start_c or "19700101",
-                    end_date=end_c or "22220101",
-                )
-            except Exception:  # noqa: BLE001
-                raw = None
-        if raw is None:
-            import akshare as ak
-
-            df = ak.index_zh_a_hist(
-                symbol="000001",
-                period="daily",
-                start_date=start_c or "19700101",
-                end_date=end_c or "22220101",
-            )
-            raw = df.to_dict(orient="records") if df is not None and len(df) else []
+        raw = _fetch_index_ranged_raw(
+            start_c or "19700101",
+            end_c or "22220101",
+        )
     else:
-        if akc.available():
-            try:
-                raw = akc.public("stock_zh_index_daily", symbol="sh000001")
-            except Exception:  # noqa: BLE001
-                raw = None
-        if raw is None:
-            import akshare as ak
-
-            df = ak.stock_zh_index_daily(symbol="sh000001")
-            raw = df.to_dict(orient="records") if df is not None and len(df) else []
+        raw = _fetch_index_full_raw()
 
     if not isinstance(raw, list):
         return []
     return _apply_index_pct(_parse_index_raw(raw))
+
+
+def _index_tip_from_full(fetch_start: str, target: Optional[str]) -> list[dict]:
+    """增量接口失败时：拉全量，截取 last→target 末尾合并。"""
+    full = _fetch_index_rows()
+    if not full:
+        return []
+    end = target or "9999-99-99"
+    return [r for r in full if fetch_start <= str(r.get("date") or "") <= end]
 
 
 def refresh_index(*, incremental: bool = True, force_full: bool = False) -> dict[str, Any]:
@@ -365,7 +424,15 @@ def refresh_index(*, incremental: bool = True, force_full: bool = False) -> dict
             env = _load_json(_INDEX_PATH)
             return _index_refresh_meta(existing, env, mode="skip", added=0)
 
-        delta = _fetch_index_rows(start=fetch_start, end=target)
+        mode = "incremental"
+        try:
+            delta = _fetch_index_rows(start=fetch_start, end=target)
+        except Exception:  # noqa: BLE001
+            delta = []
+        if not delta:
+            # 区间源全挂或空：回退全量末尾合并（stock_zh_index_daily 通常仍有近端）
+            delta = _index_tip_from_full(fetch_start, target)
+            mode = "full_tip"
         if not delta:
             env = _load_json(_INDEX_PATH)
             return _index_refresh_meta(existing, env, mode="skip", added=0)
@@ -380,7 +447,7 @@ def refresh_index(*, incremental: bool = True, force_full: bool = False) -> dict
         return _index_refresh_meta(
             merged,
             env,
-            mode="incremental",
+            mode=mode,
             added=len(merged) - len(existing),
         )
 
