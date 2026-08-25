@@ -44,17 +44,17 @@ _FUSION_PERIOD = "90d"
 METHODS: dict[str, dict[str, Any]] = {
     METHOD_HARD: {
         "label": "硬规则（无 S）",
-        "desc": "只用涨停生态判定树，不计算合成分。当前默认。",
+        "desc": "仅用涨停生态判定树定档，不计算合成情绪分。当前默认。",
         "needs_api_key": False,
     },
     METHOD_QCJ: {
         "label": "趣财经情绪分°",
-        "desc": "直接用趣财经 temperatureDegree（0–100）作为 S。",
+        "desc": "直接用趣财经 temperatureDegree（0–100）作为合成情绪分 S。",
         "needs_api_key": False,
     },
     METHOD_PCT: {
         "label": "历史分位（趣财经 + 东财）",
-        "desc": "趣财经序列 + 龙头高度回补；近窗东财补炸板率/最高板，分位等权合成 0–100。",
+        "desc": "趣财经序列与龙头高度，叠加近窗东财炸板率/最高板，分位等权合成 0–100。",
         "needs_api_key": False,
     },
     METHOD_FUSION: {

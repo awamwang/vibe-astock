@@ -69,7 +69,6 @@ export function ZtKeywordsSettings() {
 
   const [sCfg, setSCfg] = useState<SentimentSConfig | null>(null);
   const [sMethod, setSMethod] = useState("hard_rules");
-  const [sFusionKey, setSFusionKey] = useState("");
   const [sLoading, setSLoading] = useState(true);
   const [sSaving, setSSaving] = useState(false);
   const [sRefreshing, setSRefreshing] = useState(false);
@@ -135,7 +134,9 @@ export function ZtKeywordsSettings() {
         const cfg = await api.sentimentSConfig();
         if (!cancelled) {
           setSCfg(cfg);
-          setSMethod(cfg.method || "hard_rules");
+          // 界面已隐藏 FusionIntel，若历史配置仍是该算法则回落到硬规则供重选
+          const method = cfg.method || "hard_rules";
+          setSMethod(method === "fusionintel" ? "hard_rules" : method);
         }
       } catch (e) {
         if (!cancelled) {
@@ -149,23 +150,11 @@ export function ZtKeywordsSettings() {
   }, []);
 
   const persistSentimentS = async () => {
-    if (sMethod === "fusionintel") {
-      const typed = sFusionKey.trim();
-      if (!typed && !sCfg?.has_fusionintel_api_key) {
-        toast.error("选择 FusionIntel 须填写 API Key");
-        return;
-      }
-    }
     setSSaving(true);
     try {
-      const opts =
-        sMethod === "fusionintel" && sFusionKey.trim()
-          ? { fusionintelApiKey: sFusionKey.trim() }
-          : undefined;
-      const cfg = await api.saveSentimentSConfig(sMethod, opts);
+      const cfg = await api.saveSentimentSConfig(sMethod);
       setSCfg(cfg);
-      setSMethod(cfg.method);
-      setSFusionKey("");
+      setSMethod(cfg.method === "fusionintel" ? "hard_rules" : cfg.method);
       toast.success("情绪分算法已保存；请到「持仓与预算」重算场次");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
@@ -526,11 +515,7 @@ export function ZtKeywordsSettings() {
           <SlidersHorizontal className="h-4 w-4 text-primary" /> 合成情绪分 S
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          定档主输入可选。硬规则不用 S；趣财经°直接用 temperatureDegree；
-          历史分位用趣财经约 220 日序列 + 东财池补炸板率/最高连板后等权合成；
-          东财涨停池仅近窗可补，更早日期用趣财经分量参与分位。
-          FusionIntel 用聚变智研宏观恐贪原样当 S（须保存 API Key）。
-          改算法后请在「持仓与预算」重算当日预算。
+          使用什么数据作为六档情绪周期中的合成情绪指标
         </p>
 
         {sLoading || !sCfg ? (
@@ -538,10 +523,12 @@ export function ZtKeywordsSettings() {
         ) : (
           <div className="space-y-3">
             <div className="space-y-2">
-              {sCfg.methods.map((m) => (
+              {sCfg.methods
+                .filter((m) => m.id !== "fusionintel")
+                .map((m) => (
                 <label
                   key={m.id}
-                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/60 px-3 py-2 hover:bg-muted/30"
+                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/60 px-3 py-2.5 hover:bg-muted/30"
                 >
                   <input
                     type="radio"
@@ -551,31 +538,15 @@ export function ZtKeywordsSettings() {
                     onChange={() => setSMethod(m.id)}
                     disabled={sSaving || sRefreshing}
                   />
-                  <span>
+                  <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground">{m.label}</span>
-                    <span className="block text-[11px] leading-relaxed text-muted-foreground">{m.desc}</span>
+                    <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                      {m.desc}
+                    </span>
                   </span>
                 </label>
               ))}
             </div>
-            {sMethod === "fusionintel" && (
-              <label className="block text-[11px] text-muted-foreground">
-                FusionIntel API Key
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={sFusionKey}
-                  onChange={(e) => setSFusionKey(e.target.value)}
-                  disabled={sSaving || sRefreshing}
-                  placeholder={
-                    sCfg.has_fusionintel_api_key
-                      ? `已保存 ${sCfg.fusionintel_api_key_masked || "****"}，留空则保持`
-                      : "sk_…（fusionintel.net 注册获取）"
-                  }
-                  className="mt-1 w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
-                />
-              </label>
-            )}
             <p className="text-[11px] text-muted-foreground">
               分位序列：{sCfg.series_meta.days} 日
               {sCfg.series_meta.first && sCfg.series_meta.last
@@ -595,9 +566,6 @@ export function ZtKeywordsSettings() {
                 ? `，待补 ${sCfg.series_meta.pending_days} 日`
                 : ""}
               {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              东财/akshare 涨停池仅近窗；更早最高板用趣财经龙头高度一次性回补并落盘，炸板率仍仅近窗可补。
             </p>
             {sCfg.market_series && (
               <p className="text-[11px] text-muted-foreground">
