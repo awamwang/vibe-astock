@@ -65,6 +65,7 @@ _PCT_FIELDS = (
     ("highest", False),
     ("broken_rate", True),
     ("qcj_temp", False),
+    ("margin_chg", False),  # 融资余额日变化（百分点）；缺历史时该分量自动跳过
 )
 
 _DEFAULT = {"schema": _SCHEMA, "method": METHOD_HARD, "fusionintel_api_key": ""}
@@ -255,7 +256,19 @@ def _fetch_qcj_rows() -> list[dict]:
 
 
 def _enrich_one(date: str) -> dict[str, Any]:
-    """东财涨停生态：最高连板 + 炸板率。失败不抛，标 em_ok=False。"""
+    """东财涨停生态：最高连板 + 炸板率。优先本机 AKTools，再回退本地 akshare。"""
+    from . import market_series as ms
+
+    via = ms.zt_summary_via_aktools(date)
+    if via and via.get("em_ok") and (
+        via.get("highest") is not None or via.get("broken_rate") is not None
+    ):
+        return {
+            "highest": via.get("highest"),
+            "broken_rate": via.get("broken_rate"),
+            "em_ok": True,
+        }
+
     from . import emotion_metrics as em
 
     try:
@@ -280,17 +293,22 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
         qcj = _fetch_qcj_rows()
         if not qcj:
             raise RuntimeError("趣财经情绪序列为空")
+        from . import market_series as ms
+
+        margin_by = ms.margin_map()
         old = {r["date"]: r for r in (_load_series().get("rows") or []) if r.get("date")}
         merged: list[dict] = []
         pending = 0
         for row in qcj:
             d = row["date"]
             prev = old.get(d) or {}
+            mrow = margin_by.get(d) or {}
             item = {
                 **row,
                 "highest": prev.get("highest"),
                 "broken_rate": prev.get("broken_rate"),
                 "em_ok": bool(prev.get("em_ok")),
+                "margin_chg": mrow.get("margin_chg", prev.get("margin_chg")),
             }
             need = not item["em_ok"] or item.get("highest") is None or item.get("broken_rate") is None
             if need and (enrich_limit is None or pending < enrich_limit):
@@ -307,6 +325,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
             "enriched_this_run": pending,
             "meta": series_meta(),
             "updated_at": env.get("updated_at"),
+            "margin_joined": sum(1 for r in merged if r.get("margin_chg") is not None),
         }
 
 
@@ -327,6 +346,7 @@ def _row_components(row: dict) -> dict[str, Optional[float]]:
         "highest": None if row.get("highest") is None else float(row["highest"]),
         "broken_rate": None if row.get("broken_rate") is None else float(row["broken_rate"]),
         "qcj_temp": None if row.get("qcj_temp") is None else float(row["qcj_temp"]),
+        "margin_chg": None if row.get("margin_chg") is None else float(row["margin_chg"]),
     }
 
 

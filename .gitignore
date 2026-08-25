@@ -30,3 +30,4 @@ vr/.cache/
 # ---- macOS ----
 .DS_Store
 dist-astock/
+aktools_log.log

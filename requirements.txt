@@ -13,6 +13,8 @@ uvicorn>=0.29
 # 数据层
 requests
 akshare>=1.18
+# AKShare 的 HTTP 服务端；server.py 启动时会托管本机 :8988（可用 AKTOOLS_MANAGED=0 关闭）
+aktools>=0.0.90
 # 涨停原因备用（主源是同花顺涨停池 HTTP，不依赖本包；备用需 Node.js 16+）
 pywencai>=0.12.2
 

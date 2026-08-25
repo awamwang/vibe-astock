@@ -49,6 +49,27 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost"} | {
 
 app = FastAPI(title="短线每日复盘")
 
+
+@app.on_event("startup")
+def _startup_aktools():
+    """随本后端拉起 / 复用本机 AKTools（默认 127.0.0.1:8988）。"""
+    from duanxian import aktools_service as aks
+
+    info = aks.ensure_started()
+    if info.get("ok"):
+        how = "复用已有" if info.get("reused") else "已托管启动"
+        print(f"✓ AKTools {how}  {info.get('base')}")
+    else:
+        print(f"⚠ AKTools 未就绪：{info.get('error') or '未知错误'}")
+
+
+@app.on_event("shutdown")
+def _shutdown_aktools():
+    from duanxian import aktools_service as aks
+
+    aks.stop_if_owned()
+
+
 # ---------------------------------------------------------------- VR host（薄适配）
 # 盘面数据 / 首板分析 / 盯盘 / 持仓股 / 自选股 / 个股数据 / 资讯雷达 这几个分栏的
 # 后端放在 `vr/`，host 策略（并路由、钉定稿池、CLI 白名单、userdata 备份、请求闸判定）
@@ -1135,6 +1156,37 @@ def api_sentiment_s_refresh(request: Request, body: dict = Body(None)):
         return JSONResponse({"error": "enrich_limit 须为整数或空"}, status_code=400)
     try:
         return {"data": ss.refresh_series(enrich_limit=enrich_limit)}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"error": f"{type(exc).__name__}: {exc}", "detail": str(exc)},
+            status_code=500,
+        )
+
+
+@app.get("/api/config/market-series")
+def api_market_series_status():
+    """两融 / 上证日线缓存与 AKTools 状态。"""
+    from duanxian import aktools_service as aks
+    from duanxian import market_series as ms
+
+    data = ms.series_status()
+    data["aktools"] = aks.runtime_status()
+    return {"data": data}
+
+
+@app.post("/api/config/market-series/refresh")
+def api_market_series_refresh(request: Request, body: dict = Body(None)):
+    """刷新两融 + 上证日线（优先本机 AKTools）。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    from duanxian import aktools_service as aks
+    from duanxian import market_series as ms
+
+    aks.ensure_started(wait_s=8.0)
+    body = body or {}
+    start = body.get("margin_start") or body.get("start")
+    try:
+        return {"data": ms.refresh_all(margin_start=start if start else None)}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"error": f"{type(exc).__name__}: {exc}", "detail": str(exc)},

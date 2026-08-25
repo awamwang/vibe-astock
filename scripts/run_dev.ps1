@@ -58,6 +58,13 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+& $Py -c "import aktools" 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "正在安装 aktools（后端会托管本机 :8988）..."
+    & $Py -m pip install "aktools>=0.0.90"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 function Test-TcpOpen([string]$TargetHost, [int]$TargetPort) {
     try {
         $client = [System.Net.Sockets.TcpClient]::new()
@@ -79,6 +86,7 @@ Write-Host ""
 Write-Host "开发模式"
 Write-Host "  前端 Watch  http://127.0.0.1:$FrontendPort   请打开这个地址"
 Write-Host "  后端 Reload http://127.0.0.1:$Port          /api 热重启"
+Write-Host "  AKTools     http://127.0.0.1:8988           随后端自动托管"
 Write-Host "  Ctrl+C 同时停止前后端"
 Write-Host ""
 

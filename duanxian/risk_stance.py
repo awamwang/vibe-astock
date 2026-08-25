@@ -13,19 +13,23 @@ from . import trade_calendar
 
 
 def _index_pct_for(date: str) -> Optional[float]:
-    """仅当实时行情属于该已收盘日时取上证涨跌幅；历史日不强行冒充。"""
+    """上证涨跌幅：当日优先实时指数；历史日读 market_series 日线缓存。"""
     ok, _ = trade_calendar.live_quotes_are_close_of(date)
-    if not ok:
-        return None
-    try:
-        from . import fetchers
+    if ok:
+        try:
+            from . import fetchers
 
-        for row in fetchers.fetch_indices():
-            if row.get("code") == "sh000001" and row.get("changePct") is not None:
-                return float(row["changePct"])
+            for row in fetchers.fetch_indices():
+                if row.get("code") == "sh000001" and row.get("changePct") is not None:
+                    return float(row["changePct"])
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        from . import market_series as ms
+
+        return ms.index_pct_for(date)
     except Exception:  # noqa: BLE001
         return None
-    return None
 
 
 def _hist_highest(date: str, lookback: int = 5) -> list[int]:
