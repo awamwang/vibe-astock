@@ -62,6 +62,10 @@ def _startup_aktools():
     else:
         print(f"⚠ AKTools 未就绪：{info.get('error') or '未知错误'}")
 
+    from duanxian import market_series as ms
+
+    ms.ensure_fresh_background()
+
 
 @app.on_event("shutdown")
 def _shutdown_aktools():
@@ -1184,9 +1188,9 @@ def api_market_series_refresh(request: Request, body: dict = Body(None)):
 
     aks.ensure_started(wait_s=8.0)
     body = body or {}
-    start = body.get("margin_start") or body.get("start")
+    force = bool(body.get("force"))
     try:
-        return {"data": ms.refresh_all(margin_start=start if start else None)}
+        return {"data": ms.ensure_fresh(force=force)}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"error": f"{type(exc).__name__}: {exc}", "detail": str(exc)},

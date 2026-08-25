@@ -682,6 +682,12 @@ export interface SentimentSSeriesMeta {
   last?: string | null;
   updated_at?: string | null;
 }
+export interface MarketSeriesBrief {
+  days: number;
+  first?: string | null;
+  last?: string | null;
+  updated_at?: string | null;
+}
 export interface SentimentSConfig {
   schema: number;
   path: string;
@@ -689,6 +695,11 @@ export interface SentimentSConfig {
   methods: SentimentSMethod[];
   series_path: string;
   series_meta: SentimentSSeriesMeta;
+  market_series?: {
+    margin: MarketSeriesBrief;
+    index: MarketSeriesBrief;
+    needs_refresh?: string | null;
+  };
   has_fusionintel_api_key?: boolean;
   fusionintel_api_key_masked?: string;
 }
@@ -697,6 +708,14 @@ export interface SentimentSRefreshResult {
   enriched_this_run: number;
   meta: SentimentSSeriesMeta;
   updated_at?: string;
+  margin_joined?: number;
+  market_refresh?: {
+    ok?: boolean;
+    skipped?: boolean;
+    reason?: string | null;
+    margin?: { ok?: boolean; days?: number; last?: string };
+    index?: { ok?: boolean; days?: number; last?: string };
+  };
 }
 export interface ExperienceMeta {
   root: string;

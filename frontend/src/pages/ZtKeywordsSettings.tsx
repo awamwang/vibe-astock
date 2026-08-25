@@ -180,9 +180,15 @@ export function ZtKeywordsSettings() {
       const r = await api.refreshSentimentSSeries(30);
       const cfg = await api.sentimentSConfig();
       setSCfg(cfg);
+      const mr = r.market_refresh;
+      const marketHint = mr?.skipped
+        ? "两融/指数已是最新"
+        : mr?.ok
+          ? `两融/指数已更新（两融 ${mr.margin?.days ?? "?"} 日）`
+          : "两融/指数未更新（可稍后重试）";
       toast.success(
         `序列已更新：${r.meta.days} 日，本轮补东财 ${r.enriched_this_run} 日`
-        + `（已补全 ${r.meta.enriched_days}）`,
+        + `（已补全 ${r.meta.enriched_days}） · ${marketHint}`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新序列失败");
@@ -575,6 +581,18 @@ export function ZtKeywordsSettings() {
               ，东财已补 {sCfg.series_meta.enriched_days} 日
               {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
             </p>
+            {sCfg.market_series && (
+              <p className="text-[11px] text-muted-foreground">
+                两融 {sCfg.market_series.margin.days} 日
+                {sCfg.market_series.margin.last ? `（至 ${sCfg.market_series.margin.last}）` : ""}
+                {" · "}
+                上证 {sCfg.market_series.index.days} 日
+                {sCfg.market_series.index.last ? `（至 ${sCfg.market_series.index.last}）` : ""}
+                {sCfg.market_series.needs_refresh
+                  ? ` · 启动后将自动补：${sCfg.market_series.needs_refresh}`
+                  : " · 两融/指数缓存已就绪"}
+              </p>
+            )}
           </div>
         )}
 

@@ -19,6 +19,8 @@ _MARGIN_PATH = os.path.join(_CACHE_DIR, "margin_sse.json")
 _INDEX_PATH = os.path.join(_CACHE_DIR, "sh000001.json")
 _SCHEMA = 1
 _LOCK = threading.Lock()
+_BG_LOCK = threading.Lock()
+_BG_RUNNING = False
 
 
 def _ymd_compact(date: str) -> str:
@@ -61,6 +63,67 @@ def _save_json(path: str, rows: list[dict]) -> dict:
     }
     atomic_write_json(path, env)
     return env
+
+
+def _merge_by_date(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """按 date 合并行，incoming 覆盖同日期。"""
+    by: dict[str, dict] = {str(r["date"]): r for r in existing if r.get("date")}
+    for row in incoming:
+        d = row.get("date")
+        if d:
+            by[str(d)] = row
+    return sorted(by.values(), key=lambda r: str(r["date"]))
+
+
+def _apply_margin_chg(rows: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for i, row in enumerate(rows):
+        item = dict(row)
+        if i == 0 or item.get("margin_balance") is None or rows[i - 1].get("margin_balance") in (None, 0):
+            item["margin_chg"] = None
+        else:
+            prev = float(rows[i - 1]["margin_balance"])
+            cur = float(item["margin_balance"])
+            item["margin_chg"] = round((cur - prev) / prev * 100.0, 4)
+        out.append(item)
+    return out
+
+
+def _apply_index_pct(rows: list[dict]) -> list[dict]:
+    tmp = sorted(rows, key=lambda r: str(r["date"]))
+    out: list[dict] = []
+    for i, row in enumerate(tmp):
+        pct = None
+        if i > 0 and tmp[i - 1].get("close"):
+            pct = round((float(row["close"]) / float(tmp[i - 1]["close"]) - 1.0) * 100.0, 4)
+        out.append({"date": row["date"], "close": row["close"], "pct": pct})
+    return out
+
+
+def _margin_refresh_meta(rows: list[dict], env: dict, *, mode: str, added: int = 0) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "days": len(rows),
+        "first": rows[0]["date"] if rows else None,
+        "last": rows[-1]["date"] if rows else None,
+        "updated_at": env.get("updated_at"),
+        "source": env.get("source"),
+        "mode": mode,
+        "added": added,
+    }
+
+
+def _index_refresh_meta(rows: list[dict], env: dict, *, mode: str, added: int = 0) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "days": len(rows),
+        "first": rows[0]["date"] if rows else None,
+        "last": rows[-1]["date"] if rows else None,
+        "updated_at": env.get("updated_at"),
+        "source": env.get("source"),
+        "mode": mode,
+        "added": added,
+    }
 
 
 # ------------------------------------------------------------------ 两融
@@ -109,31 +172,53 @@ def _fetch_margin_rows(*, start: Optional[str] = None, end: Optional[str] = None
             buy_f = None
         out.append({"date": d, "margin_balance": bal_f, "margin_buy": buy_f})
     out.sort(key=lambda r: r["date"])
-    # 日变化（相对昨）
-    for i, row in enumerate(out):
-        if i == 0 or row.get("margin_balance") is None or out[i - 1].get("margin_balance") in (None, 0):
-            row["margin_chg"] = None
-            continue
-        prev = float(out[i - 1]["margin_balance"])
-        cur = float(row["margin_balance"])
-        row["margin_chg"] = round((cur - prev) / prev * 100.0, 4)  # 百分点
     return out
 
 
-def refresh_margin(*, start: Optional[str] = None, end: Optional[str] = None) -> dict[str, Any]:
+def refresh_margin(
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    incremental: bool = True,
+    force_full: bool = False,
+) -> dict[str, Any]:
+    """刷新两融。默认在已有缓存时只拉 last→target 增量并合并。"""
+    from . import trade_calendar as tc
+
     with _LOCK:
-        rows = _fetch_margin_rows(start=start, end=end)
-        if not rows:
-            raise RuntimeError("两融序列为空")
-        env = _save_json(_MARGIN_PATH, rows)
-        return {
-            "ok": True,
-            "days": len(rows),
-            "first": rows[0]["date"],
-            "last": rows[-1]["date"],
-            "updated_at": env.get("updated_at"),
-            "source": env.get("source"),
-        }
+        existing = list(_load_json(_MARGIN_PATH).get("rows") or [])
+        target = end or _target_trade_date()
+
+        if force_full or not existing or not incremental or start is not None:
+            rows = _apply_margin_chg(_fetch_margin_rows(start=start, end=end or target))
+            if not rows:
+                raise RuntimeError("两融序列为空")
+            env = _save_json(_MARGIN_PATH, rows)
+            return _margin_refresh_meta(rows, env, mode="full", added=len(rows))
+
+        last = str(existing[-1].get("date") or "")
+        if target and last >= target:
+            env = _load_json(_MARGIN_PATH)
+            return _margin_refresh_meta(existing, env, mode="skip", added=0)
+
+        fetch_start = tc.next_trade_date(last) or last
+        if not target or fetch_start > target:
+            env = _load_json(_MARGIN_PATH)
+            return _margin_refresh_meta(existing, env, mode="skip", added=0)
+
+        delta = _fetch_margin_rows(start=fetch_start, end=target)
+        if not delta:
+            env = _load_json(_MARGIN_PATH)
+            return _margin_refresh_meta(existing, env, mode="skip", added=0)
+
+        merged = _apply_margin_chg(_merge_by_date(existing, delta))
+        env = _save_json(_MARGIN_PATH, merged)
+        return _margin_refresh_meta(
+            merged,
+            env,
+            mode="incremental",
+            added=len(merged) - len(existing),
+        )
 
 
 def margin_for(date: str) -> Optional[dict]:
@@ -149,59 +234,118 @@ def margin_map() -> dict[str, dict]:
 
 
 # ------------------------------------------------------------------ 上证指数
-def _fetch_index_rows() -> list[dict]:
-    raw: Any = None
-    if akc.available():
-        try:
-            raw = akc.public("stock_zh_index_daily", symbol="sh000001")
-        except Exception:  # noqa: BLE001
-            raw = None
-    if raw is None:
-        import akshare as ak
-
-        df = ak.stock_zh_index_daily(symbol="sh000001")
-        raw = df.to_dict(orient="records") if df is not None and len(df) else []
-
-    if not isinstance(raw, list):
-        return []
+def _parse_index_raw(raw: list) -> list[dict]:
     tmp: list[dict] = []
     for row in raw:
         if not isinstance(row, dict):
             continue
-        d = _ymd_dash(str(row.get("date") or ""))
+        d = _ymd_dash(
+            str(row.get("date") or row.get("日期") or row.get("time") or "")
+        )
         if not d:
             continue
+        close_raw = row.get("close")
+        if close_raw is None:
+            close_raw = row.get("收盘")
         try:
-            close = float(row["close"]) if row.get("close") is not None else None
+            close = float(close_raw) if close_raw is not None else None
         except (TypeError, ValueError):
             close = None
         if close is None:
             continue
         tmp.append({"date": d, "close": close})
     tmp.sort(key=lambda r: r["date"])
-    out: list[dict] = []
-    for i, row in enumerate(tmp):
-        pct = None
-        if i > 0 and tmp[i - 1]["close"]:
-            pct = round((row["close"] / tmp[i - 1]["close"] - 1.0) * 100.0, 4)
-        out.append({"date": row["date"], "close": row["close"], "pct": pct})
-    return out
+    return tmp
 
 
-def refresh_index() -> dict[str, Any]:
+def _fetch_index_rows(*, start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
+    start_c = _ymd_compact(start) if start else None
+    end_c = _ymd_compact(end) if end else None
+    ranged = bool(start_c or end_c)
+    raw: Any = None
+
+    if ranged:
+        if akc.available():
+            try:
+                raw = akc.public(
+                    "index_zh_a_hist",
+                    symbol="000001",
+                    period="daily",
+                    start_date=start_c or "19700101",
+                    end_date=end_c or "22220101",
+                )
+            except Exception:  # noqa: BLE001
+                raw = None
+        if raw is None:
+            import akshare as ak
+
+            df = ak.index_zh_a_hist(
+                symbol="000001",
+                period="daily",
+                start_date=start_c or "19700101",
+                end_date=end_c or "22220101",
+            )
+            raw = df.to_dict(orient="records") if df is not None and len(df) else []
+    else:
+        if akc.available():
+            try:
+                raw = akc.public("stock_zh_index_daily", symbol="sh000001")
+            except Exception:  # noqa: BLE001
+                raw = None
+        if raw is None:
+            import akshare as ak
+
+            df = ak.stock_zh_index_daily(symbol="sh000001")
+            raw = df.to_dict(orient="records") if df is not None and len(df) else []
+
+    if not isinstance(raw, list):
+        return []
+    return _apply_index_pct(_parse_index_raw(raw))
+
+
+def refresh_index(*, incremental: bool = True, force_full: bool = False) -> dict[str, Any]:
+    """刷新上证日线。默认在已有缓存时只拉 last→target 增量并合并。"""
+    from . import trade_calendar as tc
+
     with _LOCK:
-        rows = _fetch_index_rows()
-        if not rows:
-            raise RuntimeError("上证指数日线为空")
-        env = _save_json(_INDEX_PATH, rows)
-        return {
-            "ok": True,
-            "days": len(rows),
-            "first": rows[0]["date"],
-            "last": rows[-1]["date"],
-            "updated_at": env.get("updated_at"),
-            "source": env.get("source"),
-        }
+        existing = list(_load_json(_INDEX_PATH).get("rows") or [])
+        target = _target_trade_date()
+
+        if force_full or not existing or not incremental:
+            rows = _fetch_index_rows()
+            if not rows:
+                raise RuntimeError("上证指数日线为空")
+            env = _save_json(_INDEX_PATH, rows)
+            return _index_refresh_meta(rows, env, mode="full", added=len(rows))
+
+        last = str(existing[-1].get("date") or "")
+        if target and last >= target:
+            env = _load_json(_INDEX_PATH)
+            return _index_refresh_meta(existing, env, mode="skip", added=0)
+
+        fetch_start = tc.next_trade_date(last) or last
+        if not target or fetch_start > target:
+            env = _load_json(_INDEX_PATH)
+            return _index_refresh_meta(existing, env, mode="skip", added=0)
+
+        delta = _fetch_index_rows(start=fetch_start, end=target)
+        if not delta:
+            env = _load_json(_INDEX_PATH)
+            return _index_refresh_meta(existing, env, mode="skip", added=0)
+
+        merged = _apply_index_pct(
+            _merge_by_date(
+                [{"date": r["date"], "close": r["close"]} for r in existing],
+                [{"date": r["date"], "close": r["close"]} for r in delta],
+            )
+        )
+        env = _save_json(_INDEX_PATH, merged)
+        return _index_refresh_meta(
+            merged,
+            env,
+            mode="incremental",
+            added=len(merged) - len(existing),
+        )
 
 
 def index_pct_for(date: str) -> Optional[float]:
@@ -248,18 +392,107 @@ def zt_summary_via_aktools(date: str) -> Optional[dict[str, Any]]:
     }
 
 
-def refresh_all(*, margin_start: Optional[str] = None) -> dict[str, Any]:
-    """刷新两融 + 上证日线。"""
+def refresh_all(*, margin_start: Optional[str] = None, force_full: bool = False) -> dict[str, Any]:
+    """刷新两融 + 上证日线（默认增量）。"""
     out: dict[str, Any] = {"aktools": akc.status()}
     try:
-        out["margin"] = refresh_margin(start=margin_start)
+        out["margin"] = refresh_margin(
+            start=margin_start,
+            incremental=margin_start is None,
+            force_full=force_full or margin_start is not None,
+        )
     except Exception as exc:  # noqa: BLE001
         out["margin"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     try:
-        out["index"] = refresh_index()
+        out["index"] = refresh_index(incremental=not force_full, force_full=force_full)
     except Exception as exc:  # noqa: BLE001
         out["index"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     return out
+
+
+def _target_trade_date() -> Optional[str]:
+    """最近一个已收盘交易日。"""
+    from . import trade_calendar as tc
+
+    dates = tc.last_trade_dates(1)
+    return dates[-1] if dates else None
+
+
+def needs_refresh() -> Optional[str]:
+    """缓存落后或为空时返回原因；已足够新则 None。"""
+    target = _target_trade_date()
+    mr = (_load_json(_MARGIN_PATH).get("rows") or [])
+    ir = (_load_json(_INDEX_PATH).get("rows") or [])
+    if not mr:
+        return "两融缓存为空"
+    if not ir:
+        return "上证日线缓存为空"
+    if not target:
+        return None
+    m_last = str(mr[-1].get("date") or "")
+    i_last = str(ir[-1].get("date") or "")
+    if m_last < target:
+        return f"两融止于 {m_last}，落后 {target}"
+    if i_last < target:
+        return f"上证止于 {i_last}，落后 {target}"
+    return None
+
+
+def ensure_fresh(*, force: bool = False) -> dict[str, Any]:
+    """缺数据或落后最近交易日时自动刷新；已最新则跳过。"""
+    reason = needs_refresh()
+    if not force and reason is None:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": None,
+            "status": series_status(),
+        }
+    out = refresh_all(force_full=force)
+    out["skipped"] = False
+    out["reason"] = reason or "force"
+    out["ok"] = bool(
+        (out.get("margin") or {}).get("ok") or (out.get("index") or {}).get("ok")
+    )
+    out["status"] = series_status()
+    return out
+
+
+def ensure_fresh_background() -> None:
+    """后台补全两融/指数，不阻塞主服务启动。"""
+    global _BG_RUNNING
+    with _BG_LOCK:
+        if _BG_RUNNING:
+            return
+        _BG_RUNNING = True
+
+    def _job() -> None:
+        global _BG_RUNNING
+        try:
+            from . import aktools_service as aks
+
+            aks.ensure_started(wait_s=15.0)
+            result = ensure_fresh()
+            if result.get("skipped"):
+                print("✓ 市场序列缓存已是最新")
+                return
+            m = result.get("margin") or {}
+            i = result.get("index") or {}
+            if m.get("ok") or i.get("ok"):
+                print(
+                    f"✓ 市场序列已刷新：两融 {m.get('days', '?')} 日 · "
+                    f"上证 {i.get('days', '?')} 日"
+                )
+            else:
+                err = m.get("error") or i.get("error") or "未知错误"
+                print(f"⚠ 市场序列刷新失败：{err}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠ 市场序列后台刷新失败：{type(exc).__name__}: {exc}")
+        finally:
+            with _BG_LOCK:
+                _BG_RUNNING = False
+
+    threading.Thread(target=_job, name="market-series-refresh", daemon=True).start()
 
 
 def series_status() -> dict[str, Any]:

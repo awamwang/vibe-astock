@@ -148,8 +148,11 @@ def set_method(method: str, *, fusionintel_api_key: Optional[str] = None) -> dic
 
 
 def export_config() -> dict[str, Any]:
+    from . import market_series as ms
+
     cfg = _read_config()
     key = str(cfg.get("fusionintel_api_key") or "").strip()
+    st = ms.series_status()
     return {
         "schema": _SCHEMA,
         "path": _CONFIG_PATH,
@@ -165,6 +168,11 @@ def export_config() -> dict[str, Any]:
         ],
         "series_path": _SERIES_PATH,
         "series_meta": series_meta(),
+        "market_series": {
+            "margin": st.get("margin"),
+            "index": st.get("index"),
+            "needs_refresh": ms.needs_refresh(),
+        },
         "has_fusionintel_api_key": bool(key),
         "fusionintel_api_key_masked": _mask_api_key(key),
     }
@@ -289,12 +297,18 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
 
     `enrich_limit`：本轮最多新补几天东财（None=缺什么补什么，首次会较慢）。
     """
+    from . import market_series as ms
+
+    market_refresh: dict[str, Any] = {"ok": False, "skipped": True}
+    try:
+        market_refresh = ms.ensure_fresh()
+    except Exception as exc:  # noqa: BLE001
+        market_refresh = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
     with _LOCK:
         qcj = _fetch_qcj_rows()
         if not qcj:
             raise RuntimeError("趣财经情绪序列为空")
-        from . import market_series as ms
-
         margin_by = ms.margin_map()
         old = {r["date"]: r for r in (_load_series().get("rows") or []) if r.get("date")}
         merged: list[dict] = []
@@ -326,6 +340,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
             "meta": series_meta(),
             "updated_at": env.get("updated_at"),
             "margin_joined": sum(1 for r in merged if r.get("margin_chg") is not None),
+            "market_refresh": market_refresh,
         }
 
 
