@@ -5,7 +5,7 @@
 旧版 `cache/sentiment_s/series.json` 首次读取时自动迁入。
 `hard_rules`：不用 S，维持涨停生态硬规则树。
 `qcj_degree`：趣财经 temperatureDegree 原样当 S。
-`percentile_qcj_em`：趣财经 ~220 日序列 + 东财池补炸板/高度，分位等权合成。
+`percentile_qcj_em`：趣财经 ~220 日序列 + 炸板率/最高板补齐后分位等权合成。
 `fusionintel`：聚变智研 A 股宏观恐贪指数（需 API Key）。
 """
 
@@ -23,6 +23,9 @@ _CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
 _CONFIG_PATH = os.path.join(_CONFIG_DIR, "sentiment_s.json")
 _SERIES_PATH = os.path.expanduser("~/.duanxian-agents/cache/sentiment_s/series.json")
 _SERIES_NAME = store.SERIES_SENTIMENT
+_XGB_BROKEN_PATH = os.path.expanduser(
+    "~/.duanxian-agents/cache/xgb_broken_rate/series.json"
+)
 _FUSION_CACHE_PATH = os.path.expanduser(
     "~/.duanxian-agents/cache/sentiment_s/fusionintel.json"
 )
@@ -53,8 +56,8 @@ METHODS: dict[str, dict[str, Any]] = {
         "needs_api_key": False,
     },
     METHOD_PCT: {
-        "label": "历史分位（趣财经 + 东财）",
-        "desc": "趣财经序列与龙头高度，叠加近窗东财炸板率/最高板，分位等权合成 0–100。",
+        "label": "历史分位",
+        "desc": "涨停/跌停/最高板/炸板率/情绪温度等历史分位等权合成 0–100。",
         "needs_api_key": False,
     },
     METHOD_FUSION: {
@@ -304,8 +307,51 @@ def _backfill_highest_from_qcj(by_date: dict[str, dict]) -> int:
     return filled
 
 
+def _xgb_broken_map() -> dict[str, float]:
+    """选股宝离线炸板率：date → ratio（0–1）。文件不存在或损坏时返回空表。"""
+    if not os.path.isfile(_XGB_BROKEN_PATH):
+        return {}
+    try:
+        with open(_XGB_BROKEN_PATH, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return {}
+    rows = raw.get("rows") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    out: dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("ok"):
+            continue
+        d = row.get("date")
+        br = row.get("broken_rate")
+        if not d or br is None:
+            continue
+        try:
+            out[str(d)] = float(br)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _apply_xgb_broken(by_date: dict[str, dict]) -> int:
+    """用选股宝炸板率覆盖分位序列（优先口径；覆盖近窗东财同字段）。"""
+    mapping = _xgb_broken_map()
+    if not mapping:
+        return 0
+    filled = 0
+    for d, item in by_date.items():
+        br = mapping.get(d)
+        if br is None:
+            continue
+        item["broken_rate"] = br
+        item["broken_rate_source"] = "xgb"
+        filled += 1
+    return filled
+
+
 def _enrich_one(date: str) -> dict[str, Any]:
-    """东财涨停生态：最高连板 + 炸板率。优先本机 AKTools，再回退本地 akshare。"""
+    """近窗补最高连板（兼可得炸板率兜底）。优先本机 AKTools，再回退本地 akshare。"""
     from . import market_series as ms
 
     via = ms.zt_summary_via_aktools(date)
@@ -334,23 +380,17 @@ def _enrich_one(date: str) -> dict[str, Any]:
 
 
 def _needs_em_enrich(item: dict) -> bool:
-    """是否还缺东财炸板/高度；已标记 em_miss 的不再重试（东财窗口外会长期空）。"""
+    """是否还缺最高板；已标记 em_miss 的不再重试。炸板率改由选股宝序列覆盖。"""
     if item.get("em_miss") and not item.get("em_ok"):
         return False
-    # 已成功拿到至少一个东财分量则不再打
-    if item.get("em_ok") and (
-        item.get("highest") is not None or item.get("broken_rate") is not None
-    ):
-        return False
-    return True
+    return item.get("highest") is None
 
 
 def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
-    """回拉趣财经序列，按需用东财补炸板/高度；结果落盘。
+    """回拉趣财经序列；炸板率并入选股宝离线序列，近窗按需补最高板；结果落盘。
 
-    `enrich_limit`：本轮最多尝试几天东财（None=缺什么补什么，首次会较慢）。
-    从**最近交易日往旧**补：东财涨停池仅保留近窗，从旧日开扫会把额度耗在空响应上。
-    拉取失败的日期打 `em_miss`，后续轮次跳过，避免反复撞墙。
+    `enrich_limit`：本轮最多尝试几天近窗高度补齐（None=缺什么补什么）。
+    从**最近交易日往旧**补高度；拉取失败的日期打 `em_miss`，后续轮次跳过。
     """
     from . import market_series as ms
 
@@ -377,6 +417,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
                 **row,
                 "highest": prev.get("highest"),
                 "broken_rate": prev.get("broken_rate"),
+                "broken_rate_source": prev.get("broken_rate_source"),
                 "em_ok": bool(prev.get("em_ok")),
                 "em_miss": bool(prev.get("em_miss")) and not bool(prev.get("em_ok")),
                 "highest_source": prev.get("highest_source"),
@@ -384,6 +425,9 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
                 "amount_yi": amrow.get("amount_yi", prev.get("amount_yi")),
                 "amount_vs_ma20": amrow.get("amount_vs_ma20", prev.get("amount_vs_ma20")),
             }
+
+        # 炸板率优先并入选股宝离线口径（覆盖旧东财近窗值）
+        xgb_filled = _apply_xgb_broken(by_date)
 
         # 近窗日期清掉 miss，允许重试（盘中/当日池可能稍后才齐）
         recent = sorted(by_date.keys())[-5:]
@@ -402,38 +446,43 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
         missed = 0
         for d in candidates:
             item = by_date[d]
+            keep_br = item.get("broken_rate")
+            keep_br_src = item.get("broken_rate_source")
             patch = _enrich_one(d)
-            item["highest"] = patch["highest"]
-            item["broken_rate"] = patch["broken_rate"]
-            item["em_ok"] = bool(patch.get("em_ok"))
-            if item["em_ok"] and (
-                item.get("highest") is not None or item.get("broken_rate") is not None
-            ):
+            if patch.get("highest") is not None:
+                item["highest"] = patch["highest"]
+                item["highest_source"] = "em"
+            # 已有选股宝炸板率则保留；否则近窗兜底
+            if keep_br_src == "xgb" and keep_br is not None:
+                item["broken_rate"] = keep_br
+                item["broken_rate_source"] = "xgb"
+            elif patch.get("broken_rate") is not None:
+                item["broken_rate"] = patch["broken_rate"]
+                item["broken_rate_source"] = "em"
+            item["em_ok"] = bool(patch.get("em_ok")) and item.get("highest") is not None
+            if item["em_ok"]:
                 item["em_miss"] = False
-                if item.get("highest") is not None:
-                    item["highest_source"] = "em"
                 enriched_ok += 1
             else:
                 item["em_ok"] = False
                 item["em_miss"] = True
                 missed += 1
-            # 最高板未补上时，退化为连板家数不合适；保持 None，分位时跳过该分量
 
-        # 东财涨停池窗口大致连续：本轮已有成功日时，更早的未补日直接记 miss，免反复空打
+        # 近窗高度大致连续：本轮已有成功日时，更早的未补日直接记 miss，免反复空打
         if enriched_ok > 0:
             oldest_ok = min(
                 d for d, item in by_date.items()
-                if item.get("em_ok") and (
-                    item.get("highest") is not None or item.get("broken_rate") is not None
-                )
+                if item.get("em_ok") and item.get("highest") is not None
             )
             for d, item in by_date.items():
                 if d < oldest_ok and _needs_em_enrich(item):
                     item["em_ok"] = False
                     item["em_miss"] = True
 
-        # 东财/akshare 同窗补不了更早：用趣财经龙头高度一次性回补 highest 并落盘
+        # 近窗补不了更早：用趣财经龙头高度一次性回补 highest 并落盘
         qcj_filled = _backfill_highest_from_qcj(by_date)
+        # 再并一次，避免高度回补路径覆盖炸板率字段
+        xgb_filled = _apply_xgb_broken(by_date)
 
         merged = [by_date[r["date"]] for r in qcj]
         env = _save_series(merged)
@@ -443,6 +492,7 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
             "missed_this_run": missed,
             "tried_this_run": enriched_ok + missed,
             "qcj_highest_filled": qcj_filled,
+            "xgb_broken_filled": xgb_filled,
             "meta": series_meta(),
             "updated_at": env.get("updated_at"),
             "margin_joined": sum(1 for r in merged if r.get("margin_chg") is not None),
@@ -760,12 +810,29 @@ def _merge_market_into_rows(rows: list[dict]) -> list[dict]:
 
 
 def _patch_target_day_em(date: str, rows: list[dict]) -> list[dict]:
-    """目标日缺高度/炸板时：先落盘趣财经龙头高度，再按需打东财（失败不覆盖已有高度）。"""
+    """目标日缺高度时：先落盘趣财经龙头高度，再按需打近窗池；炸板率优先选股宝。"""
     by = {r["date"]: r for r in rows if r.get("date")}
     row = by.get(date)
-    if not row or (row.get("em_ok") and row.get("highest") is not None):
+    if not row:
         return rows
     changed = False
+    xgb = _xgb_broken_map()
+    if date in xgb and (
+        row.get("broken_rate") is None or row.get("broken_rate_source") != "xgb"
+    ):
+        row = {
+            **row,
+            "broken_rate": xgb[date],
+            "broken_rate_source": "xgb",
+        }
+        changed = True
+    if row.get("em_ok") and row.get("highest") is not None:
+        if changed:
+            by[date] = row
+            merged = sorted(by.values(), key=lambda r: r["date"])
+            _save_series(merged)
+            return merged
+        return rows
     if row.get("highest") is None:
         h = row.get("qcj_highest")
         if h is None:
@@ -779,25 +846,32 @@ def _patch_target_day_em(date: str, rows: list[dict]) -> list[dict]:
             changed = True
     if not row.get("em_ok") and not row.get("em_miss"):
         patch = _enrich_one(date)
-        if patch.get("em_ok") and (
-            patch.get("highest") is not None or patch.get("broken_rate") is not None
-        ):
+        keep_br = row.get("broken_rate")
+        keep_src = row.get("broken_rate_source")
+        if patch.get("em_ok") and patch.get("highest") is not None:
             row = {
                 **row,
-                "highest": (
-                    patch["highest"]
-                    if patch.get("highest") is not None
-                    else row.get("highest")
-                ),
-                "broken_rate": (
-                    patch["broken_rate"]
-                    if patch.get("broken_rate") is not None
-                    else row.get("broken_rate")
-                ),
+                "highest": patch["highest"],
                 "em_ok": True,
                 "em_miss": False,
-                "highest_source": (
-                    "em" if patch.get("highest") is not None else row.get("highest_source")
+                "highest_source": "em",
+                "broken_rate": (
+                    keep_br
+                    if keep_src == "xgb" and keep_br is not None
+                    else (
+                        patch["broken_rate"]
+                        if patch.get("broken_rate") is not None
+                        else keep_br
+                    )
+                ),
+                "broken_rate_source": (
+                    "xgb"
+                    if keep_src == "xgb" and keep_br is not None
+                    else (
+                        "em"
+                        if patch.get("broken_rate") is not None
+                        else keep_src
+                    )
                 ),
             }
         else:
@@ -893,9 +967,10 @@ def score_for(date: str, *, method: Optional[str] = None) -> dict[str, Any]:
 def classify_with_s(readings: dict, s: float) -> tuple[str, list[str]]:
     """有 S 时的定档：先防守叠加，再按 S 区间落档（永不自动「修复确认」）。"""
     from . import trade_budget as tb
+    from . import trade_threshold_config as ttc
 
+    th = ttc.resolved()
     reasons: list[str] = []
-    h = int(readings.get("highest") or 0)
     br = tb._f(readings.get("broken_rate")) or 0.0
     med = tb._f(readings.get("money_median"))
     p12 = tb._f(readings.get("promotion_1to2"))
@@ -904,28 +979,34 @@ def classify_with_s(readings: dict, s: float) -> tuple[str, list[str]]:
 
     pressed = tb._height_pressed(readings)
     hurt = (
-        br >= 0.40
-        or (p12 is not None and p12 < 0.20)
-        or (med is not None and med < 0)
-        or (deep5 is not None and deep5 >= 0.25)
-        or (mld is not None and mld >= 20)
+        br >= th["broken_rate_ge"]
+        or (p12 is not None and p12 < th["promo_hurt_lt"])
+        or (med is not None and med < th["money_hurt_lt"])
+        or (deep5 is not None and deep5 >= th["deep_loss_ge"])
+        or (mld is not None and mld >= th["limit_down_ge"])
     )
     if pressed and hurt:
         reasons.append(f"S={s}；高度压降且数据转差 → 退潮杀伤（叠加优先）")
         return "退潮杀伤", reasons
 
-    if tb._height_near_peak(readings) and br >= 0.40:
-        reasons.append(f"S={s}；高度近窗高位且炸板率≥40% → 过热防守（叠加优先）")
+    if tb._height_near_peak(readings) and br >= th["broken_rate_ge"]:
+        reasons.append(
+            f"S={s}；高度近窗高位且炸板率≥{th['broken_rate_ge'] * 100:.0f}% → 过热防守（叠加优先）"
+        )
         return "过热防守", reasons
 
-    if s > 80:
-        reasons.append(f"S={s} > 80 → 过热防守")
+    if s > th["s_overheat_gt"]:
+        reasons.append(f"S={s} > {th['s_overheat_gt']:g} → 过热防守")
         return "过热防守", reasons
-    if s >= 55:
-        reasons.append(f"S={s} 在 55–80 → 高潮拥挤")
+    if s >= th["s_climax_ge"]:
+        reasons.append(
+            f"S={s} 在 {th['s_climax_ge']:g}–{th['s_overheat_gt']:g} → 高潮拥挤"
+        )
         return "高潮拥挤", reasons
-    if s >= 20:
-        reasons.append(f"S={s} 在 20–55 → 升温扩张")
+    if s >= th["s_warm_ge"]:
+        reasons.append(
+            f"S={s} 在 {th['s_warm_ge']:g}–{th['s_climax_ge']:g} → 升温扩张"
+        )
         return "升温扩张", reasons
-    reasons.append(f"S={s} < 20 → 冰点观察")
+    reasons.append(f"S={s} < {th['s_ice_lt']:g} → 冰点观察")
     return "冰点观察", reasons

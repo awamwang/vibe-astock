@@ -10,9 +10,12 @@ from duanxian import trade_budget as tb
 @pytest.fixture(autouse=True)
 def _isolate_phase_config(tmp_path, monkeypatch):
     from duanxian import trade_phase_config as tpc
+    from duanxian import trade_threshold_config as ttc
 
     monkeypatch.setattr(tpc, "_CONFIG_PATH", str(tmp_path / "trade_phases.json"))
     monkeypatch.setattr(tpc, "_TABLE", None)
+    monkeypatch.setattr(ttc, "_CONFIG_PATH", str(tmp_path / "trade_thresholds.json"))
+    monkeypatch.setattr(ttc, "_CACHE", None)
 
 
 def _base(**kw):

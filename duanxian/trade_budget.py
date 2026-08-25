@@ -240,14 +240,21 @@ def width_divergence(readings: dict) -> dict[str, Any]:
     }
 
 
+def _thresholds() -> dict:
+    from . import trade_threshold_config as ttc
+
+    return ttc.resolved()
+
+
 def _height_pressed(readings: dict) -> bool:
     """连板高度相对近窗回落。"""
     h = readings.get("highest")
     hist = readings.get("highest_hist") or []
     if not isinstance(h, int) or not hist:
         return False
+    th = _thresholds()
     peak = max(hist)
-    return peak >= h + 1 and peak >= 4
+    return peak >= h + th["height_press_gap"] and peak >= th["height_press_peak_min"]
 
 
 def _height_near_peak(readings: dict) -> bool:
@@ -255,9 +262,10 @@ def _height_near_peak(readings: dict) -> bool:
     hist = readings.get("highest_hist") or []
     if not isinstance(h, int):
         return False
+    th = _thresholds()
     if not hist:
-        return h >= 5
-    return h >= max(hist) and h >= 4
+        return h >= th["height_near_no_hist"]
+    return h >= max(hist) and h >= th["height_near_min"]
 
 
 def classify_rule_phase(readings: dict) -> tuple[str, list[str]]:
@@ -269,6 +277,7 @@ def classify_rule_phase(readings: dict) -> tuple[str, list[str]]:
     if s is not None and method != ss.METHOD_HARD and readings.get("s_ok"):
         return ss.classify_with_s(readings, s)
 
+    th = _thresholds()
     reasons: list[str] = []
     h = int(readings.get("highest") or 0)
     br = _f(readings.get("broken_rate")) or 0.0
@@ -280,31 +289,35 @@ def classify_rule_phase(readings: dict) -> tuple[str, list[str]]:
 
     pressed = _height_pressed(readings)
     hurt = (
-        br >= 0.40
-        or (p12 is not None and p12 < 0.20)
-        or (med is not None and med < 0)
-        or (deep5 is not None and deep5 >= 0.25)
-        or (mld is not None and mld >= 20)
+        br >= th["broken_rate_ge"]
+        or (p12 is not None and p12 < th["promo_hurt_lt"])
+        or (med is not None and med < th["money_hurt_lt"])
+        or (deep5 is not None and deep5 >= th["deep_loss_ge"])
+        or (mld is not None and mld >= th["limit_down_ge"])
     )
     if pressed and hurt:
         reasons.append("高度压降且炸板/晋级/赚钱效应/亏钱效应转差 → 退潮杀伤")
         return "退潮杀伤", reasons
 
-    if _height_near_peak(readings) and br >= 0.40:
-        reasons.append("高度仍处近窗高位且炸板率≥40% → 过热防守")
+    if _height_near_peak(readings) and br >= th["broken_rate_ge"]:
+        reasons.append(
+            f"高度仍处近窗高位且炸板率≥{th['broken_rate_ge'] * 100:.0f}% → 过热防守"
+        )
         return "过热防守", reasons
 
-    if h >= 5 and med is not None and med >= 0:
-        reasons.append("最高板≥5 且赚钱效应中位≥0 → 高潮拥挤")
+    if h >= th["climax_highest_ge"] and med is not None and med >= th["money_climax_ge"]:
+        reasons.append(
+            f"最高板≥{int(th['climax_highest_ge'])} 且赚钱效应中位达标 → 高潮拥挤"
+        )
         return "高潮拥挤", reasons
 
-    ice = h <= 3 and (
-        (med is not None and med < 0)
-        or (p12 is not None and p12 < 0.15)
-        or zt < 30
+    ice = h <= th["ice_highest_le"] and (
+        (med is not None and med < th["money_hurt_lt"])
+        or (p12 is not None and p12 < th["ice_promo_lt"])
+        or zt < th["ice_limit_up_lt"]
     )
     if ice:
-        reasons.append("高度≤3 且赚钱效应差/晋级弱/涨停稀 → 冰点观察")
+        reasons.append("高度偏低且赚钱效应差/晋级弱/涨停稀 → 冰点观察")
         return "冰点观察", reasons
 
     reasons.append("未命中防守/冰点/高潮条件 → 升温扩张")

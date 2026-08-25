@@ -575,6 +575,11 @@ export const api = {
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases", "POST", { phases }),
   resetTradePhaseConfig: () =>
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases/reset", "POST", {}),
+  tradeThresholdConfig: () => get<TradeThresholdConfig>("/config/trade-thresholds"),
+  saveTradeThresholdConfig: (thresholds: Record<string, number>) =>
+    request<TradeThresholdConfig>("/config/trade-thresholds", "POST", { thresholds }),
+  resetTradeThresholdConfig: () =>
+    request<TradeThresholdConfig>("/config/trade-thresholds/reset", "POST", {}),
   sentimentSConfig: () => get<SentimentSConfig>("/config/sentiment-s"),
   saveSentimentSConfig: (method: string, opts?: { fusionintelApiKey?: string }) => {
     const body: Record<string, string> = { method };
@@ -671,6 +676,42 @@ export interface TradePhaseConfig {
   phases: TradePhaseConfigRow[];
   defaults: TradePhaseConfigRow[];
 }
+export interface TradeThresholdField {
+  key: string;
+  label: string;
+  desc: string;
+  value_kind: "ratio" | "number" | "count" | "boards" | "score";
+  ref_key: string;
+  value: number;
+  default: number;
+  min: number;
+  max: number;
+}
+export interface TradeThresholdGroup {
+  id: string;
+  label: string;
+  desc: string;
+  fields: TradeThresholdField[];
+}
+export interface TradeThresholdRefItem {
+  key: string;
+  label: string;
+  value: number | string | null;
+  formatted: string | null;
+}
+export interface TradeThresholdConfig {
+  schema: number;
+  path: string;
+  groups: TradeThresholdGroup[];
+  values: Record<string, number>;
+  defaults: Record<string, number>;
+  reference: {
+    date: string | null;
+    readings: Record<string, unknown>;
+    display: TradeThresholdRefItem[];
+    reason?: string | null;
+  };
+}
 export interface SentimentSMethod {
   id: string;
   label: string;
@@ -715,6 +756,7 @@ export interface SentimentSRefreshResult {
   missed_this_run?: number;
   tried_this_run?: number;
   qcj_highest_filled?: number;
+  xgb_broken_filled?: number;
   meta: SentimentSSeriesMeta;
   updated_at?: string;
   margin_joined?: number;

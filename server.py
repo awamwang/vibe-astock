@@ -1153,7 +1153,7 @@ def api_sentiment_s_config_save(request: Request, body: dict = Body(...)):
 
 @app.post("/api/config/sentiment-s/refresh")
 def api_sentiment_s_refresh(request: Request, body: dict = Body(None)):
-    """回拉趣财经序列并用东财补炸板/高度。enrich_limit 限制本轮新补天数。"""
+    """回拉趣财经序列；炸板率并入选股宝离线序列，近窗按需补最高板。enrich_limit 限制本轮高度补齐天数。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
     from duanxian import sentiment_score as ss
@@ -1236,6 +1236,42 @@ def api_trade_phase_config_reset():
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
     return {"data": {"phases": saved, "count": len(saved)}}
+
+
+@app.get("/api/config/trade-thresholds")
+def api_trade_threshold_config_get():
+    """读取定档阈值（硬规则 + S 区间），并附带最近一场读数作对照。"""
+    from duanxian import trade_threshold_config as ttc
+
+    return {"data": ttc.export_config()}
+
+
+@app.post("/api/config/trade-thresholds")
+def api_trade_threshold_config_save(body: dict = Body(...)):
+    """保存定档阈值。提交 thresholds 对象，可只改部分字段。"""
+    from duanxian.trade_threshold_config import TradeThresholdConfigError, save_values
+
+    try:
+        saved = save_values((body or {}).get("thresholds"))
+    except TradeThresholdConfigError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    from duanxian import trade_threshold_config as ttc
+
+    return {"data": ttc.export_config()}
+
+
+@app.post("/api/config/trade-thresholds/reset")
+def api_trade_threshold_config_reset():
+    """恢复内置默认定档阈值。"""
+    from duanxian import trade_threshold_config as ttc
+
+    try:
+        ttc.reset_values()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": ttc.export_config()}
 
 
 @app.get("/api/experience/meta")

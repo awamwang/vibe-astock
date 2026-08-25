@@ -7,7 +7,7 @@ import {
   addZtKeyword, removeZtKeyword, setZtKeywordsCache,
   LOCKED_ZT_KEYWORDS,
 } from "@/lib/zt-keywords";
-import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig } from "@/lib/api";
+import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig } from "@/lib/api";
 
 function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   return [...entries].sort((a, b) => {
@@ -52,6 +52,45 @@ function parsePct(raw: string, label: string): number {
   return Math.round(n * 100) / 10000;
 }
 
+/** 阈值在界面上的编辑值：ratio 用百分数，其余原样 */
+function fieldToDraft(kind: string, value: number): string {
+  if (kind === "ratio") {
+    const n = Math.round(value * 10000) / 100;
+    return String(n);
+  }
+  if (kind === "boards" || kind === "count") {
+    return String(Math.round(value));
+  }
+  return String(value);
+}
+
+function draftToValue(kind: string, raw: string, label: string, min: number, max: number): number {
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n)) throw new Error(`${label}须为数字`);
+  let v = kind === "ratio" ? n / 100 : n;
+  if (v < min || v > max) {
+    const lo = kind === "ratio" ? min * 100 : min;
+    const hi = kind === "ratio" ? max * 100 : max;
+    const unit = kind === "ratio" ? "%" : "";
+    throw new Error(`${label}须在 ${lo}${unit}–${hi}${unit}`);
+  }
+  return v;
+}
+
+function refForField(
+  cfg: TradeThresholdConfig | null,
+  refKey: string,
+): string {
+  if (!cfg?.reference?.display?.length) return "—";
+  const hit = cfg.reference.display.find((d) => d.key === refKey);
+  if (hit?.formatted != null && hit.formatted !== "") return hit.formatted;
+  if (refKey === "highest_hist_peak") {
+    const peak = cfg.reference.readings?.highest_hist_peak;
+    return peak == null ? "—" : String(peak);
+  }
+  return "—";
+}
+
 export function ZtKeywordsSettings() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
@@ -72,6 +111,11 @@ export function ZtKeywordsSettings() {
   const [sLoading, setSLoading] = useState(true);
   const [sSaving, setSSaving] = useState(false);
   const [sRefreshing, setSRefreshing] = useState(false);
+
+  const [thCfg, setThCfg] = useState<TradeThresholdConfig | null>(null);
+  const [thDrafts, setThDrafts] = useState<Record<string, string>>({});
+  const [thLoading, setThLoading] = useState(true);
+  const [thSaving, setThSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,6 +193,32 @@ export function ZtKeywordsSettings() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.tradeThresholdConfig();
+        if (!cancelled) {
+          setThCfg(cfg);
+          const next: Record<string, string> = {};
+          for (const g of cfg.groups || []) {
+            for (const f of g.fields || []) {
+              next[f.key] = fieldToDraft(f.value_kind, f.value);
+            }
+          }
+          setThDrafts(next);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取定档阈值失败");
+        }
+      } finally {
+        if (!cancelled) setThLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const persistSentimentS = async () => {
     setSSaving(true);
     try {
@@ -176,15 +246,74 @@ export function ZtKeywordsSettings() {
           ? `两融/指数已更新（两融 ${mr.margin?.days ?? "?"} 日）`
           : "两融/指数未更新（可稍后重试）";
       toast.success(
-        `序列已更新：${r.meta.days} 日，本轮补东财 ${r.enriched_this_run} 日`
-        + (r.missed_this_run ? `（窗口外跳过 ${r.missed_this_run}）` : "")
-        + (r.qcj_highest_filled ? `，趣财经补高度 ${r.qcj_highest_filled} 日` : "")
-        + `（已补全 ${r.meta.enriched_days}） · ${marketHint}`,
+        `序列已更新：${r.meta.days} 日`
+        + (r.enriched_this_run ? `，本轮补最高板 ${r.enriched_this_run} 日` : "")
+        + (r.qcj_highest_filled ? `，回补最高板 ${r.qcj_highest_filled} 日` : "")
+        + (typeof r.xgb_broken_filled === "number"
+          ? `，炸板率 ${r.xgb_broken_filled} 日`
+          : "")
+        + ` · ${marketHint}`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刷新序列失败");
     } finally {
       setSRefreshing(false);
+    }
+  };
+
+  const applyThresholdCfg = (cfg: TradeThresholdConfig) => {
+    setThCfg(cfg);
+    const next: Record<string, string> = {};
+    for (const g of cfg.groups || []) {
+      for (const f of g.fields || []) {
+        next[f.key] = fieldToDraft(f.value_kind, f.value);
+      }
+    }
+    setThDrafts(next);
+  };
+
+  const persistThresholds = async () => {
+    if (!thCfg) return;
+    let payload: Record<string, number>;
+    try {
+      payload = {};
+      for (const g of thCfg.groups) {
+        for (const f of g.fields) {
+          payload[f.key] = draftToValue(
+            f.value_kind,
+            thDrafts[f.key] ?? "",
+            f.label,
+            f.min,
+            f.max,
+          );
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "阈值不合法");
+      return;
+    }
+    setThSaving(true);
+    try {
+      const cfg = await api.saveTradeThresholdConfig(payload);
+      applyThresholdCfg(cfg);
+      toast.success("定档阈值已保存；请到「持仓与预算」重算场次");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setThSaving(false);
+    }
+  };
+
+  const resetThresholds = async () => {
+    setThSaving(true);
+    try {
+      const cfg = await api.resetTradeThresholdConfig();
+      applyThresholdCfg(cfg);
+      toast.success("已恢复默认定档阈值");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setThSaving(false);
     }
   };
 
@@ -339,7 +468,7 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、题材别名，以及仓位预算六档的总仓、单票与提示词"
+        subtitle="上涨关键词、题材别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
       />
 
       <GlassCard className="mb-4">
@@ -552,18 +681,14 @@ export function ZtKeywordsSettings() {
               {sCfg.series_meta.first && sCfg.series_meta.last
                 ? `（${sCfg.series_meta.first} → ${sCfg.series_meta.last}）`
                 : ""}
-              ，东财已补 {sCfg.series_meta.enriched_days} 日
               {typeof sCfg.series_meta.highest_days === "number"
                 ? ` · 最高板 ${sCfg.series_meta.highest_days} 日`
                 : ""}
               {typeof sCfg.series_meta.broken_rate_days === "number"
                 ? ` · 炸板率 ${sCfg.series_meta.broken_rate_days} 日`
                 : ""}
-              {(sCfg.series_meta.miss_days ?? 0) > 0
-                ? `（东财窗口外 ${sCfg.series_meta.miss_days} 日）`
-                : ""}
               {(sCfg.series_meta.pending_days ?? 0) > 0
-                ? `，待补 ${sCfg.series_meta.pending_days} 日`
+                ? ` · 待补最高板 ${sCfg.series_meta.pending_days} 日`
                 : ""}
               {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
             </p>
@@ -598,7 +723,88 @@ export function ZtKeywordsSettings() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className={`h-4 w-4 ${sRefreshing ? "animate-spin" : ""}`} />
-            {sRefreshing ? "刷新中…" : "刷新分位序列（每轮补 30 日东财）"}
+            {sRefreshing ? "刷新中…" : "刷新分位序列（每轮补 30 日）"}
+          </button>
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <SlidersHorizontal className="h-4 w-4 text-primary" /> 定档阈值
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          一、硬规则与二、S 区间的判定数字。右侧为最近一场读数，方便对照调参。
+          {thCfg?.reference?.date ? `（对照日 ${thCfg.reference.date}` : ""}
+          {thCfg?.reference?.reason ? ` · ${thCfg.reference.reason}` : ""}
+          {thCfg?.reference?.date ? "）" : ""}
+        </p>
+
+        {thLoading || !thCfg ? (
+          <p className="text-xs text-muted-foreground">正在读取定档阈值…</p>
+        ) : (
+          <div className="space-y-5">
+            {thCfg.groups.map((g) => (
+              <div key={g.id}>
+                <div className="mb-1 text-sm font-semibold text-foreground">{g.label}</div>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">{g.desc}</p>
+                <div className="space-y-2">
+                  {g.fields.map((f) => {
+                    const unit =
+                      f.value_kind === "ratio" ? "%"
+                        : f.value_kind === "boards" ? "板"
+                          : f.value_kind === "count" ? "家"
+                            : f.value_kind === "score" ? "分"
+                              : "";
+                    return (
+                      <div
+                        key={f.key}
+                        className="grid grid-cols-1 gap-2 rounded-lg border border-border/50 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_7rem_6.5rem] sm:items-center"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm text-foreground">
+                            {f.label}
+                            {unit ? <span className="ml-1 text-[11px] text-muted-foreground">({unit})</span> : null}
+                          </div>
+                          <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{f.desc}</div>
+                        </div>
+                        <input
+                          type="number"
+                          step={f.value_kind === "ratio" || f.value_kind === "score" || f.value_kind === "number" ? "0.1" : "1"}
+                          value={thDrafts[f.key] ?? ""}
+                          onChange={(e) =>
+                            setThDrafts((d) => ({ ...d, [f.key]: e.target.value }))
+                          }
+                          disabled={thSaving}
+                          className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                        />
+                        <div className="text-[11px] tabular-nums text-muted-foreground sm:text-right">
+                          最近：{refForField(thCfg, f.ref_key)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void persistThresholds()}
+            disabled={thSaving || thLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            保存阈值
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetThresholds()}
+            disabled={thSaving || thLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 恢复默认
           </button>
         </div>
       </GlassCard>
