@@ -188,6 +188,7 @@ export function ZtKeywordsSettings() {
           : "两融/指数未更新（可稍后重试）";
       toast.success(
         `序列已更新：${r.meta.days} 日，本轮补东财 ${r.enriched_this_run} 日`
+        + (r.missed_this_run ? `（窗口外跳过 ${r.missed_this_run}）` : "")
         + `（已补全 ${r.meta.enriched_days}） · ${marketHint}`,
       );
     } catch (e) {
@@ -526,6 +527,7 @@ export function ZtKeywordsSettings() {
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           定档主输入可选。硬规则不用 S；趣财经°直接用 temperatureDegree；
           历史分位用趣财经约 220 日序列 + 东财池补炸板率/最高连板后等权合成；
+          东财涨停池仅近窗可补，更早日期用趣财经分量参与分位。
           FusionIntel 用聚变智研宏观恐贪原样当 S（须保存 API Key）。
           改算法后请在「持仓与预算」重算当日预算。
         </p>
@@ -579,7 +581,16 @@ export function ZtKeywordsSettings() {
                 ? `（${sCfg.series_meta.first} → ${sCfg.series_meta.last}）`
                 : ""}
               ，东财已补 {sCfg.series_meta.enriched_days} 日
+              {(sCfg.series_meta.miss_days ?? 0) > 0
+                ? `（窗口外 ${sCfg.series_meta.miss_days} 日不可补）`
+                : ""}
+              {(sCfg.series_meta.pending_days ?? 0) > 0
+                ? `，待补 ${sCfg.series_meta.pending_days} 日`
+                : ""}
               {sCfg.series_meta.updated_at ? ` · 更新于 ${sCfg.series_meta.updated_at}` : ""}
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              东财涨停池仅保留近窗历史；从新往旧补，窗口外日期会跳过。
             </p>
             {sCfg.market_series && (
               <p className="text-[11px] text-muted-foreground">

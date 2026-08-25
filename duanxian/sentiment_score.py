@@ -54,7 +54,7 @@ METHODS: dict[str, dict[str, Any]] = {
     },
     METHOD_PCT: {
         "label": "历史分位（趣财经 + 东财）",
-        "desc": "趣财经序列回拉 + 东财池补炸板率/最高连板，分位等权合成 0–100。",
+        "desc": "趣财经序列回拉 + 东财近窗补炸板率/最高连板，分位等权合成 0–100。",
         "needs_api_key": False,
     },
     METHOD_FUSION: {
@@ -190,9 +190,13 @@ def series_meta() -> dict[str, Any]:
     env = _load_series()
     rows = env.get("rows") or []
     enriched = sum(1 for r in rows if r.get("em_ok"))
+    missed = sum(1 for r in rows if r.get("em_miss") and not r.get("em_ok"))
+    pending = sum(1 for r in rows if _needs_em_enrich(r))
     return {
         "days": len(rows),
         "enriched_days": enriched,
+        "miss_days": missed,
+        "pending_days": pending,
         "first": rows[0]["date"] if rows else None,
         "last": rows[-1]["date"] if rows else None,
         "updated_at": env.get("updated_at"),
@@ -285,10 +289,24 @@ def _enrich_one(date: str) -> dict[str, Any]:
     }
 
 
+def _needs_em_enrich(item: dict) -> bool:
+    """是否还缺东财炸板/高度；已标记 em_miss 的不再重试（东财窗口外会长期空）。"""
+    if item.get("em_miss") and not item.get("em_ok"):
+        return False
+    # 已成功拿到至少一个东财分量则不再打
+    if item.get("em_ok") and (
+        item.get("highest") is not None or item.get("broken_rate") is not None
+    ):
+        return False
+    return True
+
+
 def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
     """回拉趣财经序列，按需用东财补炸板/高度；结果落盘。
 
-    `enrich_limit`：本轮最多新补几天东财（None=缺什么补什么，首次会较慢）。
+    `enrich_limit`：本轮最多尝试几天东财（None=缺什么补什么，首次会较慢）。
+    从**最近交易日往旧**补：东财涨停池仅保留近窗，从旧日开扫会把额度耗在空响应上。
+    拉取失败的日期打 `em_miss`，后续轮次跳过，避免反复撞墙。
     """
     from . import market_series as ms
 
@@ -305,35 +323,75 @@ def refresh_series(*, enrich_limit: Optional[int] = None) -> dict[str, Any]:
         margin_by = ms.margin_map()
         amount_by = ms.amount_metrics_map()
         old = {r["date"]: r for r in (_load_series().get("rows") or []) if r.get("date")}
-        merged: list[dict] = []
-        pending = 0
+        by_date: dict[str, dict] = {}
         for row in qcj:
             d = row["date"]
             prev = old.get(d) or {}
             mrow = margin_by.get(d) or {}
             amrow = amount_by.get(d) or {}
-            item = {
+            by_date[d] = {
                 **row,
                 "highest": prev.get("highest"),
                 "broken_rate": prev.get("broken_rate"),
                 "em_ok": bool(prev.get("em_ok")),
+                "em_miss": bool(prev.get("em_miss")) and not bool(prev.get("em_ok")),
                 "margin_chg": mrow.get("margin_chg", prev.get("margin_chg")),
                 "amount_yi": amrow.get("amount_yi", prev.get("amount_yi")),
                 "amount_vs_ma20": amrow.get("amount_vs_ma20", prev.get("amount_vs_ma20")),
             }
-            need = not item["em_ok"] or item.get("highest") is None or item.get("broken_rate") is None
-            if need and (enrich_limit is None or pending < enrich_limit):
-                patch = _enrich_one(d)
-                item["highest"] = patch["highest"]
-                item["broken_rate"] = patch["broken_rate"]
-                item["em_ok"] = patch["em_ok"]
-                pending += 1
+
+        # 近窗日期清掉 miss，允许重试（盘中/当日池可能稍后才齐）
+        recent = sorted(by_date.keys())[-5:]
+        for d in recent:
+            if by_date[d].get("em_miss") and not by_date[d].get("em_ok"):
+                by_date[d]["em_miss"] = False
+
+        candidates = sorted(
+            (d for d, item in by_date.items() if _needs_em_enrich(item)),
+            reverse=True,
+        )
+        if enrich_limit is not None:
+            candidates = candidates[: max(0, int(enrich_limit))]
+
+        enriched_ok = 0
+        missed = 0
+        for d in candidates:
+            item = by_date[d]
+            patch = _enrich_one(d)
+            item["highest"] = patch["highest"]
+            item["broken_rate"] = patch["broken_rate"]
+            item["em_ok"] = bool(patch.get("em_ok"))
+            if item["em_ok"] and (
+                item.get("highest") is not None or item.get("broken_rate") is not None
+            ):
+                item["em_miss"] = False
+                enriched_ok += 1
+            else:
+                item["em_ok"] = False
+                item["em_miss"] = True
+                missed += 1
             # 最高板未补上时，退化为连板家数不合适；保持 None，分位时跳过该分量
-            merged.append(item)
+
+        # 东财涨停池窗口大致连续：本轮已有成功日时，更早的未补日直接记 miss，免反复空打
+        if enriched_ok > 0:
+            oldest_ok = min(
+                d for d, item in by_date.items()
+                if item.get("em_ok") and (
+                    item.get("highest") is not None or item.get("broken_rate") is not None
+                )
+            )
+            for d, item in by_date.items():
+                if d < oldest_ok and _needs_em_enrich(item):
+                    item["em_ok"] = False
+                    item["em_miss"] = True
+
+        merged = [by_date[r["date"]] for r in qcj]
         env = _save_series(merged)
         return {
             "ok": True,
-            "enriched_this_run": pending,
+            "enriched_this_run": enriched_ok,
+            "missed_this_run": missed,
+            "tried_this_run": enriched_ok + missed,
             "meta": series_meta(),
             "updated_at": env.get("updated_at"),
             "margin_joined": sum(1 for r in merged if r.get("margin_chg") is not None),

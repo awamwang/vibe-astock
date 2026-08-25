@@ -575,23 +575,11 @@ def amount_metrics_map() -> dict[str, dict]:
 
 
 def _missing_amount_dates(target: str, existing: dict[str, float]) -> list[str]:
+    """回拉窗口内缺失交易日（含向前补洞，不只往后追新）。"""
     from . import trade_calendar as tc
 
-    if not existing:
-        dates = tc.trade_dates_ending_at(target, _AMOUNT_PCT_LOOKBACK) or []
-        return [d for d in dates if d not in existing]
-    last = max(existing)
-    if last >= target:
-        return []
-    out: list[str] = []
-    cur = tc.next_trade_date(last)
-    guard = 0
-    while cur and cur <= target and guard < _AMOUNT_PCT_LOOKBACK + 5:
-        if cur not in existing:
-            out.append(cur)
-        cur = tc.next_trade_date(cur)
-        guard += 1
-    return out
+    want = tc.trade_dates_ending_at(target, _AMOUNT_PCT_LOOKBACK) or []
+    return [d for d in want if d not in existing]
 
 
 def refresh_amount(
@@ -621,6 +609,9 @@ def refresh_amount(
         missing = _missing_amount_dates(target, existing)
         if not incremental and not force_full:
             missing = missing or _missing_amount_dates(target, {})
+
+        # 优先补近端（算当日量能分位更有用），再往旧补
+        missing = sorted(missing, reverse=True)
 
         fetched = 0
         for date in missing:
@@ -661,24 +652,43 @@ def amount_needs_refresh() -> Optional[str]:
     last = str(rows[-1].get("date") or "")
     if last < target:
         return f"成交额止于 {last}，落后 {target}"
+    if len(rows) < _AMOUNT_MA_WINDOW:
+        return f"成交额仅 {len(rows)} 日，未满 {_AMOUNT_MA_WINDOW} 日均窗"
+    # 窗口内仍有空洞时继续补（分位用 ~220 日）
+    existing = {
+        str(r["date"]): float(r["amount_yi"])
+        for r in rows
+        if r.get("date") and r.get("amount_yi") is not None
+    }
+    missing = _missing_amount_dates(target, existing)
+    if missing:
+        return f"成交额窗口内仍缺 {len(missing)} 日"
     return None
 
 
 # ------------------------------------------------------------------ 涨停三池摘要（给分位 enrich）
 def zt_summary_via_aktools(date: str) -> Optional[dict[str, Any]]:
-    """用 AKTools 按日取涨停/炸板池，算出 highest + broken_rate。失败返回 None。"""
+    """用 AKTools 按日取涨停/炸板池，算出 highest + broken_rate。失败返回 None。
+
+    东财涨停池历史窗口很短（通常仅近十余个交易日）；更早日期常返回空列表。
+    炸板池单独请求：失败时仍可用涨停池算最高板，炸板率留空。
+    """
     if not akc.available():
         return None
     d = _ymd_compact(date)
     try:
         zt = akc.public("stock_zt_pool_em", date=d)
-        zb = akc.public("stock_zt_pool_zbgc_em", date=d)
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(zt, list) or not zt:
         return None
-    if not isinstance(zb, list):
-        zb = []
+    zb: Optional[list] = None
+    try:
+        zb_raw = akc.public("stock_zt_pool_zbgc_em", date=d)
+        if isinstance(zb_raw, list):
+            zb = zb_raw
+    except Exception:  # noqa: BLE001
+        zb = None
     highest = 0
     for row in zt:
         if not isinstance(row, dict):
@@ -689,13 +699,17 @@ def zt_summary_via_aktools(date: str) -> Optional[dict[str, Any]]:
             b = 0
         if b > highest:
             highest = b
-    n_zt, n_zb = len(zt), len(zb)
-    br = round(n_zb / (n_zt + n_zb), 3) if (n_zt + n_zb) else None
+    n_zt = len(zt)
+    n_zb = len(zb) if zb is not None else 0
+    if zb is None:
+        br = None
+    else:
+        br = round(n_zb / (n_zt + n_zb), 3) if (n_zt + n_zb) else None
     return {
         "highest": highest or None,
         "broken_rate": br,
         "limit_up": n_zt,
-        "broken": n_zb,
+        "broken": n_zb if zb is not None else None,
         "em_ok": True,
         "source": "aktools",
     }

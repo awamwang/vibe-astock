@@ -39,11 +39,19 @@ class TestMarketSeriesEnsure:
         monkeypatch.setattr(ms, "_DB_PATH", str(tmp_path / "series.db"))
         margin_path = tmp_path / "margin_sse.json"
         index_path = tmp_path / "sh000001.json"
+        amount_path = tmp_path / "market_amount.json"
         monkeypatch.setattr(ms, "_MARGIN_PATH", str(margin_path))
         monkeypatch.setattr(ms, "_INDEX_PATH", str(index_path))
+        monkeypatch.setattr(ms, "_AMOUNT_PATH", str(amount_path))
         monkeypatch.setattr(ms, "_target_trade_date", lambda: "2026-08-21")
+        monkeypatch.setattr(ms, "_missing_amount_dates", lambda _t, _e: [])
         ms._save_json(str(margin_path), [{"date": "2026-08-21", "margin_balance": 1.0, "margin_chg": 0.0}])
         ms._save_json(str(index_path), [{"date": "2026-08-21", "close": 1.0, "pct": 0.0}])
+        ms._save_json(
+            str(amount_path),
+            [{"date": f"2026-07-{i:02d}", "amount_yi": 100.0 + i} for i in range(1, 22)]
+            + [{"date": "2026-08-21", "amount_yi": 150.0}],
+        )
         out = ms.ensure_fresh()
         assert out["skipped"] is True
         assert out["ok"] is True
@@ -208,3 +216,26 @@ class TestMarketSeriesEnsure:
         assert row is not None
         assert row["margin_balance"] == 1.0
         assert (tmp_path / "series.db").is_file()
+
+
+@pytest.mark.unit
+class TestZtSummaryViaAktools:
+    def test_zb_failure_still_returns_highest(self, monkeypatch):
+        monkeypatch.setattr(ms.akc, "available", lambda timeout=2.0: True)
+
+        def fake_public(item_id, **params):
+            if item_id == "stock_zt_pool_em":
+                return [{"连板数": 3}, {"连板数": 5}, {"连板数": 2}]
+            raise RuntimeError("zb boom")
+
+        monkeypatch.setattr(ms.akc, "public", fake_public)
+        out = ms.zt_summary_via_aktools("2026-08-21")
+        assert out is not None
+        assert out["highest"] == 5
+        assert out["broken_rate"] is None
+        assert out["em_ok"] is True
+
+    def test_empty_zt_returns_none(self, monkeypatch):
+        monkeypatch.setattr(ms.akc, "available", lambda timeout=2.0: True)
+        monkeypatch.setattr(ms.akc, "public", lambda *_a, **_k: [])
+        assert ms.zt_summary_via_aktools("2025-09-18") is None

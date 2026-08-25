@@ -680,6 +680,8 @@ export interface SentimentSMethod {
 export interface SentimentSSeriesMeta {
   days: number;
   enriched_days: number;
+  miss_days?: number;
+  pending_days?: number;
   first?: string | null;
   last?: string | null;
   updated_at?: string | null;
@@ -708,6 +710,8 @@ export interface SentimentSConfig {
 export interface SentimentSRefreshResult {
   ok: boolean;
   enriched_this_run: number;
+  missed_this_run?: number;
+  tried_this_run?: number;
   meta: SentimentSSeriesMeta;
   updated_at?: string;
   margin_joined?: number;

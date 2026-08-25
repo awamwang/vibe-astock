@@ -88,7 +88,77 @@ class TestPercentileScore:
 
 
 @pytest.mark.unit
-class TestFusionIntelScore:
+class TestRefreshSeriesEnrichOrder:
+    def test_newest_first_and_bulk_miss(self, iso_cfg, monkeypatch):
+        """从新往旧补；成功后更早空窗直接记 miss，避免卡在旧日。"""
+        qcj = [
+            {"date": "2026-08-01", "qcj_temp": 10, "limit_up": 20, "limit_down": 5, "consec_boards": 1},
+            {"date": "2026-08-10", "qcj_temp": 20, "limit_up": 30, "limit_down": 4, "consec_boards": 2},
+            {"date": "2026-08-20", "qcj_temp": 40, "limit_up": 50, "limit_down": 2, "consec_boards": 3},
+            {"date": "2026-08-25", "qcj_temp": 50, "limit_up": 60, "limit_down": 1, "consec_boards": 4},
+        ]
+        monkeypatch.setattr(ss, "_fetch_qcj_rows", lambda: qcj)
+
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        monkeypatch.setattr(ms, "margin_map", lambda: {})
+        monkeypatch.setattr(ms, "amount_metrics_map", lambda: {})
+
+        order: list[str] = []
+
+        def fake_enrich(d: str):
+            order.append(d)
+            if d >= "2026-08-20":
+                return {"highest": 5, "broken_rate": 0.2, "em_ok": True}
+            return {"highest": None, "broken_rate": None, "em_ok": False}
+
+        monkeypatch.setattr(ss, "_enrich_one", fake_enrich)
+        out = ss.refresh_series(enrich_limit=30)
+        assert order == ["2026-08-25", "2026-08-20", "2026-08-10", "2026-08-01"]
+        assert out["enriched_this_run"] == 2
+        meta = out["meta"]
+        assert meta["enriched_days"] == 2
+        assert meta["miss_days"] == 2
+        assert meta["pending_days"] == 0
+        rows = {r["date"]: r for r in ss._load_series()["rows"]}
+        assert rows["2026-08-25"]["em_ok"] is True
+        assert rows["2026-08-01"]["em_miss"] is True
+
+    def test_skip_em_miss_outside_recent_window(self, iso_cfg, monkeypatch):
+        """非近窗的 em_miss 不再重试。"""
+        qcj = [
+            {"date": f"2026-07-{d:02d}", "qcj_temp": 10, "limit_up": 20, "limit_down": 5, "consec_boards": 1}
+            for d in range(1, 11)
+        ] + [
+            {"date": f"2026-08-{d:02d}", "qcj_temp": 40, "limit_up": 50, "limit_down": 2, "consec_boards": 3}
+            for d in range(18, 26)
+        ]
+        monkeypatch.setattr(ss, "_fetch_qcj_rows", lambda: qcj)
+        from duanxian import market_series as ms
+
+        monkeypatch.setattr(ms, "ensure_fresh", lambda: {"ok": True, "skipped": True})
+        monkeypatch.setattr(ms, "margin_map", lambda: {})
+        monkeypatch.setattr(ms, "amount_metrics_map", lambda: {})
+        saved = []
+        for row in qcj:
+            if row["date"].startswith("2026-07"):
+                saved.append({**row, "em_ok": False, "em_miss": True, "highest": None, "broken_rate": None})
+            else:
+                saved.append({**row, "em_ok": True, "em_miss": False, "highest": 5, "broken_rate": 0.1})
+        ss._save_series(saved)
+        called: list[str] = []
+        monkeypatch.setattr(
+            ss,
+            "_enrich_one",
+            lambda d: called.append(d) or {"highest": 5, "broken_rate": 0.1, "em_ok": True},
+        )
+        out = ss.refresh_series(enrich_limit=30)
+        assert called == []
+        assert out["enriched_this_run"] == 0
+        assert out["meta"]["enriched_days"] == 8
+        assert out["meta"]["miss_days"] == 10
+
     def test_score_from_cache(self, iso_cfg, monkeypatch):
         ss.set_method(ss.METHOD_FUSION, fusionintel_api_key="sk_unit_test")
         monkeypatch.setattr(
