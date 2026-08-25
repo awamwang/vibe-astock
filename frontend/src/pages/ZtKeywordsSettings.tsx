@@ -733,7 +733,8 @@ export function ZtKeywordsSettings() {
           <SlidersHorizontal className="h-4 w-4 text-primary" /> 定档阈值
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          一、硬规则与二、S 区间的判定数字。右侧为最近一场读数，方便对照调参。
+          按情绪档位分组（退潮 → 过热 → 高潮 → 冰点 → S 区间），与定档判定顺序一致。
+          炸板率、赚钱中位等共用读数只出现一次，说明里会注明兼用于哪一档。右侧为最近一场读数。
           {thCfg?.reference?.date ? `（对照日 ${thCfg.reference.date}` : ""}
           {thCfg?.reference?.reason ? ` · ${thCfg.reference.reason}` : ""}
           {thCfg?.reference?.date ? "）" : ""}
