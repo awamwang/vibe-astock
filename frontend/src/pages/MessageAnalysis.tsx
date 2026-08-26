@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check,
+  ExternalLink, Sparkles, Check, Newspaper,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { cn } from "@/lib/utils";
 import {
@@ -20,6 +18,46 @@ const SORT_OPTIONS = [
   { value: "impact_level", label: "影响级别" },
   { value: "title", label: "标题" },
 ];
+
+const IMPACT_BADGE: Record<string, string> = {
+  critical: "bg-danger/15 text-danger border-danger/30",
+  high: "bg-primary/15 text-primary border-primary/30",
+  medium: "bg-muted text-foreground border-border",
+  low: "bg-muted/60 text-muted-foreground border-border/60",
+  noise: "bg-muted/40 text-muted-foreground border-border/40",
+};
+
+const selectCls =
+  "rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground";
+const inputCls =
+  "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">
+      {children}
+    </span>
+  );
+}
+
+function Badge({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
 
 export function MessageAnalysis() {
   const [sources, setSources] = useState<MessageSourceInfo[]>([]);
@@ -57,7 +95,7 @@ export function MessageAnalysis() {
         effect_status: effectStatus || undefined,
         sort,
         order,
-        limit: 80,
+        limit: 100,
       });
       setItems(data.items || []);
       setTotal(data.total || 0);
@@ -90,16 +128,16 @@ export function MessageAnalysis() {
     setPreviewLoading(true);
     setErr(null);
     try {
-      let items: Record<string, unknown>[] | undefined;
+      let parsedItems: Record<string, unknown>[] | undefined;
       if (ingestFormat !== "plain" && ingestText.trim()) {
-        items = JSON.parse(ingestText) as Record<string, unknown>[];
-        if (!Array.isArray(items)) items = [items];
+        parsedItems = JSON.parse(ingestText) as Record<string, unknown>[];
+        if (!Array.isArray(parsedItems)) parsedItems = [parsedItems];
       }
       const rows = await api.messageIngestPreview({
         format: ingestFormat,
         source_id: ingestFormat === "calendar" ? "calendar" : ingestFormat === "structured" ? "structured" : "paste",
         text: ingestFormat === "plain" ? ingestText : undefined,
-        items,
+        items: parsedItems,
         options: { split_mode: "auto" },
       });
       setDrafts(rows);
@@ -173,358 +211,404 @@ export function MessageAnalysis() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4 pb-16">
-      <PageHeader
-        title="消息分析"
-        subtitle="多源快讯归集与标注，辅助信息整理，不构成投资建议"
-      />
-      <Disclaimer />
-
-      {err && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-          {err}
+    <div className="w-full min-w-0 space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
+            <Newspaper className="h-6 w-6 text-primary" />
+            消息分析
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            多源快讯归集与标注 · 辅助信息整理，不构成投资建议
+            {xgbSource?.last_poll_at && ` · 选股宝同步 ${xgbSource.last_poll_at}`}
+          </p>
         </div>
-      )}
-      {pollMsg && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-          {pollMsg}
-        </div>
-      )}
-
-      <GlassCard className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-500" />
-            <input
-              className="w-full rounded-lg border border-zinc-700/60 bg-zinc-900/60 py-2 pl-9 pr-3 text-sm"
-              placeholder="搜索标题、摘要、关键词…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && loadList()}
-            />
-          </div>
-          <select
-            className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-2 py-2 text-sm"
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-          >
-            <option value="">全部来源</option>
-            {sources.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-          <select
-            className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-2 py-2 text-sm"
-            value={impactLevel}
-            onChange={(e) => setImpactLevel(e.target.value)}
-          >
-            <option value="">全部级别</option>
-            {Object.entries(IMPACT_LABEL).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-          <select
-            className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-2 py-2 text-sm"
-            value={effectStatus}
-            onChange={(e) => setEffectStatus(e.target.value)}
-          >
-            <option value="">全部生效</option>
-            {Object.entries(EFFECT_LABEL).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-          <select
-            className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-2 py-2 text-sm"
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
           <button
             type="button"
-            className="rounded-lg border border-zinc-600 px-2 py-2 text-sm hover:bg-zinc-800"
-            onClick={() => setOrder((o) => (o === "desc" ? "asc" : "desc"))}
-          >
-            {order === "desc" ? "↓" : "↑"}
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-lg bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
-            onClick={() => loadList()}
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            刷新
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600/80 px-3 py-2 text-sm hover:bg-indigo-600"
             onClick={pollXgb}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
           >
             <RefreshCw className="h-4 w-4" />
             拉选股宝
           </button>
-          {selectedIds.size > 0 && (
+          <button
+            type="button"
+            onClick={() => loadList()}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {loading ? "加载中…" : "刷新列表"}
+          </button>
+        </div>
+      </div>
+
+      <Disclaimer />
+
+      {err && (
+        <div className="glass rounded-xl px-4 py-3 text-sm text-danger">
+          {err}
+        </div>
+      )}
+      {pollMsg && (
+        <div className="glass rounded-xl border-l-4 border-l-success px-4 py-3 text-sm text-foreground">
+          {pollMsg}
+        </div>
+      )}
+
+      <section className="w-full min-w-0">
+        <div className="mb-2">
+          <SectionLabel>筛选 · Filter</SectionLabel>
+        </div>
+        <div className="glass w-full rounded-2xl p-4 lg:p-5">
+          <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <input
+                className={inputCls}
+                placeholder="搜索标题、摘要、关键词…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && loadList()}
+              />
+            </div>
+            <select className={selectCls} value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">全部来源</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+            <select className={selectCls} value={impactLevel} onChange={(e) => setImpactLevel(e.target.value)}>
+              <option value="">全部级别</option>
+              {Object.entries(IMPACT_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+            <select className={selectCls} value={effectStatus} onChange={(e) => setEffectStatus(e.target.value)}>
+              <option value="">全部生效</option>
+              {Object.entries(EFFECT_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+            <select className={selectCls} value={sort} onChange={(e) => setSort(e.target.value)}>
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-lg bg-violet-600/80 px-3 py-2 text-sm"
-              onClick={queueAnalyze}
+              className={cn(selectCls, "min-w-[44px] text-center")}
+              onClick={() => setOrder((o) => (o === "desc" ? "asc" : "desc"))}
+              title={order === "desc" ? "降序" : "升序"}
             >
-              <Sparkles className="h-4 w-4" />
-              分析 ({selectedIds.size})
+              {order === "desc" ? "↓" : "↑"}
             </button>
-          )}
-        </div>
-        {xgbSource && (
-          <p className="text-xs text-zinc-500">
-            选股宝轮询：{xgbSource.last_poll_at || "—"}
-            {xgbSource.last_error && (
-              <span className="text-amber-400 ml-2">最近错误：{xgbSource.last_error}</span>
-            )}
-          </p>
-        )}
-        <p className="text-xs text-zinc-500">共 {total} 条</p>
-      </GlassCard>
-
-      <GlassCard className="overflow-hidden">
-        <button
-          type="button"
-          className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium hover:bg-zinc-800/40"
-          onClick={() => setIngestOpen((v) => !v)}
-        >
-          <span className="inline-flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            录入消息
-          </span>
-          {ingestOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </button>
-        {ingestOpen && (
-          <div className="space-y-3 border-t border-zinc-800 px-4 py-3">
-            <div className="flex flex-wrap gap-2">
-              {(["plain", "structured", "calendar"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs border",
-                    ingestFormat === f ? "border-indigo-500 bg-indigo-500/20" : "border-zinc-700",
-                  )}
-                  onClick={() => setIngestFormat(f)}
-                >
-                  {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : "财经日历"}
-                </button>
-              ))}
-            </div>
-            <textarea
-              className="min-h-[120px] w-full rounded-lg border border-zinc-700/60 bg-zinc-900/60 p-3 text-sm font-mono"
-              placeholder={
-                ingestFormat === "plain"
-                  ? "粘贴大段文字，系统将按空行/分隔符拆分…"
-                  : ingestFormat === "calendar"
-                    ? '[{"title":"美联储议息","effective_at":"2026-09-17 02:00:00","content":"…"}]'
-                    : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
-              }
-              value={ingestText}
-              onChange={(e) => setIngestText(e.target.value)}
-            />
-            <div className="flex gap-2">
+            {selectedIds.size > 0 && (
               <button
                 type="button"
-                disabled={previewLoading || !ingestText.trim()}
-                className="rounded-lg bg-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
-                onClick={runPreview}
+                className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground"
+                onClick={queueAnalyze}
               >
-                {previewLoading ? <Loader2 className="h-4 w-4 animate-spin inline" /> : null}
-                预览拆分
+                <Sparkles className="h-4 w-4" />
+                分析 ({selectedIds.size})
               </button>
-              {drafts.length > 0 && (
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>共 <strong className="text-foreground">{total}</strong> 条</span>
+            {xgbSource?.last_error && (
+              <span className="text-danger">选股宝：{xgbSource.last_error}</span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="w-full min-w-0">
+        <div className="mb-2">
+          <SectionLabel>录入 · Ingest</SectionLabel>
+        </div>
+        <div className="glass overflow-hidden rounded-2xl">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between px-5 py-3.5 text-left text-sm font-semibold text-foreground hover:bg-muted/30"
+            onClick={() => setIngestOpen((v) => !v)}
+          >
+            <span className="inline-flex items-center gap-2">
+              <Plus className="h-4 w-4 text-primary" />
+              录入消息
+            </span>
+            {ingestOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {ingestOpen && (
+            <div className="space-y-4 border-t border-border/60 px-5 py-4">
+              <div className="flex flex-wrap gap-2">
+                {(["plain", "structured", "calendar"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                      ingestFormat === f
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => setIngestFormat(f)}
+                  >
+                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : "财经日历"}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="min-h-[120px] w-full rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"
+                placeholder={
+                  ingestFormat === "plain"
+                    ? "粘贴大段文字，系统将按空行/分隔符拆分…"
+                    : ingestFormat === "calendar"
+                      ? '[{"title":"美联储议息","effective_at":"2026-09-17 02:00:00","content":"…"}]'
+                      : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
+                }
+                value={ingestText}
+                onChange={(e) => setIngestText(e.target.value)}
+              />
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={commitLoading}
-                  className="rounded-lg bg-emerald-600/80 px-3 py-2 text-sm disabled:opacity-40"
-                  onClick={runCommit}
+                  disabled={previewLoading || !ingestText.trim()}
+                  className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground disabled:opacity-40"
+                  onClick={runPreview}
                 >
-                  确认入库 ({drafts.length})
+                  {previewLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
+                  预览拆分
                 </button>
-              )}
-            </div>
-            {drafts.length > 0 && (
-              <div className="max-h-64 overflow-auto rounded border border-zinc-800">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-zinc-900 text-zinc-400">
-                    <tr>
-                      <th className="p-2 text-left">标题</th>
-                      <th className="p-2 text-left">内容预览</th>
-                      <th className="p-2 w-8" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {drafts.map((d) => (
-                      <tr key={d.draft_key} className="border-t border-zinc-800/80">
-                        <td className="p-2 align-top">{d.title || "—"}</td>
-                        <td className="p-2 align-top text-zinc-400">{d.content.slice(0, 120)}</td>
-                        <td className="p-2 align-top">
-                          <button type="button" onClick={() => removeDraft(d.draft_key)}>
-                            <Trash2 className="h-3.5 w-3.5 text-zinc-500 hover:text-red-400" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </GlassCard>
-
-      <div className="grid gap-4 lg:grid-cols-5">
-        <GlassCard className="lg:col-span-3 overflow-hidden">
-          <div className="max-h-[calc(100vh-280px)] overflow-auto">
-            {items.length === 0 && !loading && (
-              <p className="p-6 text-center text-sm text-zinc-500">暂无消息，可粘贴录入或拉取选股宝</p>
-            )}
-            <ul className="divide-y divide-zinc-800/80">
-              {items.map((item) => (
-                <li
-                  key={item.id}
-                  className={cn(
-                    "cursor-pointer px-4 py-3 hover:bg-zinc-800/30",
-                    selected?.id === item.id && "bg-indigo-500/10",
-                  )}
-                  onClick={() => setSelected(item)}
-                >
-                  <div className="flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={selectedIds.has(item.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleSelect(item.id);
-                      }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {item.marks.includes("highlight") && (
-                          <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-300">标红</span>
-                        )}
-                        <span className="font-medium text-sm truncate">{item.title || item.summary || "—"}</span>
-                        <span className="text-[10px] text-zinc-500">{item.source_label}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-zinc-400 line-clamp-2">{item.summary || item.detail}</p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px]">
-                          {IMPACT_LABEL[item.impact_level] || item.impact_level}
-                        </span>
-                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px]">
-                          {EFFECT_LABEL[item.effect_status] || item.effect_status}
-                        </span>
-                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px]">
-                          {FRESHNESS_LABEL[item.freshness] || item.freshness}
-                        </span>
-                        {item.keywords.slice(0, 3).map((k) => (
-                          <span key={k} className="rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] text-indigo-200">
-                            {k}
-                          </span>
-                        ))}
-                        {item.targets.slice(0, 4).map((t, i) => (
-                          <span
-                            key={`${t.name}-${i}`}
-                            className="rounded bg-amber-900/30 px-1.5 py-0.5 text-[10px] text-amber-100"
-                            title={t.code ? `代码：${t.code}` : undefined}
-                            data-code={t.code || undefined}
-                          >
-                            {targetTitle(t)}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="mt-1 text-[10px] text-zinc-600">{item.produced_at}</p>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </GlassCard>
-
-        <GlassCard className="lg:col-span-2 p-4 space-y-3 max-h-[calc(100vh-280px)] overflow-auto">
-          {!selected ? (
-            <p className="text-sm text-zinc-500">选择一条消息查看详情</p>
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="text-sm font-semibold leading-snug">{selected.title || "—"}</h3>
-                {selected.status !== "confirmed" && (
+                {drafts.length > 0 && (
                   <button
                     type="button"
-                    className="shrink-0 inline-flex items-center gap-1 rounded bg-emerald-700/60 px-2 py-1 text-xs"
-                    onClick={() => confirmItem(selected)}
+                    disabled={commitLoading}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+                    onClick={runCommit}
                   >
-                    <Check className="h-3 w-3" /> 确认
+                    确认入库 ({drafts.length})
                   </button>
                 )}
               </div>
-              <p className="text-xs text-zinc-500">
-                {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
-              </p>
-              {selected.url && (
-                <a
-                  href={selected.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-indigo-300 hover:underline"
-                >
-                  <ExternalLink className="h-3 w-3" /> 链接
-                </a>
-              )}
-              {selected.marks.length > 0 && (
-                <p className="text-xs text-zinc-400">标记：{selected.marks.join("、")}</p>
-              )}
-              {selected.keywords.length > 0 && (
-                <p className="text-xs text-zinc-400">关键词：{selected.keywords.join("、")}</p>
-              )}
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-1">摘要</p>
-                <p className="text-sm">{selected.summary || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-1">详情</p>
-                <p className="text-sm whitespace-pre-wrap text-zinc-300">{selected.detail || "—"}</p>
-              </div>
-              <div className="text-xs space-y-1 text-zinc-400">
-                <p>产生：{selected.produced_at}</p>
-                <p>
-                  生效：
-                  {selected.effective_mode === "scheduled" && selected.effective_at
-                    ? selected.effective_at
-                    : "立即（回测按产生时间）"}
-                </p>
-                <p>级别：{IMPACT_LABEL[selected.impact_level]}</p>
-                <p>新旧：{FRESHNESS_LABEL[selected.freshness]}</p>
-                <p>炒作：{EFFECT_LABEL[selected.effect_status]}</p>
-              </div>
-              {selected.targets.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-zinc-400 mb-1">影响标的</p>
-                  <div className="flex flex-wrap gap-1">
-                    {selected.targets.map((t, i) => (
-                      <span
-                        key={i}
-                        className="rounded border border-zinc-700 px-2 py-0.5 text-xs"
-                        title={t.code ? `代码：${t.code}` : t.kind}
-                      >
-                        {targetTitle(t)}
-                      </span>
-                    ))}
-                  </div>
+              {drafts.length > 0 && (
+                <div className="max-h-64 overflow-auto rounded-xl border border-border/60">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th className="p-3 text-left">标题</th>
+                        <th className="p-3 text-left">内容预览</th>
+                        <th className="w-10 p-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drafts.map((d) => (
+                        <tr key={d.draft_key} className="border-t border-border/60">
+                          <td className="p-3 align-top font-medium text-foreground">{d.title || "—"}</td>
+                          <td className="p-3 align-top text-muted-foreground">{d.content.slice(0, 160)}</td>
+                          <td className="p-3 align-top">
+                            <button type="button" onClick={() => removeDraft(d.draft_key)} aria-label="删除">
+                              <Trash2 className="h-4 w-4 text-muted-foreground hover:text-danger" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
-            </>
+            </div>
           )}
-        </GlassCard>
-      </div>
+        </div>
+      </section>
+
+      <section className="w-full min-w-0">
+        <div className="mb-2">
+          <SectionLabel>消息列表 · Messages</SectionLabel>
+        </div>
+        <div className="grid w-full min-w-0 gap-4 xl:grid-cols-12">
+          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-7">
+            <div className="max-h-[calc(100vh-220px)] overflow-auto">
+              {items.length === 0 && !loading && (
+                <p className="p-8 text-center text-sm text-muted-foreground">
+                  暂无消息，可粘贴录入或拉取选股宝
+                </p>
+              )}
+              {loading && items.length === 0 && (
+                <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  加载消息…
+                </div>
+              )}
+              <ul className="divide-y divide-border/60">
+                {items.map((item) => (
+                  <li
+                    key={item.id}
+                    className={cn(
+                      "cursor-pointer px-5 py-4 transition-colors hover:bg-muted/25",
+                      selected?.id === item.id && "bg-primary/8 border-l-4 border-l-primary",
+                    )}
+                    onClick={() => setSelected(item)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4 accent-[hsl(var(--primary))]"
+                        checked={selectedIds.has(item.id)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(item.id);
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {item.marks.includes("highlight") && (
+                            <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
+                          )}
+                          <span className="text-[15px] font-semibold leading-snug text-foreground">
+                            {item.title || item.summary || "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{item.source_label}</span>
+                        </div>
+                        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground line-clamp-2">
+                          {item.summary || item.detail}
+                        </p>
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          <Badge className={IMPACT_BADGE[item.impact_level] || IMPACT_BADGE.medium}>
+                            {IMPACT_LABEL[item.impact_level] || item.impact_level}
+                          </Badge>
+                          <Badge className="border-border bg-muted/50 text-foreground">
+                            {EFFECT_LABEL[item.effect_status] || item.effect_status}
+                          </Badge>
+                          <Badge className="border-border bg-muted/30 text-muted-foreground">
+                            {FRESHNESS_LABEL[item.freshness] || item.freshness}
+                          </Badge>
+                          {item.keywords.slice(0, 4).map((k) => (
+                            <Badge key={k} className="border-primary/25 bg-primary/10 text-primary">
+                              {k}
+                            </Badge>
+                          ))}
+                          {item.targets.slice(0, 5).map((t, i) => (
+                            <Badge
+                              key={`${t.name}-${i}`}
+                              className="border-border bg-background text-foreground"
+                              title={t.code ? `代码：${t.code}` : undefined}
+                            >
+                              {targetTitle(t)}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-xs tabular-nums text-muted-foreground">{item.produced_at}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="glass min-w-0 rounded-2xl p-5 xl:col-span-5 max-h-[calc(100vh-220px)] overflow-auto">
+            {!selected ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">选择左侧消息查看详情</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3 border-b border-border/60 pb-4">
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-bold leading-snug text-foreground">
+                      {selected.title || "—"}
+                    </h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
+                    </p>
+                  </div>
+                  {selected.status !== "confirmed" && (
+                    <button
+                      type="button"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                      onClick={() => confirmItem(selected)}
+                    >
+                      <Check className="h-3.5 w-3.5" /> 确认
+                    </button>
+                  )}
+                </div>
+
+                {selected.url && (
+                  <a
+                    href={selected.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-4 w-4" /> 原文链接
+                  </a>
+                )}
+
+                {(selected.marks.length > 0 || selected.keywords.length > 0) && (
+                  <div className="flex flex-wrap gap-2">
+                    {selected.marks.map((m) => (
+                      <Badge key={m} className="border-danger/30 bg-danger/10 text-danger">{m}</Badge>
+                    ))}
+                    {selected.keywords.map((k) => (
+                      <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
+                    ))}
+                  </div>
+                )}
+
+                <div>
+                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">摘要</p>
+                  <p className="text-sm leading-relaxed text-foreground">{selected.summary || "—"}</p>
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">详情</p>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {selected.detail || "—"}
+                  </p>
+                </div>
+
+                <div className="glass rounded-xl bg-muted/20 p-4 text-sm">
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                    <dt className="text-muted-foreground">产生</dt>
+                    <dd className="font-medium tabular-nums text-foreground">{selected.produced_at}</dd>
+                    <dt className="text-muted-foreground">生效</dt>
+                    <dd className="text-foreground">
+                      {selected.effective_mode === "scheduled" && selected.effective_at
+                        ? selected.effective_at
+                        : "立即（回测按产生时间）"}
+                    </dd>
+                    <dt className="text-muted-foreground">级别</dt>
+                    <dd className="text-foreground">{IMPACT_LABEL[selected.impact_level]}</dd>
+                    <dt className="text-muted-foreground">新旧</dt>
+                    <dd className="text-foreground">{FRESHNESS_LABEL[selected.freshness]}</dd>
+                    <dt className="text-muted-foreground">炒作</dt>
+                    <dd className="text-foreground">{EFFECT_LABEL[selected.effect_status]}</dd>
+                  </dl>
+                </div>
+
+                {selected.targets.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      影响标的
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {selected.targets.map((t, i) => (
+                        <Badge
+                          key={i}
+                          className="border-border bg-background px-2.5 py-1 text-sm text-foreground"
+                          title={t.code ? `代码：${t.code}` : t.kind}
+                        >
+                          {targetTitle(t)}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

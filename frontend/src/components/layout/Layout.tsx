@@ -48,7 +48,7 @@ function MainShell() {
   const panel = useStockPanelOptional();
   const open = !!panel?.target;
   const { pathname } = useLocation();
-  const widePage = pathname === "/heat";
+  const widePage = pathname === "/heat" || pathname === "/messages";
 
   return (
     <main className="flex min-w-0 flex-1 overflow-hidden">
