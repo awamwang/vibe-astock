@@ -8,41 +8,49 @@ import {
   type WeeklyMetricChart, type WeeklyMetricCharts, type WeeklyMetricSeries,
 } from "@/lib/agent";
 
-/** 各指标固定线条色：正面暖色，负面冷绿。key 与后端 series.key 对齐。 */
-const METRIC_LINE_COLOR: Record<string, string> = {
-  // 暖色 · 正面 / 偏多
-  temperature: "--danger",
-  qcj_temp: "--warning",
-  activity_pct: "--primary",
-  up: "--danger",
-  deep_up_5: "--warning",
-  limit_up: "--danger",
-  lianban_count: "--warning",
-  highest_board: "hsl(18 88% 56%)",
-  never_broken_rate: "--warning",
-  promotion_rate: "--danger",
-  open_success_rate: "--warning",
-  close_success_rate: "--danger",
-  zt_premium_pct: "--primary",
-  money_effect_median: "--danger",
-  consec_premium_median: "--warning",
-  amount_yi: "--warning",
-  m_net_yi: "--primary",
-  qcj_level_ord: "--warning",
-  speculation_ord: "--danger",
-  // 冷色 · 负面 / 偏空
-  down: "--success",
-  deep_down_5: "hsl(158 42% 40%)",
-  limit_down: "--success",
-  broken_rate: "--success",
-  loss_effect_rate: "hsl(172 38% 36%)",
-};
+/** 偏空指标：走冷绿系 */
+const NEGATIVE_SERIES_KEYS = new Set([
+  "down",
+  "deep_down_5",
+  "limit_down",
+  "broken_rate",
+  "loss_effect_rate",
+]);
 
-function resolveSeriesColor(key: string): string {
-  const token = METRIC_LINE_COLOR[key];
-  if (!token) return cssVarHsl("--muted-foreground");
-  if (token.startsWith("hsl")) return token;
-  return cssVarHsl(token);
+/** 正面暖色系：红→橙→黄→紫，同图内依次取用，保证可区分 */
+const WARM_SERIES_PALETTE = [
+  "hsl(0 74% 58%)",
+  "hsl(18 88% 54%)",
+  "hsl(32 90% 50%)",
+  "hsl(42 92% 48%)",
+  "hsl(52 84% 44%)",
+  "hsl(270 52% 58%)",
+  "hsl(300 45% 52%)",
+];
+
+/** 偏空冷绿系：同图内依次取用 */
+const COOL_SERIES_PALETTE = [
+  "hsl(145 58% 42%)",
+  "hsl(158 42% 40%)",
+  "hsl(168 40% 38%)",
+  "hsl(172 38% 36%)",
+];
+
+/** 按单张图内的系列顺序分配不重复颜色 */
+function resolveChartSeriesColors(seriesList: WeeklyMetricSeries[]): Map<string, string> {
+  const colors = new Map<string, string>();
+  let warmIdx = 0;
+  let coolIdx = 0;
+  for (const s of seriesList) {
+    if (NEGATIVE_SERIES_KEYS.has(s.key)) {
+      colors.set(s.key, COOL_SERIES_PALETTE[coolIdx % COOL_SERIES_PALETTE.length]);
+      coolIdx += 1;
+    } else {
+      colors.set(s.key, WARM_SERIES_PALETTE[warmIdx % WARM_SERIES_PALETTE.length]);
+      warmIdx += 1;
+    }
+  }
+  return colors;
 }
 
 function shortDate(d: string) {
@@ -106,8 +114,10 @@ function buildOption(chart: WeeklyMetricChart, days: string[]): EChartsOption | 
   const isLine = chart.chart_type === "line";
   const axes = yAxisDefs(chart);
 
+  const seriesColors = resolveChartSeriesColors(seriesList);
+
   const eSeries: (LineSeriesOption | BarSeriesOption)[] = seriesList.map((s) => {
-    const color = resolveSeriesColor(s.key);
+    const color = seriesColors.get(s.key) ?? cssVarHsl("--muted-foreground");
     const vals = safeArray<number | null>(s.values).map((v) => finite(v));
     const data = vals.map((v) => (v == null ? null : toPlotValue(v, s)));
     const base = {
