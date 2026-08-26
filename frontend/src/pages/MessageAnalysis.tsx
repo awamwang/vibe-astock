@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, Radio,
+  ExternalLink, Sparkles, Check, Newspaper, Radio, X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,12 @@ import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 
 const PAGE_SIZE = 100;
+
+const notify = {
+  success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
+  info: (msg: string) => toast.info(msg, { position: "top-center", duration: 3500 }),
+  error: (msg: string) => toast.error(msg, { position: "top-center", duration: 5000 }),
+};
 
 const SORTABLE_COLS = new Set(["produced_at", "title", "impact_level", "effect_status"]);
 
@@ -236,13 +243,83 @@ function MessageTargets({ item, max = 4 }: { item: AnalyzedMessage; max?: number
   );
 }
 
+function DetailSection({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+      {children}
+    </div>
+  );
+}
+
+function CollapsibleRawSection({
+  rawMessages,
+  loading,
+}: {
+  rawMessages: RawMessage[];
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="border-t border-border/60 pt-4">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">原始消息</span>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          {!loading && rawMessages.length > 0 && (
+            <span>{rawMessages.length} 条</span>
+          )}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              加载中…
+            </div>
+          ) : rawMessages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">未找到关联的原始消息</p>
+          ) : (
+            <div className="space-y-3">
+              {rawMessages.map((raw, i) => (
+                <div
+                  key={raw.id}
+                  className="rounded-xl border border-border/60 bg-muted/15 p-3"
+                >
+                  {rawMessages.length > 1 && (
+                    <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+                      原始 #{i + 1}
+                      {raw.title ? ` · ${raw.title}` : ""}
+                    </p>
+                  )}
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {raw.content || "—"}
+                  </p>
+                  <p className="mt-2 text-[11px] tabular-nums text-muted-foreground">
+                    来源 {raw.source_label || raw.source_id} · {raw.produced_at}
+                    {raw.external_ref ? ` · ref ${raw.external_ref}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageAnalysis() {
   const [sources, setSources] = useState<MessageSourceInfo[]>([]);
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [pollMsg, setPollMsg] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [pollingCls, setPollingCls] = useState(false);
   const pollInFlight = useRef(false);
@@ -276,7 +353,6 @@ export function MessageAnalysis() {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    setErr(null);
     try {
       const data = await api.messageAnalyzedList({
         q: q.trim() || undefined,
@@ -292,7 +368,7 @@ export function MessageAnalysis() {
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "加载失败");
+      notify.error(e instanceof ApiError ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
@@ -328,7 +404,7 @@ export function MessageAnalysis() {
       setSelected(detail);
       setRawMessages(detail.raw_messages || []);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "加载详情失败");
+      notify.error(e instanceof ApiError ? e.message : "加载详情失败");
     } finally {
       setDetailLoading(false);
     }
@@ -353,41 +429,44 @@ export function MessageAnalysis() {
 
   const runPreview = async () => {
     setPreviewLoading(true);
-    setErr(null);
     try {
       let parsedItems: Record<string, unknown>[] | undefined;
-      if (ingestFormat !== "plain" && ingestText.trim()) {
+      if (ingestFormat === "structured" && ingestText.trim()) {
         parsedItems = JSON.parse(ingestText) as Record<string, unknown>[];
         if (!Array.isArray(parsedItems)) parsedItems = [parsedItems];
       }
       const rows = await api.messageIngestPreview({
         format: ingestFormat,
         source_id: ingestFormat === "calendar" ? "calendar" : ingestFormat === "structured" ? "structured" : "paste",
-        text: ingestFormat === "plain" ? ingestText : undefined,
+        text: ingestFormat !== "structured" ? ingestText : undefined,
         items: parsedItems,
         options: { split_mode: "auto" },
       });
       setDrafts(rows);
+      notify.success(`解析成功，共 ${rows.length} 条`);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "解析预览失败");
+      notify.error(e instanceof ApiError ? e.message : "解析预览失败");
     } finally {
       setPreviewLoading(false);
     }
   };
 
+  const closeIngest = () => setIngestOpen(false);
+
   const runCommit = async () => {
     if (!drafts.length) return;
     setCommitLoading(true);
-    setErr(null);
     try {
+      const n = drafts.length;
       await api.messageIngestCommit(drafts);
       setDrafts([]);
       setIngestText("");
       setIngestOpen(false);
+      notify.success(`已入库 ${n} 条`);
       await loadList();
       await loadSources();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "入库失败");
+      notify.error(e instanceof ApiError ? e.message : "入库失败");
     } finally {
       setCommitLoading(false);
     }
@@ -399,20 +478,17 @@ export function MessageAnalysis() {
     if (pollInFlight.current) return;
     pollInFlight.current = true;
     setPollingCls(true);
-    if (!opts?.silent) setPollMsg(null);
     try {
       const r = await api.messagePollCls();
       if (r.inserted > 0) {
-        setPollMsg(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
+        notify.success(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
         await loadList();
         await loadSources();
       } else if (!opts?.silent) {
-        setPollMsg(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增`);
+        notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增`);
       }
     } catch (e) {
-      if (!opts?.silent) {
-        setPollMsg(e instanceof ApiError ? e.message : "财联社同步失败");
-      }
+      notify.error(e instanceof ApiError ? e.message : "财联社同步失败");
     } finally {
       pollInFlight.current = false;
       setPollingCls(false);
@@ -429,15 +505,14 @@ export function MessageAnalysis() {
   }, [autoRefresh, pollCls]);
 
   const pollXgb = async () => {
-    setPollMsg(null);
     try {
       const r = await api.messagePollXgb();
       const synced = await api.messageXgbResyncTargets();
-      setPollMsg(`拉取 ${r.fetched} 条，入库/更新 ${r.inserted} 条，同步标的 ${synced.synced} 条`);
+      notify.success(`拉取 ${r.fetched} 条，入库/更新 ${r.inserted} 条，同步标的 ${synced.synced} 条`);
       await loadList();
       await loadSources();
     } catch (e) {
-      setPollMsg(e instanceof ApiError ? e.message : "轮询失败");
+      notify.error(e instanceof ApiError ? e.message : "轮询失败");
     }
   };
 
@@ -453,12 +528,11 @@ export function MessageAnalysis() {
   const runAnalyze = async (ids: string[]) => {
     if (!ids.length) return;
     if (!hasLlm()) {
-      setErr("请先在「接入 AI」配置模型后再分析");
+      notify.error("请先在「接入 AI」配置模型后再分析");
       return;
     }
     setAnalyzing(true);
     setAnalyzeProgress(null);
-    setErr(null);
     try {
       const result = await messageAnalyzeRun(ids, [], {
         onProgress: (p) => setAnalyzeProgress(`${p.current} / ${p.total}`),
@@ -470,14 +544,14 @@ export function MessageAnalysis() {
           });
         },
       });
-      setPollMsg(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+      notify.success(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
       if (result.failed) {
-        setErr(result.errors.map((e) => `${e.id}: ${e.message}`).join("；"));
+        notify.error(result.errors.map((e) => `${e.id}: ${e.message}`).join("；"));
       }
       setSelectedIds(new Set());
       await loadList();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "AI 分析失败");
+      notify.error(e instanceof ApiError ? e.message : "AI 分析失败");
     } finally {
       setAnalyzing(false);
       setAnalyzeProgress(null);
@@ -495,7 +569,7 @@ export function MessageAnalysis() {
         void loadDetail(updated);
       }
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "更新失败");
+      notify.error(e instanceof ApiError ? e.message : "更新失败");
     }
   };
 
@@ -552,6 +626,14 @@ export function MessageAnalysis() {
           </button>
           <button
             type="button"
+            onClick={() => setIngestOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
+          >
+            <Plus className="h-4 w-4 text-primary" />
+            录入消息
+          </button>
+          <button
+            type="button"
             onClick={() => loadList()}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
@@ -563,17 +645,6 @@ export function MessageAnalysis() {
       </div>
 
       <Disclaimer />
-
-      {err && (
-        <div className="glass rounded-xl px-4 py-3 text-sm text-danger">
-          {err}
-        </div>
-      )}
-      {pollMsg && (
-        <div className="glass rounded-xl border-l-4 border-l-success px-4 py-3 text-sm text-foreground">
-          {pollMsg}
-        </div>
-      )}
 
       <section className="w-full min-w-0">
         <div className="mb-2">
@@ -668,105 +739,6 @@ export function MessageAnalysis() {
       </section>
 
       <section className="w-full min-w-0">
-        <div className="mb-2">
-          <SectionLabel>录入 · Ingest</SectionLabel>
-        </div>
-        <div className="glass overflow-hidden rounded-2xl">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between px-5 py-3.5 text-left text-sm font-semibold text-foreground hover:bg-muted/30"
-            onClick={() => setIngestOpen((v) => !v)}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Plus className="h-4 w-4 text-primary" />
-              录入消息
-            </span>
-            {ingestOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-          {ingestOpen && (
-            <div className="space-y-4 border-t border-border/60 px-5 py-4">
-              <div className="flex flex-wrap gap-2">
-                {(["plain", "structured", "calendar"] as const).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    className={cn(
-                      "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
-                      ingestFormat === f
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground",
-                    )}
-                    onClick={() => setIngestFormat(f)}
-                  >
-                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : "财经日历"}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                className="min-h-[120px] w-full rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"
-                placeholder={
-                  ingestFormat === "plain"
-                    ? "粘贴大段文字，系统将按空行/分隔符拆分…"
-                    : ingestFormat === "calendar"
-                      ? '[{"title":"美联储议息","effective_at":"2026-09-17 02:00:00","content":"…"}]'
-                      : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
-                }
-                value={ingestText}
-                onChange={(e) => setIngestText(e.target.value)}
-              />
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={previewLoading || !ingestText.trim()}
-                  className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground disabled:opacity-40"
-                  onClick={runPreview}
-                >
-                  {previewLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
-                  预览拆分
-                </button>
-                {drafts.length > 0 && (
-                  <button
-                    type="button"
-                    disabled={commitLoading}
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
-                    onClick={runCommit}
-                  >
-                    确认入库 ({drafts.length})
-                  </button>
-                )}
-              </div>
-              {drafts.length > 0 && (
-                <div className="max-h-64 overflow-auto rounded-xl border border-border/60">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <tr>
-                        <th className="p-3 text-left">标题</th>
-                        <th className="p-3 text-left">内容预览</th>
-                        <th className="w-10 p-3" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {drafts.map((d) => (
-                        <tr key={d.draft_key} className="border-t border-border/60">
-                          <td className="p-3 align-top font-medium text-foreground">{d.title || "—"}</td>
-                          <td className="p-3 align-top text-muted-foreground">{d.content.slice(0, 160)}</td>
-                          <td className="p-3 align-top">
-                            <button type="button" onClick={() => removeDraft(d.draft_key)} aria-label="删除">
-                              <Trash2 className="h-4 w-4 text-muted-foreground hover:text-danger" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="w-full min-w-0">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
           <SectionLabel>消息列表 · Messages</SectionLabel>
           <p className="text-xs text-muted-foreground">
@@ -779,7 +751,7 @@ export function MessageAnalysis() {
             <div className="max-h-[calc(100vh-220px)] overflow-auto">
               {items.length === 0 && !loading && (
                 <p className="p-8 text-center text-sm text-muted-foreground">
-                  暂无消息，可粘贴录入或拉取选股宝
+                  暂无消息，可点击「录入消息」或拉取财联社
                 </p>
               )}
               {loading && items.length === 0 && (
@@ -952,92 +924,55 @@ export function MessageAnalysis() {
                   </a>
                 )}
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">关注</span>
+                <DetailSection label="关注">
                   {selected.followed ? (
-                    <>
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge className="border-primary/40 bg-primary/15 text-primary">已命中</Badge>
-                      {(selected.matched_follow_keywords?.length ?? 0) > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {selected.matched_follow_keywords!.map((k) => (
-                            <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
-                          ))}
-                        </div>
+                      {(selected.matched_follow_keywords?.length ?? 0) > 0 ? (
+                        selected.matched_follow_keywords!.map((k) => (
+                          <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
+                        ))
+                      ) : (
+                        <span className="text-sm text-muted-foreground">已关注，无匹配词</span>
                       )}
-                    </>
+                    </div>
                   ) : (
                     <span className="text-sm text-muted-foreground">未命中关注词</span>
                   )}
-                </div>
+                </DetailSection>
 
-                {(selected.marks.length > 0 || (selected.source_id !== "xgb_msgs" && selected.keywords.length > 0)) && (
-                  <div className="flex flex-wrap gap-2">
-                    {selected.marks.map((m) => (
-                      <Badge key={m} className="border-muted-foreground/30 bg-muted/40 text-foreground" title={formatMarkLabel(m)}>
-                        {formatMarkLabel(m)}
-                      </Badge>
-                    ))}
-                    {selected.source_id !== "xgb_msgs" &&
-                      selected.keywords.map((k) => (
+                <DetailSection label="关键词">
+                  {selected.keywords.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5" title={keywordHint(selected.source_id)}>
+                      {selected.keywords.map((k) => (
                         <Badge
                           key={k}
                           className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200"
-                          title={keywordHint(selected.source_id)}
                         >
                           {k}
                         </Badge>
                       ))}
-                  </div>
-                )}
-
-                <div>
-                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">摘要</p>
-                  <p className="text-sm leading-relaxed text-foreground">{selected.summary || "—"}</p>
-                </div>
-
-                <div>
-                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">详情</p>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                    {selected.detail || "—"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    原始消息
-                  </p>
-                  {detailLoading ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      加载中…
                     </div>
-                  ) : rawMessages.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">未找到关联的原始消息</p>
                   ) : (
-                    <div className="space-y-3">
-                      {rawMessages.map((raw, i) => (
-                        <div
-                          key={raw.id}
-                          className="rounded-xl border border-border/60 bg-muted/15 p-3"
-                        >
-                          {rawMessages.length > 1 && (
-                            <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-                              原始 #{i + 1}
-                              {raw.title ? ` · ${raw.title}` : ""}
-                            </p>
-                          )}
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                            {raw.content || "—"}
-                          </p>
-                          <p className="mt-2 text-[11px] tabular-nums text-muted-foreground">
-                            入库 {raw.ingested_at}
-                            {raw.external_ref ? ` · ref ${raw.external_ref}` : ""}
-                          </p>
-                        </div>
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
+                </DetailSection>
+
+                {selected.marks.length > 0 && (
+                  <DetailSection label="标记">
+                    <div className="flex flex-wrap gap-1.5">
+                      {selected.marks.map((m) => (
+                        <Badge key={m} className="border-muted-foreground/30 bg-muted/40 text-foreground" title={formatMarkLabel(m)}>
+                          {formatMarkLabel(m)}
+                        </Badge>
                       ))}
                     </div>
-                  )}
-                </div>
+                  </DetailSection>
+                )}
+
+                <DetailSection label="摘要">
+                  <p className="text-sm leading-relaxed text-foreground">{selected.summary || "—"}</p>
+                </DetailSection>
 
                 <div className="glass rounded-xl bg-muted/20 p-4 text-sm">
                   <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
@@ -1059,10 +994,7 @@ export function MessageAnalysis() {
                 </div>
 
                 {selected.targets.length > 0 && (
-                  <div>
-                    <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                      影响标的
-                    </p>
+                  <DetailSection label="影响标的">
                     <div className="flex flex-wrap gap-2">
                       {selected.targets.map((t, i) => (
                         <Badge
@@ -1081,13 +1013,139 @@ export function MessageAnalysis() {
                         </Badge>
                       ))}
                     </div>
-                  </div>
+                  </DetailSection>
                 )}
+
+                <DetailSection label="详情">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {selected.detail || "—"}
+                  </p>
+                </DetailSection>
+
+                <CollapsibleRawSection
+                  key={selected.id}
+                  rawMessages={rawMessages}
+                  loading={detailLoading}
+                />
               </div>
             )}
           </div>
         </div>
       </section>
+
+      {ingestOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+          onClick={closeIngest}
+        >
+          <div
+            className={cn("glass flex max-h-[min(90vh,720px)] w-full flex-col p-5", drafts.length > 0 ? "max-w-3xl" : "max-w-2xl")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex shrink-0 items-center justify-between gap-3">
+              <h2 className="text-base font-semibold text-foreground">录入消息</h2>
+              <button
+                type="button"
+                disabled={previewLoading || commitLoading}
+                onClick={closeIngest}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-auto">
+              <div className="flex flex-wrap gap-2">
+                {(["plain", "structured", "calendar"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                      ingestFormat === f
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => setIngestFormat(f)}
+                  >
+                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : "财经日历"}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="min-h-[160px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"
+                placeholder={
+                  ingestFormat === "plain"
+                    ? "粘贴大段文字，系统将按空行/分隔符拆分…"
+                    : ingestFormat === "calendar"
+                      ? '{"meta":{"title":"…","month":9,"year":2026,"source":{"name":"…"},"disclaimer":"…"},"legend":[],"events":[{"id":"…","startTime":1759161600000,"title":"…","importanceLevel":4,"category":"必看大事","targets":[{"type":"sector","name":"…","code":""}]}]}'
+                      : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
+                }
+                value={ingestText}
+                onChange={(e) => setIngestText(e.target.value)}
+              />
+              {drafts.length > 0 && (
+                <div className="max-h-48 overflow-auto rounded-xl border border-border/60">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/80 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
+                      <tr>
+                        <th className="p-3 text-left">标题</th>
+                        <th className="p-3 text-left">内容预览</th>
+                        <th className="w-10 p-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drafts.map((d) => (
+                        <tr key={d.draft_key} className="border-t border-border/60">
+                          <td className="p-3 align-top font-medium text-foreground">{d.title || "—"}</td>
+                          <td className="p-3 align-top text-muted-foreground">{d.content.slice(0, 160)}</td>
+                          <td className="p-3 align-top">
+                            <button type="button" onClick={() => removeDraft(d.draft_key)} aria-label="删除">
+                              <Trash2 className="h-4 w-4 text-muted-foreground hover:text-danger" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex shrink-0 flex-wrap justify-end gap-2 border-t border-border/60 pt-4">
+              <button
+                type="button"
+                disabled={previewLoading || commitLoading}
+                onClick={closeIngest}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 disabled:opacity-40"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={previewLoading || !ingestText.trim()}
+                className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground disabled:opacity-40"
+                onClick={runPreview}
+              >
+                {previewLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
+                预览拆分
+              </button>
+              {drafts.length > 0 && (
+                <button
+                  type="button"
+                  disabled={commitLoading}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+                  onClick={runCommit}
+                >
+                  {commitLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
+                  确认入库 ({drafts.length})
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

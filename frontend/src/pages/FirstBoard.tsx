@@ -9,6 +9,7 @@ import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem 
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 import { DEFAULT_ZT_KEYWORDS, setZtKeywordsCache } from "@/lib/zt-keywords";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { SortTh, type SortOrder } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
@@ -18,12 +19,49 @@ const dateLabel = (d: string) =>
   d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d;
 
 type BoardFilter = "all" | "first" | "lianban";
+type SortKey = "boards" | "seal_time" | "break_count" | "price" | "float_cap" | "keyword";
 
 const BOARD_TABS: { key: BoardFilter; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "first", label: "首板" },
   { key: "lianban", label: "连板" },
 ];
+
+const SORT_DEFAULTS: Record<SortKey, SortOrder> = {
+  boards: "desc",
+  seal_time: "asc",
+  break_count: "desc",
+  price: "desc",
+  float_cap: "desc",
+  keyword: "asc",
+};
+
+const SORTABLE_HEADERS: { key: SortKey | null; label: string }[] = [
+  { key: null, label: "名称" },
+  { key: "boards", label: "连板" },
+  { key: "seal_time", label: "首封" },
+  { key: "break_count", label: "炸板" },
+  { key: "price", label: "现价" },
+  { key: "float_cap", label: "流通市值" },
+  { key: null, label: "涨停原因" },
+  { key: "keyword", label: "关键字" },
+  { key: null, label: "题材新旧" },
+  { key: null, label: "持续性" },
+  { key: null, label: "行业" },
+  { key: null, label: "" },
+];
+
+function sealMinutes(t: string): number | null {
+  if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return null;
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function keywordSortIndex(kw: string, list: readonly string[]): number {
+  if (!kw) return list.length + 1;
+  const i = list.indexOf(kw);
+  return i >= 0 ? i : list.length;
+}
 
 export function FirstBoard() {
   const [data, setData] = useState<FirstBoardData | null>(null);
@@ -35,6 +73,8 @@ export function FirstBoard() {
   const [ztKeywords, setZtKeywords] = useState<string[]>([...DEFAULT_ZT_KEYWORDS]);
   const [boardFilter, setBoardFilter] = useState<BoardFilter>("all");
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>("seal_time");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const dd = useDeepDive("firstboard", data?.date || "");
 
   const reload = () =>
@@ -60,11 +100,70 @@ export function FirstBoard() {
     if (boardFilter === "first") list = list.filter((s) => s.boards <= 1);
     else if (boardFilter === "lianban") list = list.filter((s) => s.boards >= 2);
     if (selectedThemes.length > 0) {
-      const set = new Set(selectedThemes);
-      list = list.filter((s) => (s.themes ?? []).some((t) => set.has(t)));
+      list = list.filter((s) => {
+        const tags = new Set(s.themes ?? []);
+        return selectedThemes.every((t) => tags.has(t));
+      });
     }
     return list;
   }, [allStocks, boardFilter, selectedThemes]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortOrder(SORT_DEFAULTS[key]);
+    }
+  };
+
+  const sortedStocks = useMemo(() => {
+    const list = [...filteredStocks];
+    const dir = sortOrder === "asc" ? 1 : -1;
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "boards":
+          cmp = a.boards - b.boards;
+          break;
+        case "seal_time": {
+          const am = sealMinutes(a.seal_time);
+          const bm = sealMinutes(b.seal_time);
+          if (am == null && bm == null) cmp = 0;
+          else if (am == null) cmp = 1;
+          else if (bm == null) cmp = -1;
+          else cmp = am - bm;
+          break;
+        }
+        case "break_count":
+          cmp = a.break_count - b.break_count;
+          break;
+        case "price":
+          cmp = a.price - b.price;
+          break;
+        case "float_cap":
+          if (a.float_cap == null && b.float_cap == null) cmp = 0;
+          else if (a.float_cap == null) cmp = 1;
+          else if (b.float_cap == null) cmp = -1;
+          else cmp = a.float_cap - b.float_cap;
+          break;
+        case "keyword": {
+          const ak = parseDiveMeta(dd.analysis[a.code] || "", ztKeywords).keyword || "";
+          const bk = parseDiveMeta(dd.analysis[b.code] || "", ztKeywords).keyword || "";
+          const ai = keywordSortIndex(ak, ztKeywords);
+          const bi = keywordSortIndex(bk, ztKeywords);
+          cmp = ai !== bi ? ai - bi : ak.localeCompare(bk, "zh-CN");
+          break;
+        }
+      }
+      if (cmp !== 0) return cmp * dir;
+      const am = sealMinutes(a.seal_time) ?? 9999;
+      const bm = sealMinutes(b.seal_time) ?? 9999;
+      if (am !== bm) return am - bm;
+      return a.code.localeCompare(b.code);
+    });
+    return list;
+  }, [filteredStocks, sortKey, sortOrder, dd.analysis, ztKeywords]);
 
   const toggleTheme = (tag: string) => {
     setSelectedThemes((prev) =>
@@ -153,7 +252,7 @@ export function FirstBoard() {
     `涨停股 ${s.name}(${s.code}) ${s.boards <= 1 ? "首板" : `${s.boards}板`} 涨停原因深入分析`;
   const diveItem = (s: FirstBoardStock): DiveItem => ({ key: s.code, prompt: buildPrompt(s), context: ctx(s) });
 
-  const nameByCode = Object.fromEntries(filteredStocks.map((s) => [s.code, s.name]));
+  const nameByCode = Object.fromEntries(sortedStocks.map((s) => [s.code, s.name]));
   const themeOptions = data?.theme_options ?? [];
 
   return (
@@ -236,7 +335,7 @@ export function FirstBoard() {
               <span className="text-xs font-semibold text-muted-foreground">题材筛选</span>
               <Caliber text={
                 "与题材事件树、多日题材矩阵同一套规则：「+」拆散 → 过滤属性词（国资/低价股等）→ 别名映射。\n" +
-                "可多选；命中任一标签即显示。标签旁数字 = 当日该题材涨停家数。"
+                "可多选；须**同时命中**所选题材才显示（与关系）。标签旁数字 = 当日该题材涨停家数。"
               } />
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -270,22 +369,22 @@ export function FirstBoard() {
           <Caliber text={
             "「炸板」是当天开板过几次，0 就是全天没开过板 —— 这张表里的票**最终都封住了涨停**，\n" +
             "所以炸板次数说的是过程有多难看，不是最后有没有封住。\n" +
-            "名单按首次封板时间从早到晚排。\n" +
+            "名单默认按首次封板时间从早到晚排；点击表头可切换排序。\n" +
             "「行业」经常只有四个字（像「互联网电」「自动化设」）——行业名称常被截断为四字，\n" +
             "不是这里显示不全；怕猜错所以不替它补全称。"
           } />
           <span className="text-xs font-normal text-muted-foreground">
-            按首次封板时间排序（早封在前）· 客观公开榜单，非推荐 / 非预测
+            点击表头排序 · 客观公开榜单，非推荐 / 非预测
           </span>
           <span className="ml-auto font-normal">
-            <RunAllButton dd={dd} items={filteredStocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+            <RunAllButton dd={dd} items={sortedStocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
           </span>
         </div>
         {!loaded ? (
           <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
           </div>
-        ) : filteredStocks.length === 0 ? (
+        ) : sortedStocks.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {allStocks.length === 0 ? "暂无数据（取数异常或非交易日）" : "当前筛选条件下无匹配个股"}
           </div>
@@ -294,13 +393,27 @@ export function FirstBoard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "连板", "首封", "炸板", "现价", "流通市值", "涨停原因", "关键字", "题材新旧", "持续性", "行业", ""].map((h) => (
-                    <th key={h || "action"} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
-                  ))}
+                  {SORTABLE_HEADERS.map((h) =>
+                    h.key ? (
+                      <SortTh<SortKey>
+                        key={h.label}
+                        col={h.key}
+                        label={h.label}
+                        sortCol={sortKey}
+                        order={sortOrder}
+                        onSort={toggleSort}
+                        className="whitespace-nowrap px-2 py-2 font-medium"
+                      />
+                    ) : (
+                      <th key={h.label || "action"} className="whitespace-nowrap px-2 py-2 font-medium">
+                        {h.label}
+                      </th>
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {filteredStocks.map((s) => {
+                {sortedStocks.map((s) => {
                   const diveMeta = parseDiveMeta(dd.analysis[s.code] || "", ztKeywords);
                   return (
                   <Fragment key={s.code}>
