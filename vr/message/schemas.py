@@ -64,6 +64,7 @@ class AnalyzedMessage(BaseModel):
     analyzed_by: AnalyzedBy | None = None
     version: int = 1
     status: AnalyzedStatus = "draft"
+    favorited: bool = False
     followed: bool = False
     matched_follow_keywords: list[str] = Field(default_factory=list)
 
@@ -122,6 +123,7 @@ class ListQuery(BaseModel):
     impact_level: str | None = None
     effect_status: str | None = None
     status: str | None = None
+    favorited: str | None = None
     followed: str | None = None
     sort: Literal[
         "produced_at", "ingested_at", "impact_level", "effect_status", "freshness", "status", "title"

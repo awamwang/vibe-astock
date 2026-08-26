@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, Radio, X,
+  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -329,6 +329,7 @@ export function MessageAnalysis() {
   const [impactLevels, setImpactLevels] = useState<string[]>([]);
   const [effectStatuses, setEffectStatuses] = useState<string[]>([]);
   const [followedFilter, setFollowedFilter] = useState<string[]>([]);
+  const [favoritedFilter, setFavoritedFilter] = useState<string[]>([]);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -344,6 +345,7 @@ export function MessageAnalysis() {
   const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
 
@@ -360,6 +362,7 @@ export function MessageAnalysis() {
         impact_level: impactLevels.length ? impactLevels : undefined,
         effect_status: effectStatuses.length ? effectStatuses : undefined,
         followed: followedFilter.length ? followedFilter : undefined,
+        favorited: favoritedFilter.length ? favoritedFilter : undefined,
         sort,
         order,
         limit: PAGE_SIZE,
@@ -372,7 +375,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, sort, order, page]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, sort, order, page]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -524,6 +527,65 @@ export function MessageAnalysis() {
       return next;
     });
   };
+
+  const pageIds = useMemo(() => items.map((x) => x.id), [items]);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const somePageSelected = pageIds.some((id) => selectedIds.has(id));
+
+  const toggleSelectAllPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const runFavorite = async (ids: string[], favorited: boolean) => {
+    if (!ids.length) return;
+    setBatchBusy(true);
+    try {
+      const r = await api.messageAnalyzedFavorite(ids, favorited);
+      notify.success(favorited ? `已收藏 ${r.updated} 条` : `已取消收藏 ${r.updated} 条`);
+      setItems((list) =>
+        list.map((x) => (ids.includes(x.id) ? { ...x, favorited } : x)),
+      );
+      setSelected((cur) => (cur && ids.includes(cur.id) ? { ...cur, favorited } : cur));
+      setSelectedIds(new Set());
+      if (favoritedFilter.length) await loadList();
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : favorited ? "收藏失败" : "取消收藏失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const runDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条消息？此操作不可恢复。`)) return;
+    setBatchBusy(true);
+    try {
+      const r = await api.messageAnalyzedDelete(ids);
+      notify.success(`已删除 ${r.deleted} 条`);
+      setSelectedIds(new Set());
+      if (selected && ids.includes(selected.id)) {
+        setSelected(null);
+        setRawMessages([]);
+      }
+      await loadList();
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "删除失败");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const queueFavorite = () => runFavorite(Array.from(selectedIds), true);
+  const queueUnfavorite = () => runFavorite(Array.from(selectedIds), false);
+  const queueDelete = () => runDelete(Array.from(selectedIds));
 
   const runAnalyze = async (ids: string[]) => {
     if (!ids.length) return;
@@ -704,16 +766,56 @@ export function MessageAnalysis() {
                 setFollowedFilter(v);
               }}
             />
+            <FilterMultiSelect
+              placeholder="全部收藏"
+              options={[
+                { value: "yes", label: "已收藏" },
+                { value: "no", label: "未收藏" },
+              ]}
+              selected={favoritedFilter}
+              onChange={(v) => {
+                setPage(1);
+                setFavoritedFilter(v);
+              }}
+            />
             {selectedIds.size > 0 && (
-              <button
-                type="button"
-                disabled={analyzing}
-                className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                onClick={queueAnalyze}
-              >
-                {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                AI 分析 ({selectedIds.size})
-              </button>
+              <>
+                <button
+                  type="button"
+                  disabled={analyzing}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                  onClick={queueAnalyze}
+                >
+                  {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  AI 分析 ({selectedIds.size})
+                </button>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-800 dark:text-amber-200 disabled:opacity-50"
+                  onClick={queueFavorite}
+                >
+                  {batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                  收藏 ({selectedIds.size})
+                </button>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  onClick={queueUnfavorite}
+                >
+                  取消收藏 ({selectedIds.size})
+                </button>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  className="flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm font-semibold text-danger disabled:opacity-50"
+                  onClick={queueDelete}
+                >
+                  {batchBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  删除 ({selectedIds.size})
+                </button>
+              </>
             )}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -765,7 +867,16 @@ export function MessageAnalysis() {
                   <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur-sm">
                     <tr className="border-b border-border/60">
                       <th className="w-10 px-3 py-2.5">
-                        <span className="sr-only">选择</span>
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[hsl(var(--primary))]"
+                          checked={allPageSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = !allPageSelected && somePageSelected;
+                          }}
+                          onChange={toggleSelectAllPage}
+                          aria-label="全选当前页"
+                        />
                       </th>
                       <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[220px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
@@ -798,6 +909,9 @@ export function MessageAnalysis() {
                         <td className="px-3 py-3 align-top">
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5">
+                              {item.favorited && (
+                                <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500" aria-label="已收藏" />
+                              )}
                               {item.marks.includes("highlight") && (
                                 <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
                               )}
@@ -901,6 +1015,28 @@ export function MessageAnalysis() {
                         <Check className="h-3.5 w-3.5" /> 确认
                       </button>
                     )}
+                    <button
+                      type="button"
+                      disabled={batchBusy}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40",
+                        selected.favorited
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                          : "border-border bg-background text-foreground",
+                      )}
+                      onClick={() => runFavorite([selected.id], !selected.favorited)}
+                    >
+                      <Star className={cn("h-3.5 w-3.5", selected.favorited && "fill-current")} />
+                      {selected.favorited ? "取消收藏" : "收藏"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={batchBusy}
+                      className="inline-flex items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-40"
+                      onClick={() => runDelete([selected.id])}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> 删除
+                    </button>
                     <button
                       type="button"
                       disabled={analyzing || !hasLlm()}

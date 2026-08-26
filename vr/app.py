@@ -720,7 +720,17 @@ class AnalyzedPatchIn(BaseModel):
     freshness: str | None = None
     effect_status: str | None = None
     status: str | None = None
+    favorited: bool | None = None
     targets: list[dict] | None = None
+
+
+class AnalyzedBatchIdsIn(BaseModel):
+    ids: list[str]
+
+
+class AnalyzedFavoriteIn(BaseModel):
+    ids: list[str]
+    favorited: bool = True
 
 
 def _list_query(
@@ -731,6 +741,7 @@ def _list_query(
     impact_level: str = "",
     effect_status: str = "",
     status: str = "",
+    favorited: str = "",
     followed: str = "",
     sort: str = "produced_at",
     order: str = "desc",
@@ -745,6 +756,7 @@ def _list_query(
         impact_level=impact_level or None,
         effect_status=effect_status or None,
         status=status or None,
+        favorited=favorited or None,
         followed=followed or None,
         sort=sort if sort in ("produced_at", "ingested_at", "impact_level", "title") else "produced_at",
         order=order if order in ("asc", "desc") else "desc",
@@ -840,6 +852,7 @@ def messages_analyzed_list(
     impact_level: str = "",
     effect_status: str = "",
     status: str = "",
+    favorited: str = "",
     followed: str = "",
     sort: str = "produced_at",
     order: str = "desc",
@@ -854,6 +867,7 @@ def messages_analyzed_list(
         impact_level=impact_level,
         effect_status=effect_status,
         status=status,
+        favorited=favorited,
         followed=followed,
         sort=sort,
         order=order,
@@ -886,6 +900,24 @@ def messages_analyzed_patch(analyzed_id: str, body: AnalyzedPatchIn):
     if not row:
         raise HTTPException(404, "未找到分析消息")
     return {"data": row.model_dump()}
+
+
+@app.post("/api/messages/analyzed/favorite")
+def messages_analyzed_favorite(body: AnalyzedFavoriteIn):
+    ids = [i for i in body.ids if i]
+    if not ids:
+        raise HTTPException(400, "ids 不能为空")
+    n = msg_layer.store.set_favorited_batch(ids, body.favorited)
+    return {"data": {"updated": n, "favorited": body.favorited}}
+
+
+@app.post("/api/messages/analyzed/delete")
+def messages_analyzed_delete(body: AnalyzedBatchIdsIn):
+    ids = [i for i in body.ids if i]
+    if not ids:
+        raise HTTPException(400, "ids 不能为空")
+    n = msg_layer.store.delete_analyzed_batch(ids)
+    return {"data": {"deleted": n}}
 
 
 @app.post("/api/messages/analyze/run")

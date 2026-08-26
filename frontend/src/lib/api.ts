@@ -301,6 +301,7 @@ export interface AnalyzedMessage {
   analyzed_by?: string | null;
   version: number;
   status: "draft" | "confirmed" | "archived";
+  favorited?: boolean;
   followed?: boolean;
   matched_follow_keywords?: string[];
 }
@@ -747,6 +748,7 @@ export const api = {
     impact_level?: string | string[];
     effect_status?: string | string[];
     status?: string | string[];
+    favorited?: string | string[];
     followed?: string | string[];
     sort?: string;
     order?: string;
@@ -769,6 +771,13 @@ export const api = {
   messageAnalyzedDetail: (id: string) => get<AnalyzedMessageDetail>(`/messages/analyzed/${id}`),
   messageAnalyzedPatch: (id: string, patch: Partial<AnalyzedMessage>) =>
     request<AnalyzedMessage>(`/messages/analyzed/${id}`, "PATCH", patch),
+  messageAnalyzedFavorite: (ids: string[], favorited = true) =>
+    request<{ updated: number; favorited: boolean }>("/messages/analyzed/favorite", "POST", {
+      ids,
+      favorited,
+    }),
+  messageAnalyzedDelete: (ids: string[]) =>
+    request<{ deleted: number }>("/messages/analyzed/delete", "POST", { ids }),
   messageAnalyzeQueue: (rawIds: string[], analyzedIds: string[] = []) =>
     request<{ job_ids: string[]; queued: number }>("/messages/analyze", "POST", {
       raw_ids: rawIds,

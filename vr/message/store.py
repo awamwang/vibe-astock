@@ -185,6 +185,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         UPDATE message_source SET enabled = 0, poll_interval_s = NULL WHERE id = 'xgb_msgs'
         """
     )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(analyzed_message)").fetchall()}
+    if "favorited" not in cols:
+        conn.execute(
+            "ALTER TABLE analyzed_message ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def init_db(path: Optional[str] = None) -> str:
@@ -241,6 +246,7 @@ def _row_analyzed(r: sqlite3.Row, targets: list[ImpactTarget], raw_ids: list[str
         analyzed_by=r["analyzed_by"],
         version=int(r["version"] or 1),
         status=r["status"] or "draft",
+        favorited=bool(r["favorited"] if r["favorited"] is not None else 0),
     )
 
 
@@ -624,6 +630,15 @@ def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
             "(title LIKE ? OR summary LIKE ? OR detail LIKE ? OR keywords_json LIKE ?)"
         )
         args.extend([like, like, like, like])
+    if q.favorited:
+        selected = {x.strip().lower() for x in q.favorited.split(",") if x.strip()}
+        want_yes = "yes" in selected or "1" in selected or "true" in selected
+        want_no = "no" in selected or "0" in selected or "false" in selected
+        if want_yes != want_no:
+            if want_yes:
+                parts.append("favorited = 1")
+            else:
+                parts.append("favorited = 0")
     if q.followed:
         selected = {x.strip().lower() for x in q.followed.split(",") if x.strip()}
         want_yes = "yes" in selected or "1" in selected or "true" in selected
@@ -807,11 +822,15 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                 "effect_status": "effect_status",
                 "status": "status",
                 "source_label": "source_label",
+                "favorited": "favorited",
             }
             for k, col in scalar_map.items():
                 if k in patch:
+                    val = patch[k]
+                    if k == "favorited":
+                        val = 1 if val else 0
                     fields.append(f"{col} = ?")
-                    args.append(patch[k])
+                    args.append(val)
             if "keywords" in patch:
                 fields.append("keywords_json = ?")
                 args.append(_json_dumps(patch["keywords"]))
@@ -846,6 +865,56 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                         )
             conn.commit()
     return get_analyzed(analyzed_id, path=path)
+
+
+def delete_analyzed_batch(analyzed_ids: list[str], *, path: Optional[str] = None) -> int:
+    """删除分析消息及其关联原始消息、标的与链接。"""
+    ids = [i for i in analyzed_ids if i]
+    if not ids:
+        return 0
+    init_db(path)
+    db = path or DB_PATH
+    with _LOCK:
+        with closing(_connect(db)) as conn:
+            placeholders = ",".join("?" * len(ids))
+            raw_rows = conn.execute(
+                f"SELECT raw_id FROM raw_analyzed_link WHERE analyzed_id IN ({placeholders})",
+                ids,
+            ).fetchall()
+            raw_ids = [r["raw_id"] for r in raw_rows]
+            conn.execute(f"DELETE FROM impact_target WHERE analyzed_id IN ({placeholders})", ids)
+            conn.execute(f"DELETE FROM raw_analyzed_link WHERE analyzed_id IN ({placeholders})", ids)
+            cur = conn.execute(f"DELETE FROM analyzed_message WHERE id IN ({placeholders})", ids)
+            deleted = cur.rowcount
+            if raw_ids:
+                rp = ",".join("?" * len(raw_ids))
+                conn.execute(f"DELETE FROM raw_message WHERE id IN ({rp})", raw_ids)
+            conn.commit()
+    return int(deleted)
+
+
+def set_favorited_batch(
+    analyzed_ids: list[str],
+    favorited: bool,
+    *,
+    path: Optional[str] = None,
+) -> int:
+    """批量设置收藏状态。"""
+    ids = [i for i in analyzed_ids if i]
+    if not ids:
+        return 0
+    init_db(path)
+    db = path or DB_PATH
+    flag = 1 if favorited else 0
+    with _LOCK:
+        with closing(_connect(db)) as conn:
+            placeholders = ",".join("?" * len(ids))
+            cur = conn.execute(
+                f"UPDATE analyzed_message SET favorited = ? WHERE id IN ({placeholders})",
+                [flag, *ids],
+            )
+            conn.commit()
+            return int(cur.rowcount)
 
 
 def enqueue_analyze(*, raw_ids: list[str], analyzed_ids: list[str], path: Optional[str] = None) -> list[str]:
