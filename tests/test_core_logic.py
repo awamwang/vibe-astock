@@ -4483,6 +4483,7 @@ class TestThemeNormalize:
         monkeypatch.setattr(tn, "_ALIASES", None)
         assert tt._tags("中报预增+半年报增长") == ["中报增长"]
         assert tt._tags("人形机器人+机器人") == ["机器人"]
+        assert tt.reason_tags("中报预增+半年报增长") == ["中报增长"]
 
     def test_save_rejects_cycle(self, tmp_path, monkeypatch):
         from duanxian.theme_normalize import ThemeAliasError, save_aliases

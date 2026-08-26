@@ -1,8 +1,9 @@
-"""首板分析数据层 —— 今日首板涨停股（连板数=1）+ 涨停原因题材串。
+"""涨停分析数据层 —— 当日全部涨停股 + 涨停原因题材串。
 
 短线投资实例专属模块（不回推开源仓库）。
-- 首板名单：东财涨停池（astock.em_zt_topic_pool，免费无 key）。
-- 涨停原因：优先读题材树落盘缓存（含首板页导入的同花顺 txt）；没有再走
+- 涨停名单：东财涨停池（astock.em_zt_topic_pool，免费无 key）。
+- 题材标签：与题材事件树 / 多日题材矩阵同一套拆散 + 别名映射（duanxian.theme_tree.reason_tags）。
+- 涨停原因：优先读题材树落盘缓存（含涨停分析页导入的同花顺 txt）；没有再走
   `duanxian.fetchers.fetch_zt_reasons`（同花顺涨停池主源 → pywencai 备用）。
   拿不到时优雅降级为空串，页面照常显示其余字段。
 """
@@ -13,6 +14,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta
 
 import astock
@@ -46,7 +48,6 @@ def _fetch_reasons(date: str) -> tuple[dict, str | None]:
         return {}, f"import fetch_zt_reasons 失败：{type(e).__name__}"
     reasons, err = fetch_zt_reasons(ymd)
     if reasons:
-        # 首板页允许稍长一点的题材串展示
         return {k: _clean_reason(v, max_len=40) for k, v in reasons.items()}, None
     return {}, err
 
@@ -75,8 +76,9 @@ def _read_disk_reasons(date: str) -> dict:
 
 
 def apply_imported_reasons(date: str, reasons: dict) -> None:
-    """导入成功后灌进内存缓存，并让首板列表 / 短线情绪下次重建。"""
+    """导入成功后灌进内存缓存，并让涨停列表 / 短线情绪下次重建。"""
     ymd = str(date).replace("-", "")
+    _CACHE.pop("limit_up", None)
     _CACHE.pop("first_board", None)
     try:
         import market as _market
@@ -88,7 +90,7 @@ def apply_imported_reasons(date: str, reasons: dict) -> None:
 
 
 def get_reasons(date: str) -> tuple[dict, str | None]:
-    """当日全部涨停股的涨停原因（带缓存，首板页与每日复盘连板表共用）。"""
+    """当日全部涨停股的涨停原因（带缓存，涨停分析页与每日复盘连板表共用）。"""
     hit = _REASONS_CACHE.get(date)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1], hit[2]
@@ -102,13 +104,25 @@ def get_reasons(date: str) -> tuple[dict, str | None]:
     return reasons, err
 
 
+def _reason_tags(reason: str) -> list[str]:
+    """题材串 → canonical 标签（与题材事件树同一套规则）。"""
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+    try:
+        from duanxian.theme_tree import reason_tags  # noqa: PLC0415
+
+        return reason_tags(reason)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _hhmm(v) -> str:
     """池内时间字段（HHMMSS 整数）→ 'HH:MM'。"""
     s = str(_num(v)).zfill(6)
     return f"{s[:2]}:{s[2:4]}" if len(s) == 6 else ""
 
 
-def _first_board() -> dict:
+def _limit_up() -> dict:
     today = datetime.now(BEIJING).date()
     resolved, zt = "", []
     for back in range(8):
@@ -122,10 +136,26 @@ def _first_board() -> dict:
 
     reasons, reason_note = get_reasons(resolved)
 
-    stocks = [
-        {
-            "code": str(p.get("c", "")),
+    theme_counts: Counter[str] = Counter()
+    stocks = []
+    first_count = 0
+    lianban_count = 0
+
+    for p in zt:
+        boards = _num(p.get("lbc")) or 1
+        code = str(p.get("c", ""))
+        reason = reasons.get(code, "")
+        themes = _reason_tags(reason)
+        for t in themes:
+            theme_counts[t] += 1
+        if boards <= 1:
+            first_count += 1
+        else:
+            lianban_count += 1
+        stocks.append({
+            "code": code,
             "name": p.get("n", ""),
+            "boards": boards,
             "price": round((astock._numf(p.get("p")) or 0) / 1000, 2),
             "pct": round(astock._numf(p.get("zdp")) or 0, 2),
             "amount": astock._numf(p.get("amount")),
@@ -133,28 +163,35 @@ def _first_board() -> dict:
             "industry": p.get("hybk", ""),
             "seal_time": _hhmm(p.get("fbt")),
             "break_count": _num(p.get("zbc")),
-            "reason": reasons.get(str(p.get("c", "")), ""),
-        }
-        for p in zt
-        if (_num(p.get("lbc")) or 1) == 1
-    ]  # 池接口 sort=fbt:asc，天然按首封时间升序（早封在前）
+            "reason": reason,
+            "themes": themes,
+        })
+
+    theme_options = [{"tag": tag, "count": cnt} for tag, cnt in theme_counts.most_common()]
 
     return {
         "date": resolved,
         "total_zt": len(zt),
-        "first_count": len(stocks),
+        "first_count": first_count,
+        "lianban_count": lianban_count,
         "reason_note": reason_note,
+        "theme_options": theme_options,
         "stocks": stocks,
     }
 
 
-def get_first_board() -> dict:
-    """首板列表（TTL 缓存；空结果不缓存，下次直接重试）。"""
+def get_limit_up() -> dict:
+    """当日全部涨停股（TTL 缓存；空结果不缓存，下次直接重试）。"""
     now = time.time()
-    hit = _CACHE.get("first_board")
+    hit = _CACHE.get("limit_up")
     if hit and now - hit[0] < _TTL:
         return hit[1]
-    val = _first_board()
+    val = _limit_up()
     if val:
-        _CACHE["first_board"] = (now, val)
+        _CACHE["limit_up"] = (now, val)
     return val
+
+
+def get_first_board() -> dict:
+    """兼容旧调用名。"""
+    return get_limit_up()

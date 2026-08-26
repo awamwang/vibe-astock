@@ -152,6 +152,11 @@ def _tags(reason: str) -> list[str]:
     return out
 
 
+def reason_tags(reason: str) -> list[str]:
+    """题材串拆散并映射后的 canonical 标签（与题材事件树、多日题材矩阵同一套规则）。"""
+    return _tags(reason)
+
+
 def build(date: str, prev: Optional[str] = None, top: int = 10) -> dict:
     """搭当日的题材事件树"""
     from . import market_facts as mf

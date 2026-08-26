@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -9,12 +9,21 @@ import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem 
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 import { DEFAULT_ZT_KEYWORDS, setZtKeywordsCache } from "@/lib/zt-keywords";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { cn } from "@/lib/utils";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
-const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
+const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`);
 
 const dateLabel = (d: string) =>
   d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d;
+
+type BoardFilter = "all" | "first" | "lianban";
+
+const BOARD_TABS: { key: BoardFilter; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "first", label: "首板" },
+  { key: "lianban", label: "连板" },
+];
 
 export function FirstBoard() {
   const [data, setData] = useState<FirstBoardData | null>(null);
@@ -24,6 +33,8 @@ export function FirstBoard() {
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState<ZtReasonPreview | null>(null);
   const [ztKeywords, setZtKeywords] = useState<string[]>([...DEFAULT_ZT_KEYWORDS]);
+  const [boardFilter, setBoardFilter] = useState<BoardFilter>("all");
+  const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
   const dd = useDeepDive("firstboard", data?.date || "");
 
   const reload = () =>
@@ -41,6 +52,25 @@ export function FirstBoard() {
       })
       .catch(() => {});
   }, []);
+
+  const allStocks = data?.stocks ?? [];
+
+  const filteredStocks = useMemo(() => {
+    let list = allStocks;
+    if (boardFilter === "first") list = list.filter((s) => s.boards <= 1);
+    else if (boardFilter === "lianban") list = list.filter((s) => s.boards >= 2);
+    if (selectedThemes.length > 0) {
+      const set = new Set(selectedThemes);
+      list = list.filter((s) => (s.themes ?? []).some((t) => set.has(t)));
+    }
+    return list;
+  }, [allStocks, boardFilter, selectedThemes]);
+
+  const toggleTheme = (tag: string) => {
+    setSelectedThemes((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  };
 
   const closeImport = () => {
     if (importing) return;
@@ -86,11 +116,15 @@ export function FirstBoard() {
 
   const buildPrompt = (s: FirstBoardStock) => {
     const tagList = ztKeywords.join("、");
+    const boardDesc = s.boards <= 1 ? "首板" : `${s.boards} 连板`;
+    const themeLine = (s.themes ?? []).length > 0
+      ? `拆散映射后题材标签：${s.themes.join("、")}；`
+      : "";
     return (
-      `今天（${dateLabel(data?.date || "")}）A 股首板涨停股「${s.name}（${s.code}）」的客观数据：\n` +
-      `现价 ${s.price} 元，涨停 +${s.pct}%，首次封板时间 ${s.seal_time || "未知"}，` +
+      `今天（${dateLabel(data?.date || "")}）A 股涨停股「${s.name}（${s.code}）」的客观数据：\n` +
+      `板位 ${boardDesc}，现价 ${s.price} 元，涨停 +${s.pct}%，首次封板时间 ${s.seal_time || "未知"}，` +
       `炸板 ${s.break_count} 次，成交额 ${yi(s.amount)}，流通市值 ${yi(s.float_cap)}，` +
-      `所属行业 ${s.industry || "未知"}，涨停原因题材：${s.reason || "（暂缺，需要自查）"}。\n\n` +
+      `所属行业 ${s.industry || "未知"}，${themeLine}涨停原因题材：${s.reason || "（暂缺，需要自查）"}。\n\n` +
       "请深入分析这只股票今天涨停的原因。输出必须先三行固定摘要，再写正文：\n" +
       "【涨停关键字】xxx\n" +
       "【持续性】xxx\n" +
@@ -108,24 +142,25 @@ export function FirstBoard() {
       "并给出依据 —— 只讲题材板块层面，不要由此推断这只个股接下来会怎样；\n" +
       "3. 单独说明：该题材近期在市场中有没有被炒作过（有无相似高潮、回流再起、还是相对新鲜），" +
       "并与上方「题材新旧」标签对应，给出简要依据；\n" +
-      "4. 客观列出值得注意的点（炸板情况、封板时间早晚、流通盘大小、题材扩散位置）。\n" +
+      "4. 客观列出值得注意的点（炸板情况、封板时间早晚、流通盘大小、题材扩散位置、连板高度）。\n" +
       "个股层面只陈述已经发生的客观数据与事实，方向与强弱判断做到题材板块层面为止：" +
       "不预测个股涨跌、不给个股参与倾向、不推荐任何标的、不构成投资建议。" +
       "输出用纯 Markdown（不要在表格或正文里使用 <br> 等 HTML 标签）。"
     );
   };
 
-  const ctx = (s: FirstBoardStock) => `首板股 ${s.name}(${s.code}) 涨停原因深入分析`;
+  const ctx = (s: FirstBoardStock) =>
+    `涨停股 ${s.name}(${s.code}) ${s.boards <= 1 ? "首板" : `${s.boards}板`} 涨停原因深入分析`;
   const diveItem = (s: FirstBoardStock): DiveItem => ({ key: s.code, prompt: buildPrompt(s), context: ctx(s) });
 
-  const stocks = data?.stocks ?? [];
-  const nameByCode = Object.fromEntries(stocks.map((s) => [s.code, s.name]));
+  const nameByCode = Object.fromEntries(filteredStocks.map((s) => [s.code, s.name]));
+  const themeOptions = data?.theme_options ?? [];
 
   return (
     <div>
       <PageHeader
-        title="首板分析"
-        subtitle="今日首板涨停股（连板数=1）· 涨停原因题材 · 每只可让 AI 深入分析"
+        title="涨停分析"
+        subtitle="当日全部涨停股 · 涨停原因题材 · 首板/连板/题材筛选 · 每只可让 AI 深入分析"
         actions={
           <button
             type="button"
@@ -138,11 +173,12 @@ export function FirstBoard() {
       />
 
       {data && (
-        <div className="mb-4 grid grid-cols-3 gap-3">
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             { label: "交易日", value: dateLabel(data.date) },
             { label: "今日涨停", value: `${data.total_zt} 家` },
-            { label: "其中首板", value: `${data.first_count} 家` },
+            { label: "首板", value: `${data.first_count} 家` },
+            { label: "连板", value: `${data.lianban_count} 家` },
           ].map((c) => (
             <GlassCard key={c.label} className="py-3 text-center">
               <div className="text-xs text-muted-foreground">{c.label}</div>
@@ -158,9 +194,79 @@ export function FirstBoard() {
         </p>
       )}
 
+      <GlassCard className="mb-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">板位筛选</span>
+          <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
+            {BOARD_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setBoardFilter(tab.key)}
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  boardFilter === tab.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {(boardFilter !== "all" || selectedThemes.length > 0) && (
+            <span className="text-xs text-muted-foreground">
+              显示 <b className="text-foreground">{filteredStocks.length}</b> / {allStocks.length} 只
+            </span>
+          )}
+          {selectedThemes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelectedThemes([])}
+              className="ml-auto text-xs text-muted-foreground hover:text-primary"
+            >
+              清除题材筛选
+            </button>
+          )}
+        </div>
+
+        {themeOptions.length > 0 && (
+          <div>
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="text-xs font-semibold text-muted-foreground">题材筛选</span>
+              <Caliber text={
+                "与题材事件树、多日题材矩阵同一套规则：「+」拆散 → 过滤属性词（国资/低价股等）→ 别名映射。\n" +
+                "可多选；命中任一标签即显示。标签旁数字 = 当日该题材涨停家数。"
+              } />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {themeOptions.map((opt) => {
+                const active = selectedThemes.includes(opt.tag);
+                return (
+                  <button
+                    key={opt.tag}
+                    type="button"
+                    onClick={() => toggleTheme(opt.tag)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                      active
+                        ? "border-primary/50 bg-primary/15 font-medium text-primary ring-1 ring-primary/40"
+                        : "border-border/50 bg-muted/20 text-muted-foreground hover:border-primary/30 hover:text-foreground",
+                    )}
+                  >
+                    {opt.tag}
+                    <span className="ml-1 font-mono opacity-70">{opt.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </GlassCard>
+
       <GlassCard>
         <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold">
-          <Flame className="h-4 w-4 text-primary" /> 首板名单
+          <Flame className="h-4 w-4 text-primary" /> 涨停名单
           <Caliber text={
             "「炸板」是当天开板过几次，0 就是全天没开过板 —— 这张表里的票**最终都封住了涨停**，\n" +
             "所以炸板次数说的是过程有多难看，不是最后有没有封住。\n" +
@@ -172,33 +278,38 @@ export function FirstBoard() {
             按首次封板时间排序（早封在前）· 客观公开榜单，非推荐 / 非预测
           </span>
           <span className="ml-auto font-normal">
-            <RunAllButton dd={dd} items={stocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+            <RunAllButton dd={dd} items={filteredStocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
           </span>
         </div>
         {!loaded ? (
           <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
           </div>
-        ) : stocks.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">暂无数据（取数异常或非交易日）</div>
+        ) : filteredStocks.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {allStocks.length === 0 ? "暂无数据（取数异常或非交易日）" : "当前筛选条件下无匹配个股"}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "首封", "炸板", "现价", "流通市值", "涨停原因", "关键字", "题材新旧", "持续性", "行业", ""].map((h) => (
+                  {["名称", "连板", "首封", "炸板", "现价", "流通市值", "涨停原因", "关键字", "题材新旧", "持续性", "行业", ""].map((h) => (
                     <th key={h || "action"} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {stocks.map((s) => {
+                {filteredStocks.map((s) => {
                   const diveMeta = parseDiveMeta(dd.analysis[s.code] || "", ztKeywords);
                   return (
                   <Fragment key={s.code}>
                     <tr className="border-b border-border/30">
                       <td className="whitespace-nowrap px-2 py-2">
                         <StockLabel code={s.code} name={s.name} />
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2 font-mono font-bold text-primary">
+                        {s.boards <= 1 ? "首板" : `${s.boards} 板`}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{s.seal_time || "—"}</td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono">
@@ -247,8 +358,8 @@ export function FirstBoard() {
                       <DeepDivePanel
                         dd={dd}
                         stockKey={s.code}
-                        colSpan={11}
-                        noteTitle={`首板深析 · ${s.name}`}
+                        colSpan={12}
+                        noteTitle={`涨停深析 · ${s.name}${s.boards <= 1 ? "" : ` ${s.boards}板`}`}
                         onRerun={() => dd.rerun(diveItem(s))}
                       />
                     )}

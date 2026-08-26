@@ -181,15 +181,18 @@ export interface MonitorSnapshot {
   alerts: MonitorAlert[];
 }
 
-// 首板分析：今日首板涨停股（连板数=1）+ 涨停原因题材串（客观公开榜单）
+// 涨停分析：当日全部涨停股 + 涨停原因题材串（客观公开榜单）
 export interface FirstBoardStock {
-  code: string; name: string;
+  code: string; name: string; boards: number;
   price: number; pct: number; amount: number | null; float_cap: number | null;
   industry: string; seal_time: string; break_count: number; reason: string;
+  themes: string[];
 }
+export interface ThemeOption { tag: string; count: number }
 export interface FirstBoardData {
-  date: string; total_zt: number; first_count: number;
+  date: string; total_zt: number; first_count: number; lianban_count: number;
   reason_note: string | null;
+  theme_options: ThemeOption[];
   stocks: FirstBoardStock[];
 }
 
@@ -259,6 +262,23 @@ export interface RawMessageDraft {
   meta?: Record<string, unknown>;
 }
 
+export interface RawMessage {
+  id: string;
+  source_id: string;
+  source_label: string;
+  content: string;
+  title: string;
+  keywords: string[];
+  url: string;
+  marks: string[];
+  content_hash: string;
+  batch_id?: string | null;
+  external_ref?: string | null;
+  produced_at: string;
+  ingested_at: string;
+  meta?: Record<string, unknown>;
+}
+
 export interface AnalyzedMessage {
   id: string;
   raw_ids: string[];
@@ -283,6 +303,10 @@ export interface AnalyzedMessage {
   status: "draft" | "confirmed" | "archived";
   followed?: boolean;
   matched_follow_keywords?: string[];
+}
+
+export interface AnalyzedMessageDetail extends AnalyzedMessage {
+  raw_messages: RawMessage[];
 }
 
 export interface MessageListResult {
@@ -742,7 +766,7 @@ export const api = {
     const q = qs.toString();
     return get<MessageListResult>(`/messages/analyzed${q ? `?${q}` : ""}`);
   },
-  messageAnalyzedDetail: (id: string) => get<AnalyzedMessage>(`/messages/analyzed/${id}`),
+  messageAnalyzedDetail: (id: string) => get<AnalyzedMessageDetail>(`/messages/analyzed/${id}`),
   messageAnalyzedPatch: (id: string, patch: Partial<AnalyzedMessage>) =>
     request<AnalyzedMessage>(`/messages/analyzed/${id}`, "PATCH", patch),
   messageAnalyzeQueue: (rawIds: string[], analyzedIds: string[] = []) =>

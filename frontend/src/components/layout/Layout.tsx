@@ -31,7 +31,7 @@ const REVIEW_NAV = [
   { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/messages", icon: Newspaper, label: "消息分析" },
   { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
-  { to: "/first-board", icon: Flame, label: "首板分析" },
+  { to: "/first-board", icon: Flame, label: "涨停分析" },
   { to: "/heat", icon: CalendarRange, label: "多日情绪" },
   { to: "/trade", icon: Wallet, label: "持仓与预算" },
   { to: "/experience", icon: BookMarked, label: "经验记忆" },

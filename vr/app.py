@@ -340,12 +340,12 @@ def monitor_snapshot(watch: str = Query("")):
 
 @app.get("/api/market/first-board")
 def market_first_board():
-    """首板分析：今日首板涨停股（连板数=1）+ 涨停原因题材串（问财，缺 key 优雅降级）。
+    """涨停分析：当日全部涨停股 + 涨停原因题材串（问财，缺 key 优雅降级）。
 
     客观公开榜单数据（东财涨停池同款），只呈现事实，不附推荐/评分/预测/买卖时机。缓存 10 分钟。
     """
     try:
-        return {"data": firstboard.get_first_board()}
+        return {"data": firstboard.get_limit_up()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"首板数据异常：{e}") from e
 
@@ -863,7 +863,13 @@ def messages_analyzed_detail(analyzed_id: str):
     row = msg_layer.store.get_analyzed(analyzed_id)
     if not row:
         raise HTTPException(404, "未找到分析消息")
-    return {"data": row.model_dump()}
+    raw_messages = msg_layer.store.get_raws_for_analyzed(analyzed_id)
+    return {
+        "data": {
+            **row.model_dump(),
+            "raw_messages": [r.model_dump() for r in raw_messages],
+        }
+    }
 
 
 @app.patch("/api/messages/analyzed/{analyzed_id}")

@@ -335,7 +335,7 @@ export function ThemeMatrixChart({
         {total > 0 && avail < total && (
           <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-muted-foreground">
             共 {avail}/{total} 天有题材数据（{reviewDays} 天来自复盘落盘）。
-            缺数据的日期需跑复盘或在首板分析导入涨停原因；有数据的日期会照常展示。
+            缺数据的日期需跑复盘或在涨停分析导入涨停原因；有数据的日期会照常展示。
           </p>
         )}
         <div className="rounded-2xl border border-border/60 bg-card/20 p-3">
