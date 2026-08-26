@@ -30,4 +30,5 @@ vr/.cache/
 # ---- macOS ----
 .DS_Store
 dist-astock/
-aktools_log.log
+# aktools 运行日志（含按日期滚动的 aktools_log.log.YYYY-MM-DD）
+aktools_log.log*
