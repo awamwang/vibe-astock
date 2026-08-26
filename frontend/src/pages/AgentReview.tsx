@@ -325,11 +325,19 @@ export function AgentReview() {
         const prevDone = Boolean(prev && archived.includes(prev));
 
         if (r && (r.target_date || r.trade_date)) {
-          setData(r); setMissing("");
           const day = r.target_date || r.trade_date || "";
-          // 上一交易日已落盘 → 日期框推到今天，方便接着跑本场；内容仍展示最近一份
-          setDate(prevDone ? today : day);
-          void loadTradeBudget(prevDone ? today : day);
+          if (prevDone) {
+            // 上一交易日已落盘 → 日期框推到今天，方便接着跑本场；今日尚无存档则只展示骨架
+            setDate(today);
+            setData(null);
+            setMissing(today);
+            setTradeBudget(null);
+          } else {
+            setData(r);
+            setMissing("");
+            setDate(day);
+            void loadTradeBudget(day);
+          }
         }
       } catch {
         if (alive.current && my === reqId.current) {
@@ -401,10 +409,14 @@ export function AgentReview() {
     pollOnce();
   }
 
-  const focus = data?.focus;
+  const loadedDay = data?.target_date || data?.trade_date || "";
+  // 日历选中日必须与载入的那份复盘一致，否则只展示骨架（避免「选今天、看昨天」）
+  const showContent = Boolean(data) && Boolean(date) && loadedDay === date;
+
+  const focus = showContent ? data?.focus : undefined;
   // 页面按"用户复盘的顺序"重排后，各卡片散在不同区块里，这里统一取一次
-  const facts = data?.market_facts;
-  const em = splitMetrics(data?.emotion_metrics);
+  const facts = showContent ? data?.market_facts : undefined;
+  const em = splitMetrics(showContent ? data?.emotion_metrics : undefined);
   const breadth = facts?.breadth;
   const marketTot = marketTotal(
     breadth?.universe,
@@ -428,7 +440,7 @@ export function AgentReview() {
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             情绪温度 · 上期验证 · 明日验证条件
-            {data && ` · 交易日 ${data.target_date || data.trade_date} · 生成于 ${data.generated_at}`}
+            {showContent && ` · 交易日 ${loadedDay} · 生成于 ${data?.generated_at}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -461,13 +473,13 @@ export function AgentReview() {
 
       {err && <div className="glass rounded-xl border-danger/30 px-4 py-3 text-sm text-danger">出错：{err}</div>}
       {notice && <div className="glass rounded-xl border-primary/30 px-4 py-3 text-sm text-muted-foreground">{notice}</div>}
-      {data?.warnings?.length ? (
+      {showContent && data?.warnings?.length ? (
         <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-[13px] text-warning">
           ⚠ 部分数据降级：{data.warnings.join("；")}
         </div>
       ) : null}
 
-      {!data && !running && (
+      {!showContent && !running && (
         <div className="glass rounded-2xl py-16 text-center text-muted-foreground">
           {missing
             ? <>{missing} 这天还没跑过复盘。<div className="mt-1 text-xs">点「生成复盘」补跑，或换一个日期</div></>
@@ -475,14 +487,13 @@ export function AgentReview() {
         </div>
       )}
 
-      {}
+      {showContent && (<>
 
       {/* ① 今天好不好做 */}
-      {}
       <BreadthPanel b={facts?.breadth} limitDown={facts?.loss_effect?.market_limit_down} />
       <TradeBudgetCard
         b={tradeBudget}
-        date={data?.target_date || data?.trade_date || date}
+        date={loadedDay || date}
       />
 
       {/* ② 昨天进去的人今天赚不赚钱 —— 用户说这是全页最有用的一块，所以提到第二位 */}
@@ -580,7 +591,7 @@ export function AgentReview() {
               </div>
             </div>
 
-            <VerificationResults reflection={data?.reflection} />
+            <VerificationResults reflection={showContent ? data?.reflection : undefined} />
 
             {safeArray<VerificationItem>(focus.verification_items).length > 0 && (
               <div className="mt-5 border-t-2 border-foreground pt-2.5">
@@ -613,26 +624,26 @@ export function AgentReview() {
                     </div>
                   ))}
                 </div>
-                <UserConditions date={data?.target_date || data?.trade_date || ""} />
+                <UserConditions date={loadedDay} />
               </div>
             )}
           </div>
         </section>
       )}
 
-      {}
-
-      {data && (
+      {showContent && data && (
         <AgentChat
           // 换交易日即重建组件，避免旧对话串到新复盘
-          key={data.target_date || data.trade_date}
+          key={loadedDay}
           endpoint="/api/review/chat"
           placeholder="就今天的复盘追问，如：展开电网设备的接力逻辑"
           suggestions={["最强主线今天的梯队结构是怎样的", "当前情绪处在周期哪个阶段", "各方向的龙头晋级还是断板了", "判断退潮要盯哪些数据信号"]}
         />
       )}
 
-      {data && <p className="border-t border-border pt-4 text-xs text-muted-foreground/70"><Target className="mr-1 inline h-3 w-3" /> {DISCLAIMER}</p>}
+      {showContent && <p className="border-t border-border pt-4 text-xs text-muted-foreground/70"><Target className="mr-1 inline h-3 w-3" /> {DISCLAIMER}</p>}
+
+      </>)}
     </div>
   );
 }
