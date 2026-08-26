@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
@@ -29,6 +29,7 @@ const REVIEW_NAV = [
   { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/watchlist", icon: Star, label: "自选股" },
+  { to: "/messages", icon: Newspaper, label: "消息分析" },
   { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
   { to: "/first-board", icon: Flame, label: "首板分析" },
   { to: "/heat", icon: CalendarRange, label: "多日情绪" },

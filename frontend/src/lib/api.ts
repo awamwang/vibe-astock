@@ -220,6 +220,82 @@ export interface RadarData {
   stats: { industries: number; total_sources: number; failed_sources?: number };
 }
 
+export type ImpactLevel = "critical" | "high" | "medium" | "low" | "noise";
+export type Freshness = "new" | "follow_up" | "duplicate" | "rumor";
+export type EffectStatus =
+  | "not_erupted" | "early_hype" | "ongoing_hype" | "already_hyped" | "faded" | "invalid";
+export type TargetKind = "market" | "sector" | "theme" | "stock" | "other";
+
+export interface ImpactTarget {
+  kind: TargetKind;
+  code?: string | null;
+  name: string;
+}
+
+export interface MessageSourceInfo {
+  id: string;
+  label: string;
+  adapter_type: "manual" | "poll";
+  enabled: boolean;
+  poll_interval_s?: number | null;
+  last_poll_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface RawMessageDraft {
+  draft_key: string;
+  source_id: string;
+  source_label: string;
+  content: string;
+  title: string;
+  keywords: string[];
+  url: string;
+  marks: string[];
+  external_ref?: string | null;
+  produced_at?: string | null;
+  effective_mode?: "immediate" | "scheduled";
+  effective_at?: string | null;
+  targets: ImpactTarget[];
+  meta?: Record<string, unknown>;
+}
+
+export interface AnalyzedMessage {
+  id: string;
+  raw_ids: string[];
+  source_id: string;
+  source_label: string;
+  title: string;
+  keywords: string[];
+  url: string;
+  marks: string[];
+  summary: string;
+  detail: string;
+  effective_mode: "immediate" | "scheduled";
+  effective_at?: string | null;
+  produced_at: string;
+  targets: ImpactTarget[];
+  impact_level: ImpactLevel;
+  freshness: Freshness;
+  effect_status: EffectStatus;
+  analyzed_at?: string | null;
+  analyzed_by?: string | null;
+  version: number;
+  status: "draft" | "confirmed" | "archived";
+}
+
+export interface MessageListResult {
+  items: AnalyzedMessage[];
+  total: number;
+}
+
+export interface XgbPollResult {
+  fetched: number;
+  inserted: number;
+  withdrawn: number;
+  head_mark?: string;
+  tail_mark?: string;
+}
+
 export interface Holding {
   code: string; name: string; price: number; shares: number; cost: number;
   market_value: number; pnl: number; pnl_pct: number;
@@ -612,6 +688,47 @@ export const api = {
     request<PluginRecord>("/plugins/uninstall", "POST", { plugin }),
   pluginsOpenDir: (plugin: string) =>
     request<{ ok: boolean; path: string }>("/plugins/open-dir", "POST", { plugin }),
+  messageSources: () => get<MessageSourceInfo[]>("/messages/sources"),
+  messageIngestPreview: (body: {
+    format?: string;
+    source_id?: string;
+    text?: string;
+    items?: Record<string, unknown>[];
+    options?: Record<string, unknown>;
+  }) => request<RawMessageDraft[]>("/messages/ingest/preview", "POST", body),
+  messageIngestCommit: (drafts: RawMessageDraft[]) =>
+    request<{ inserted: unknown[]; analyzed: AnalyzedMessage[] }>("/messages/ingest/commit", "POST", { drafts }),
+  messageAnalyzedList: (params: {
+    source?: string;
+    q?: string;
+    from_dt?: string;
+    to_dt?: string;
+    impact_level?: string;
+    effect_status?: string;
+    status?: string;
+    sort?: string;
+    order?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    });
+    const q = qs.toString();
+    return get<MessageListResult>(`/messages/analyzed${q ? `?${q}` : ""}`);
+  },
+  messageAnalyzedDetail: (id: string) => get<AnalyzedMessage>(`/messages/analyzed/${id}`),
+  messageAnalyzedPatch: (id: string, patch: Partial<AnalyzedMessage>) =>
+    request<AnalyzedMessage>(`/messages/analyzed/${id}`, "PATCH", patch),
+  messageAnalyzeQueue: (rawIds: string[], analyzedIds: string[] = []) =>
+    request<{ job_ids: string[]; queued: number }>("/messages/analyze", "POST", {
+      raw_ids: rawIds,
+      analyzed_ids: analyzedIds,
+    }),
+  messageAnalyzeQueueStatus: () =>
+    get<{ counts: Record<string, number>; pending: unknown[] }>("/messages/analyze/queue"),
+  messagePollXgb: () => request<XgbPollResult>("/messages/poll/xgb", "POST"),
 };
 
 export interface PluginPickResult {

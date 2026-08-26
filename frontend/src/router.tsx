@@ -7,6 +7,7 @@ import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
 import { Watchlist } from "@/pages/Watchlist";
+import { MessageAnalysis } from "@/pages/MessageAnalysis";
 import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
 import { ZtKeywordsSettings } from "@/pages/ZtKeywordsSettings";
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: "/heat", element: <AgentWeekly /> },
       { path: "/trade", element: <TradeBudgetPage /> },
       { path: "/watchlist", element: <Watchlist /> },
+      { path: "/messages", element: <MessageAnalysis /> },
       { path: "/experience", element: <ExperienceMemory /> },
       { path: "/settings", element: <Settings /> },
       { path: "/settings/keywords", element: <ZtKeywordsSettings /> },

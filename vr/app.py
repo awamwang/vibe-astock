@@ -28,11 +28,14 @@ import market
 import myreports as mr
 import firstboard
 import watchtower
+import message as msg_layer
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
+# 选股宝消息轮询（默认 30s，可用 MESSAGE_POLL_INTERVAL 调整）
+msg_layer.poller.start_poller()
 
 # CORS：默认放开（本地自托管友好）；公网部署时用 VR_ALLOW_ORIGINS 收紧成白名单。
 #   例：VR_ALLOW_ORIGINS="https://myhost"  （逗号分隔多个）
@@ -40,7 +43,7 @@ _ORIGINS = [o.strip() for o in os.environ.get("VR_ALLOW_ORIGINS", "*").split(","
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -675,3 +678,213 @@ def industry(top: int = Query(20, ge=5, le=50)):
         return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"行业排名异常：{e}") from e
+
+
+# ── 消息分析 ──────────────────────────────────────────────────────────────
+
+
+class IngestIn(BaseModel):
+    format: str = "plain"
+    source_id: str = "paste"
+    text: str | None = None
+    items: list[dict] | None = None
+    options: dict | None = None
+
+
+class IngestAdjustIn(BaseModel):
+    drafts: list[dict]
+
+
+class AnalyzeIn(BaseModel):
+    raw_ids: list[str] = []
+    analyzed_ids: list[str] = []
+
+
+class AnalyzedPatchIn(BaseModel):
+    title: str | None = None
+    keywords: list[str] | None = None
+    url: str | None = None
+    marks: list[str] | None = None
+    summary: str | None = None
+    detail: str | None = None
+    effective_mode: str | None = None
+    effective_at: str | None = None
+    impact_level: str | None = None
+    freshness: str | None = None
+    effect_status: str | None = None
+    status: str | None = None
+    targets: list[dict] | None = None
+
+
+def _list_query(
+    source: str = "",
+    q: str = "",
+    from_dt: str = "",
+    to_dt: str = "",
+    impact_level: str = "",
+    effect_status: str = "",
+    status: str = "",
+    sort: str = "produced_at",
+    order: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+) -> msg_layer.ListQuery:
+    return msg_layer.ListQuery(
+        source=source or None,
+        q=q or None,
+        from_dt=from_dt or None,
+        to_dt=to_dt or None,
+        impact_level=impact_level or None,
+        effect_status=effect_status or None,
+        status=status or None,
+        sort=sort if sort in ("produced_at", "ingested_at", "impact_level", "title") else "produced_at",
+        order=order if order in ("asc", "desc") else "desc",
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/messages/sources")
+def messages_sources():
+    return {"data": [s.model_dump() for s in msg_layer.store.list_sources()]}
+
+
+@app.post("/api/messages/ingest/preview")
+def messages_ingest_preview(body: IngestIn):
+    payload = msg_layer.IngestPayload(
+        format=body.format,
+        source_id=body.source_id,
+        text=body.text,
+        items=body.items,
+        options=body.options or {},
+    )
+    drafts = msg_layer.parse_ingest(payload)
+    return {"data": [d.model_dump() for d in drafts]}
+
+
+@app.post("/api/messages/ingest/commit")
+def messages_ingest_commit(body: IngestAdjustIn):
+    if not body.drafts:
+        raise HTTPException(400, "请提供 drafts")
+    drafts = [msg_layer.RawMessageDraft.model_validate(d) for d in body.drafts]
+    inserted = msg_layer.store.insert_raw_batch(drafts)
+    analyzed = []
+    for raw in inserted:
+        draft = next((d for d in drafts if d.external_ref == raw.external_ref or d.title == raw.title), None)
+        patch: dict = {}
+        if draft:
+            if draft.effective_mode == "scheduled":
+                patch["effective_mode"] = "scheduled"
+                patch["effective_at"] = draft.effective_at
+            if draft.targets:
+                patch["targets"] = [t.model_dump() for t in draft.targets]
+        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
+    return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
+
+
+@app.post("/api/messages/ingest/adjust")
+def messages_ingest_adjust(body: IngestAdjustIn):
+    drafts = [msg_layer.RawMessageDraft.model_validate(d) for d in body.drafts]
+    inserted = msg_layer.store.insert_raw_batch(drafts)
+    analyzed = []
+    for i, raw in enumerate(inserted):
+        d = drafts[i] if i < len(drafts) else None
+        patch: dict = {}
+        if d:
+            if d.effective_mode == "scheduled":
+                patch["effective_mode"] = "scheduled"
+                patch["effective_at"] = d.effective_at
+            if d.targets:
+                patch["targets"] = [t.model_dump() for t in d.targets]
+        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
+    return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
+
+
+@app.get("/api/messages/raw")
+def messages_raw_list(
+    source: str = "",
+    q: str = "",
+    from_dt: str = "",
+    to_dt: str = "",
+    sort: str = "produced_at",
+    order: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+):
+    query = _list_query(source=source, q=q, from_dt=from_dt, to_dt=to_dt, sort=sort, order=order, limit=limit, offset=offset)
+    rows, total = msg_layer.store.list_raw(query)
+    return {"data": {"items": [r.model_dump() for r in rows], "total": total}}
+
+
+@app.get("/api/messages/analyzed")
+def messages_analyzed_list(
+    source: str = "",
+    q: str = "",
+    from_dt: str = "",
+    to_dt: str = "",
+    impact_level: str = "",
+    effect_status: str = "",
+    status: str = "",
+    sort: str = "produced_at",
+    order: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+):
+    query = _list_query(
+        source=source,
+        q=q,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        impact_level=impact_level,
+        effect_status=effect_status,
+        status=status,
+        sort=sort,
+        order=order,
+        limit=limit,
+        offset=offset,
+    )
+    rows, total = msg_layer.store.list_analyzed(query)
+    return {"data": {"items": [r.model_dump() for r in rows], "total": total}}
+
+
+@app.get("/api/messages/analyzed/{analyzed_id}")
+def messages_analyzed_detail(analyzed_id: str):
+    row = msg_layer.store.get_analyzed(analyzed_id)
+    if not row:
+        raise HTTPException(404, "未找到分析消息")
+    return {"data": row.model_dump()}
+
+
+@app.patch("/api/messages/analyzed/{analyzed_id}")
+def messages_analyzed_patch(analyzed_id: str, body: AnalyzedPatchIn):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    patch["analyzed_by"] = "human"
+    row = msg_layer.store.update_analyzed(analyzed_id, patch)
+    if not row:
+        raise HTTPException(404, "未找到分析消息")
+    return {"data": row.model_dump()}
+
+
+@app.post("/api/messages/analyze")
+def messages_analyze(body: AnalyzeIn):
+    job_ids = msg_layer.store.enqueue_analyze(raw_ids=body.raw_ids, analyzed_ids=body.analyzed_ids)
+    return {"data": {"job_ids": job_ids, "queued": len(job_ids)}}
+
+
+@app.get("/api/messages/analyze/queue")
+def messages_analyze_queue():
+    return {
+        "data": {
+            "counts": msg_layer.store.count_jobs_by_status(),
+            "pending": msg_layer.store.list_pending_jobs(),
+        }
+    }
+
+
+@app.post("/api/messages/poll/xgb")
+def messages_poll_xgb():
+    try:
+        return {"data": msg_layer.xgb.fetch_pc_msgs()}
+    except Exception as e:  # noqa: BLE001
+        msg_layer.store.set_poll_state("xgb_msgs", last_error=str(e)[:500])
+        raise HTTPException(502, f"选股宝轮询失败：{e}") from e
