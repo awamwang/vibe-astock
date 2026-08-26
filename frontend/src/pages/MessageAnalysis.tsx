@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown, Radio,
+  ExternalLink, Sparkles, Check, Newspaper, Radio,
 } from "lucide-react";
 import { Disclaimer } from "@/components/ui/Disclaimer";
+import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
@@ -19,49 +20,7 @@ import { Link } from "react-router-dom";
 
 const SORTABLE_COLS = new Set(["produced_at", "title", "impact_level"]);
 
-function SortTh({
-  col,
-  label,
-  hint,
-  sort,
-  order,
-  onSort,
-  className,
-}: {
-  col: string;
-  label: string;
-  hint?: string;
-  sort: string;
-  order: "asc" | "desc";
-  onSort: (col: string) => void;
-  className?: string;
-}) {
-  const active = sort === col;
-  const sortable = SORTABLE_COLS.has(col);
-  return (
-    <th className={cn("px-3 py-2.5 text-left align-middle", className)}>
-      {sortable ? (
-        <button
-          type="button"
-          title={hint}
-          className={cn(
-            "inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors",
-            active ? "text-primary" : "text-muted-foreground hover:text-foreground",
-          )}
-          onClick={() => onSort(col)}
-        >
-          {label}
-          <ArrowUpDown className={cn("h-3 w-3", active && "text-primary")} />
-          {active && <span className="tabular-nums">{order === "desc" ? "↓" : "↑"}</span>}
-        </button>
-      ) : (
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" title={hint}>
-          {label}
-        </span>
-      )}
-    </th>
-  );
-}
+const sortThLabelCls = "text-xs font-semibold uppercase tracking-wide";
 
 const IMPACT_BADGE: Record<string, string> = {
   critical: "bg-danger/15 text-danger border-danger/30",
@@ -802,13 +761,13 @@ export function MessageAnalysis() {
                       <th className="w-10 px-3 py-2.5">
                         <span className="sr-only">选择</span>
                       </th>
-                      <SortTh col="title" label="标题" sort={sort} order={order} onSort={toggleSort} className="min-w-[220px]" />
-                      <SortTh col="source" label="来源" sort={sort} order={order} onSort={toggleSort} className="w-24" />
-                      <SortTh col="impact_level" label="级别/状态" sort={sort} order={order} onSort={toggleSort} className="w-36" />
-                      <SortTh col="followed" label="关注" sort={sort} order={order} onSort={toggleSort} className="w-20" />
-                      <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sort={sort} order={order} onSort={toggleSort} className="w-28" />
-                      <SortTh col="targets" label="关联标的" sort={sort} order={order} onSort={toggleSort} className="min-w-[160px]" />
-                      <SortTh col="produced_at" label="产生时间" sort={sort} order={order} onSort={toggleSort} className="w-36" />
+                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[220px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="impact_level" label="级别/状态" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-36 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="followed" label="关注" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("followed")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("keywords")} className="w-28 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="targets" label="关联标的" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("targets")} className="min-w-[160px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="produced_at" label="产生时间" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("produced_at")} className="w-36 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                     </tr>
                   </thead>
                   <tbody>
