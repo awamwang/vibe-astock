@@ -102,28 +102,6 @@ def _calendar_targets(raw_targets: Any) -> list[ImpactTarget]:
     return out
 
 
-def _calendar_event_content(event: dict[str, Any]) -> str:
-    parts: list[str] = []
-    category = str(event.get("category") or "").strip()
-    if category:
-        parts.append(f"类别：{category}")
-    targets = event.get("targets")
-    if isinstance(targets, list) and targets:
-        names: list[str] = []
-        for t in targets:
-            if not isinstance(t, dict):
-                continue
-            name = str(t.get("name") or "").strip()
-            code = str(t.get("code") or "").strip()
-            if name and code:
-                names.append(f"{name}({code})")
-            elif name:
-                names.append(name)
-        if names:
-            parts.append("相关标的：" + "、".join(names))
-    return "\n".join(parts) if parts else str(event.get("title") or "")
-
-
 def _draft_from_calendar_v4_event(
     event: dict[str, Any],
     *,
@@ -158,7 +136,7 @@ def _draft_from_calendar_v4_event(
         draft_key=_draft_key(),
         source_id="calendar",
         source_label=label or "财经大事日历",
-        content=_calendar_event_content(event),
+        content=title,
         title=title,
         keywords=keywords,
         marks=marks,

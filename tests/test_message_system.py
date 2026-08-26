@@ -121,6 +121,8 @@ def test_calendar_v4_json_import(msg_db):
     assert drafts[0].keywords == ["必看大事"]
     assert "must_watch" in drafts[0].marks
     assert "flame" in drafts[0].marks
+    assert drafts[0].content == "美联储议息"
+    assert "类别：" not in drafts[0].content
     assert drafts[0].meta.get("impact_level") == "high"
     assert drafts[1].meta.get("impact_level") == "low"
     assert any(t.kind == "sector" and t.name == "银行" for t in drafts[0].targets)
@@ -476,4 +478,62 @@ def test_list_analyzed_pagination_and_sort(msg_db):
     )
     effects = [r.effect_status for r in by_effect]
     assert effects == sorted(effects)
+
+
+def test_favorited_batch_and_filter(msg_db):
+    d = RawMessageDraft(
+        draft_key="fav1",
+        source_id="paste",
+        source_label="粘贴",
+        content="收藏测试",
+        title="收藏测试",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    an = store.upsert_analyzed_from_raw(raw, path=msg_db)
+    assert an.favorited is False
+
+    n = store.set_favorited_batch([an.id], True, path=msg_db)
+    assert n == 1
+    got = store.get_analyzed(an.id, path=msg_db)
+    assert got is not None
+    assert got.favorited is True
+
+    yes_rows, yes_total = store.list_analyzed(
+        store.ListQuery(favorited="yes"),
+        path=msg_db,
+    )
+    assert yes_total == 1
+    assert yes_rows[0].id == an.id
+
+    no_rows, no_total = store.list_analyzed(
+        store.ListQuery(favorited="no"),
+        path=msg_db,
+    )
+    assert no_total == 0
+    assert no_rows == []
+
+
+def test_delete_analyzed_batch(msg_db):
+    ids: list[str] = []
+    for i in range(2):
+        d = RawMessageDraft(
+            draft_key=f"del{i}",
+            source_id="paste",
+            source_label="粘贴",
+            content=f"删除测试{i}",
+            title=f"删除测试{i}",
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        an = store.upsert_analyzed_from_raw(raw, path=msg_db)
+        ids.append(an.id)
+
+    deleted = store.delete_analyzed_batch([ids[0]], path=msg_db)
+    assert deleted == 1
+    assert store.get_analyzed(ids[0], path=msg_db) is None
+    assert store.get_analyzed(ids[1], path=msg_db) is not None
+    assert store.get_raws_for_analyzed(ids[0], path=msg_db) == []
+
+    rows, total = store.list_analyzed(store.ListQuery(), path=msg_db)
+    assert total == 1
+    assert rows[0].id == ids[1]
 
