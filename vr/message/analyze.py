@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from . import store
-from .schemas import AnalyzedMessage, RawMessage
+from .schemas import AnalyzedMessage, ImpactTarget, RawMessage
 
 _IMPACT = frozenset({"critical", "high", "medium", "low", "noise"})
 _FRESHNESS = frozenset({"new", "follow_up", "duplicate", "rumor"})
@@ -165,6 +165,20 @@ def build_user_prompt(raw: RawMessage, analyzed: AnalyzedMessage) -> str:
         parts.append("【链接】" + (raw.url or analyzed.url))
     if raw.keywords:
         parts.append("【已有标签】" + "、".join(raw.keywords))
+    existing = analyzed.targets or []
+    if not existing:
+        existing = [
+            ImpactTarget.model_validate(t)
+            for t in (raw.meta.get("_targets_json") or [])
+            if isinstance(t, dict)
+        ]
+    if existing:
+        lines = []
+        for t in existing:
+            code_part = f"({t.code})" if t.code else ""
+            lines.append(f"- {t.kind}:{t.name}{code_part}")
+        parts.append("【已有标的】\n" + "\n".join(lines))
+        parts.append("（分析时请保留以上已有标的，可补充但勿清空）")
     parts.append("【正文】\n" + (raw.content or analyzed.detail))
     return "\n".join(parts)
 

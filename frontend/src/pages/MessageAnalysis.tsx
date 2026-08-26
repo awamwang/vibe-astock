@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper,
+  ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown,
 } from "lucide-react";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { cn } from "@/lib/utils";
@@ -10,16 +10,57 @@ import {
   type AnalyzedMessage, type MessageSourceInfo, type RawMessageDraft,
 } from "@/lib/api";
 import {
-  EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, targetTitle,
+  EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
+  formatMarkLabel, keywordHint, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 
-const SORT_OPTIONS = [
-  { value: "produced_at", label: "产生时间" },
-  { value: "impact_level", label: "影响级别" },
-  { value: "title", label: "标题" },
-];
+const SORTABLE_COLS = new Set(["produced_at", "title", "impact_level"]);
+
+function SortTh({
+  col,
+  label,
+  hint,
+  sort,
+  order,
+  onSort,
+  className,
+}: {
+  col: string;
+  label: string;
+  hint?: string;
+  sort: string;
+  order: "asc" | "desc";
+  onSort: (col: string) => void;
+  className?: string;
+}) {
+  const active = sort === col;
+  const sortable = SORTABLE_COLS.has(col);
+  return (
+    <th className={cn("px-3 py-2.5 text-left align-middle", className)}>
+      {sortable ? (
+        <button
+          type="button"
+          title={hint}
+          className={cn(
+            "inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors",
+            active ? "text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={() => onSort(col)}
+        >
+          {label}
+          <ArrowUpDown className={cn("h-3 w-3", active && "text-primary")} />
+          {active && <span className="tabular-nums">{order === "desc" ? "↓" : "↑"}</span>}
+        </button>
+      ) : (
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" title={hint}>
+          {label}
+        </span>
+      )}
+    </th>
+  );
+}
 
 const IMPACT_BADGE: Record<string, string> = {
   critical: "bg-danger/15 text-danger border-danger/30",
@@ -58,6 +99,59 @@ function Badge({
     >
       {children}
     </span>
+  );
+}
+
+function MessageTags({ item }: { item: AnalyzedMessage }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      <Badge className={IMPACT_BADGE[item.impact_level] || IMPACT_BADGE.medium}>
+        {IMPACT_LABEL[item.impact_level] || item.impact_level}
+      </Badge>
+      <Badge className="border-border bg-muted/50 text-foreground">
+        {EFFECT_LABEL[item.effect_status] || item.effect_status}
+      </Badge>
+      <Badge className="border-border bg-muted/30 text-muted-foreground">
+        {FRESHNESS_LABEL[item.freshness] || item.freshness}
+      </Badge>
+    </div>
+  );
+}
+
+function MessageKeywords({ item }: { item: AnalyzedMessage }) {
+  if (!item.keywords.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1" title={keywordHint(item.source_id)}>
+      {item.keywords.slice(0, 6).map((k) => (
+        <Badge key={k} className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200">
+          {k}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function MessageTargets({ item, max = 4 }: { item: AnalyzedMessage; max?: number }) {
+  if (!item.targets.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {item.targets.slice(0, max).map((t, i) => (
+        <Badge
+          key={`${t.name}-${i}`}
+          className={cn(
+            "text-foreground",
+            t.kind === "stock"
+              ? "border-primary/30 bg-primary/10"
+              : t.kind === "sector"
+                ? "border-amber-500/30 bg-amber-500/10"
+                : "border-border bg-background",
+          )}
+          title={targetHint(t)}
+        >
+          {targetTitle(t)}
+        </Badge>
+      ))}
+    </div>
   );
 }
 
@@ -128,6 +222,15 @@ export function MessageAnalysis() {
 
   const xgbSource = useMemo(() => sources.find((s) => s.id === "xgb_msgs"), [sources]);
 
+  const toggleSort = (col: string) => {
+    if (!SORTABLE_COLS.has(col)) return;
+    if (sort === col) setOrder((o) => (o === "desc" ? "asc" : "desc"));
+    else {
+      setSort(col);
+      setOrder("desc");
+    }
+  };
+
   const runPreview = async () => {
     setPreviewLoading(true);
     setErr(null);
@@ -176,7 +279,8 @@ export function MessageAnalysis() {
     setPollMsg(null);
     try {
       const r = await api.messagePollXgb();
-      setPollMsg(`拉取 ${r.fetched} 条，新增 ${r.inserted} 条`);
+      const synced = await api.messageXgbResyncTargets();
+      setPollMsg(`拉取 ${r.fetched} 条，入库/更新 ${r.inserted} 条，同步标的 ${synced.synced} 条`);
       await loadList();
       await loadSources();
     } catch (e) {
@@ -317,19 +421,6 @@ export function MessageAnalysis() {
                 <option key={k} value={k}>{v}</option>
               ))}
             </select>
-            <select className={selectCls} value={sort} onChange={(e) => setSort(e.target.value)}>
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className={cn(selectCls, "min-w-[44px] text-center")}
-              onClick={() => setOrder((o) => (o === "desc" ? "asc" : "desc"))}
-              title={order === "desc" ? "降序" : "升序"}
-            >
-              {order === "desc" ? "↓" : "↑"}
-            </button>
             {selectedIds.size > 0 && (
               <button
                 type="button"
@@ -459,11 +550,15 @@ export function MessageAnalysis() {
       </section>
 
       <section className="w-full min-w-0">
-        <div className="mb-2">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
           <SectionLabel>消息列表 · Messages</SectionLabel>
+          <p className="text-xs text-muted-foreground">
+            橘黄数字 = <code className="text-foreground">keywords</code>（选股宝 SubjIds 主题频道 ID）；
+            详情里 <code className="text-foreground">impact:N</code> = 选股宝 Impact 方向，存于 marks
+          </p>
         </div>
-        <div className="grid w-full min-w-0 gap-4 xl:grid-cols-12">
-          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-7">
+        <div className="grid w-full min-w-0 gap-4 xl:grid-cols-3">
+          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-2">
             <div className="max-h-[calc(100vh-220px)] overflow-auto">
               {items.length === 0 && !loading && (
                 <p className="p-8 text-center text-sm text-muted-foreground">
@@ -476,81 +571,85 @@ export function MessageAnalysis() {
                   加载消息…
                 </div>
               )}
-              <ul className="divide-y divide-border/60">
-                {items.map((item) => (
-                  <li
-                    key={item.id}
-                    className={cn(
-                      "cursor-pointer px-5 py-4 transition-colors hover:bg-muted/25",
-                      selected?.id === item.id && "bg-primary/8 border-l-4 border-l-primary",
-                    )}
-                    onClick={() => setSelected(item)}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        className="mt-1 h-4 w-4 accent-[hsl(var(--primary))]"
-                        checked={selectedIds.has(item.id)}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(item.id);
-                        }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {item.marks.includes("highlight") && (
-                            <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
-                          )}
-                          <span className="text-[15px] font-semibold leading-snug text-foreground">
-                            {item.title || item.summary || "—"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">{item.source_label}</span>
-                        </div>
-                        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground line-clamp-2">
-                          {item.summary || item.detail}
-                        </p>
-                        <div className="mt-2.5 flex flex-wrap gap-1.5">
-                          <Badge className={IMPACT_BADGE[item.impact_level] || IMPACT_BADGE.medium}>
-                            {IMPACT_LABEL[item.impact_level] || item.impact_level}
-                          </Badge>
-                          <Badge className="border-border bg-muted/50 text-foreground">
-                            {EFFECT_LABEL[item.effect_status] || item.effect_status}
-                          </Badge>
-                          <Badge className="border-border bg-muted/30 text-muted-foreground">
-                            {FRESHNESS_LABEL[item.freshness] || item.freshness}
-                          </Badge>
-                          {item.keywords.slice(0, 4).map((k) => (
-                            <Badge key={k} className="border-primary/25 bg-primary/10 text-primary">
-                              {k}
-                            </Badge>
-                          ))}
-                          {item.targets.slice(0, 5).map((t, i) => (
-                            <Badge
-                              key={`${t.name}-${i}`}
-                              className="border-border bg-background text-foreground"
-                              title={t.code ? `代码：${t.code}` : undefined}
-                            >
-                              {targetTitle(t)}
-                            </Badge>
-                          ))}
-                        </div>
-                        <p className="mt-2 text-xs tabular-nums text-muted-foreground">{item.produced_at}</p>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              {items.length > 0 && (
+                <table className="w-full min-w-[960px] border-collapse text-sm">
+                  <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur-sm">
+                    <tr className="border-b border-border/60">
+                      <th className="w-10 px-3 py-2.5">
+                        <span className="sr-only">选择</span>
+                      </th>
+                      <SortTh col="title" label="标题" sort={sort} order={order} onSort={toggleSort} className="min-w-[220px]" />
+                      <SortTh col="source" label="来源" sort={sort} order={order} onSort={toggleSort} className="w-24" />
+                      <SortTh col="impact_level" label="级别/状态" sort={sort} order={order} onSort={toggleSort} className="w-36" />
+                      <SortTh col="keywords" label="分类ID" hint="选股宝=SubjIds" sort={sort} order={order} onSort={toggleSort} className="w-28" />
+                      <SortTh col="targets" label="关联标的" sort={sort} order={order} onSort={toggleSort} className="min-w-[160px]" />
+                      <SortTh col="produced_at" label="产生时间" sort={sort} order={order} onSort={toggleSort} className="w-36" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/25",
+                          selected?.id === item.id && "bg-primary/8",
+                        )}
+                        onClick={() => setSelected(item)}
+                      >
+                        <td className="px-3 py-3 align-top" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-[hsl(var(--primary))]"
+                            checked={selectedIds.has(item.id)}
+                            onChange={() => toggleSelect(item.id)}
+                          />
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {item.marks.includes("highlight") && (
+                                <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
+                              )}
+                              <span className="font-semibold leading-snug text-foreground line-clamp-2">
+                                {item.title || item.summary || "—"}
+                              </span>
+                            </div>
+                            <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
+                              {item.summary || item.detail}
+                            </p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs text-muted-foreground">
+                          {item.source_label}
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <MessageTags item={item} />
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <MessageKeywords item={item} />
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <MessageTargets item={item} max={3} />
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {item.produced_at}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
 
-          <div className="glass min-w-0 rounded-2xl p-5 xl:col-span-5 max-h-[calc(100vh-220px)] overflow-auto">
+          <div className="glass min-w-0 rounded-2xl p-4 xl:col-span-1 max-h-[calc(100vh-220px)] overflow-auto">
             {!selected ? (
               <p className="py-12 text-center text-sm text-muted-foreground">选择左侧消息查看详情</p>
             ) : (
               <div className="space-y-4">
                 <div className="flex items-start justify-between gap-3 border-b border-border/60 pb-4">
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-lg font-bold leading-snug text-foreground">
+                    <h2 className="text-base font-bold leading-snug text-foreground line-clamp-3">
                       {selected.title || "—"}
                     </h2>
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -593,10 +692,18 @@ export function MessageAnalysis() {
                 {(selected.marks.length > 0 || selected.keywords.length > 0) && (
                   <div className="flex flex-wrap gap-2">
                     {selected.marks.map((m) => (
-                      <Badge key={m} className="border-danger/30 bg-danger/10 text-danger">{m}</Badge>
+                      <Badge key={m} className="border-muted-foreground/30 bg-muted/40 text-foreground" title={formatMarkLabel(m)}>
+                        {formatMarkLabel(m)}
+                      </Badge>
                     ))}
                     {selected.keywords.map((k) => (
-                      <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
+                      <Badge
+                        key={k}
+                        className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200"
+                        title={keywordHint(selected.source_id)}
+                      >
+                        {k}
+                      </Badge>
                     ))}
                   </div>
                 )}
@@ -641,8 +748,15 @@ export function MessageAnalysis() {
                       {selected.targets.map((t, i) => (
                         <Badge
                           key={i}
-                          className="border-border bg-background px-2.5 py-1 text-sm text-foreground"
-                          title={t.code ? `代码：${t.code}` : t.kind}
+                          className={cn(
+                            "px-2.5 py-1 text-sm text-foreground",
+                            t.kind === "stock"
+                              ? "border-primary/30 bg-primary/10"
+                              : t.kind === "sector"
+                                ? "border-amber-500/30 bg-amber-500/10"
+                                : "border-border bg-background",
+                          )}
+                          title={targetHint(t)}
                         >
                           {targetTitle(t)}
                         </Badge>

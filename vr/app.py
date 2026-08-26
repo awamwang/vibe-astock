@@ -910,3 +910,13 @@ def messages_poll_xgb():
     except Exception as e:  # noqa: BLE001
         msg_layer.store.set_poll_state("xgb_msgs", last_error=str(e)[:500])
         raise HTTPException(502, f"选股宝轮询失败：{e}") from e
+
+
+@app.post("/api/messages/xgb/resync-targets")
+def messages_xgb_resync_targets():
+    """从已入库选股宝 raw.meta 重建关联标的（修复历史数据）。"""
+    try:
+        n = msg_layer.xgb.resync_targets_from_meta()
+        return {"data": {"synced": n}}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"同步关联标的失败：{e}") from e

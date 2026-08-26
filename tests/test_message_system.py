@@ -84,8 +84,27 @@ def test_xgb_map():
     draft = xgb.map_xgb_item(item)
     assert draft.external_ref == "12345"
     assert draft.title == "某股涨停"
-    assert any(t.code == "600519" for t in draft.targets)
-    assert any(t.name == "白酒" for t in draft.targets)
+    assert any(t.kind == "stock" and t.code == "600519" for t in draft.targets)
+    assert any(t.kind == "sector" and t.name == "白酒" and t.code == "bk1" for t in draft.targets)
+
+
+def test_xgb_targets_sync_to_analyzed(msg_db):
+    item = {
+        "Id": "888",
+        "Title": "板块异动",
+        "AllStocks": [{"Name": "海南橡胶", "Symbol": "601118.SH"}],
+        "BkjInfoArr": [{"Id": "123", "Name": "农业"}],
+        "CreatedAtInSec": 1700000000,
+    }
+    draft = xgb.map_xgb_item(item)
+    raw = store.insert_raw_batch([draft], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(raw, patch={"targets": [t.model_dump() for t in draft.targets]}, path=msg_db)
+    rows, _ = store.list_analyzed(store.ListQuery(source="xgb_msgs"), path=msg_db)
+    assert len(rows) == 1
+    kinds = {t.kind for t in rows[0].targets}
+    assert "stock" in kinds and "sector" in kinds
+    stock = next(t for t in rows[0].targets if t.kind == "stock")
+    assert stock.code == "601118" and stock.name == "海南橡胶"
 
 
 def test_dedup_external_ref(msg_db):

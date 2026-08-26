@@ -48,6 +48,32 @@ def _ts_to_str(ts: int | float | None) -> str:
         return datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def extract_targets(item: dict[str, Any]) -> list[ImpactTarget]:
+    """从选股宝单条 JSON 提取关联个股与板块。"""
+    targets: list[ImpactTarget] = []
+    for s in item.get("AllStocks") or item.get("Stocks") or []:
+        if not isinstance(s, dict):
+            continue
+        code = symbol_to_code(str(s.get("Symbol") or ""))
+        name = str(s.get("Name") or code or "").strip()
+        if name or code:
+            targets.append(ImpactTarget(kind="stock", code=code, name=name))
+    for b in item.get("BkjInfoArr") or []:
+        if not isinstance(b, dict):
+            continue
+        block_id = str(b.get("Id") or "").strip()
+        block_name = str(b.get("Name") or "").strip()
+        if block_name or block_id:
+            targets.append(
+                ImpactTarget(
+                    kind="sector",
+                    code=block_id or None,
+                    name=block_name,
+                )
+            )
+    return targets
+
+
 def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
     msg_id = str(item.get("Id") or "")
     title = (item.get("Title") or "").strip()
@@ -61,24 +87,7 @@ def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
             ts = int(dt.timestamp())
         except ValueError:
             ts = None
-    targets: list[ImpactTarget] = []
-    for s in item.get("AllStocks") or item.get("Stocks") or []:
-        if not isinstance(s, dict):
-            continue
-        code = symbol_to_code(str(s.get("Symbol") or ""))
-        name = str(s.get("Name") or code or "")
-        if name or code:
-            targets.append(ImpactTarget(kind="stock", code=code, name=name))
-    for b in item.get("BkjInfoArr") or []:
-        if not isinstance(b, dict):
-            continue
-        targets.append(
-            ImpactTarget(
-                kind="theme",
-                code=str(b.get("Id") or "") or None,
-                name=str(b.get("Name") or ""),
-            )
-        )
+    targets = extract_targets(item)
     marks: list[str] = []
     if item.get("IsWithdrawn"):
         marks.append("withdrawn")
@@ -142,7 +151,13 @@ def fetch_pc_msgs(
                 withdrawn += 1
 
     for raw in inserted:
-        store.upsert_analyzed_from_raw(raw, path=path)
+        patch: dict[str, Any] = {}
+        targets = raw.meta.get("_targets_json") or []
+        if not targets and isinstance(raw.meta.get("xgb_raw"), dict):
+            targets = [t.model_dump() for t in extract_targets(raw.meta["xgb_raw"])]
+        if targets:
+            patch["targets"] = targets
+        store.upsert_analyzed_from_raw(raw, patch=patch, path=path)
 
     store.set_poll_state(
         "xgb_msgs",
@@ -158,3 +173,20 @@ def fetch_pc_msgs(
         "head_mark": head,
         "tail_mark": tail,
     }
+
+
+def resync_targets_from_meta(*, path: str | None = None, limit: int = 500) -> int:
+    """从历史 raw.meta（含 xgb_raw）重建关联标的到 analyzed。"""
+    from .schemas import ListQuery
+
+    raws, _ = store.list_raw(ListQuery(source="xgb_msgs", limit=limit), path=path)
+    n = 0
+    for raw in raws:
+        targets: list[dict] = list(raw.meta.get("_targets_json") or [])
+        if not targets and isinstance(raw.meta.get("xgb_raw"), dict):
+            targets = [t.model_dump() for t in extract_targets(raw.meta["xgb_raw"])]
+        if not targets:
+            continue
+        store.upsert_analyzed_from_raw(raw, patch={"targets": targets}, path=path)
+        n += 1
+    return n

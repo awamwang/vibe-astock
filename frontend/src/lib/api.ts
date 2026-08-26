@@ -729,6 +729,7 @@ export const api = {
   messageAnalyzeQueueStatus: () =>
     get<{ counts: Record<string, number>; pending: unknown[] }>("/messages/analyze/queue"),
   messagePollXgb: () => request<XgbPollResult>("/messages/poll/xgb", "POST"),
+  messageXgbResyncTargets: () => request<{ synced: number }>("/messages/xgb/resync-targets", "POST"),
 };
 
 export interface PluginPickResult {

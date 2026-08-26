@@ -314,6 +314,13 @@ def set_poll_state(
             conn.commit()
 
 
+def _draft_meta(d: RawMessageDraft) -> dict[str, Any]:
+    meta = dict(d.meta or {})
+    if d.targets:
+        meta["_targets_json"] = [t.model_dump() for t in d.targets]
+    return meta
+
+
 def insert_raw_batch(
     drafts: list[RawMessageDraft],
     *,
@@ -331,25 +338,49 @@ def insert_raw_batch(
         with closing(_connect(db)) as conn:
             for d in drafts:
                 ext = d.external_ref
+                body = d.content.strip()
+                ch = content_hash(body or d.title)
+                produced = d.produced_at or now
+                meta = _draft_meta(d)
+
                 if ext:
                     exists = conn.execute(
                         "SELECT id FROM raw_message WHERE source_id = ? AND external_ref = ? AND withdrawn = 0",
                         (d.source_id, ext),
                     ).fetchone()
                     if exists:
+                        rid = exists["id"]
+                        conn.execute(
+                            """
+                            UPDATE raw_message SET
+                                content = ?, title = ?, keywords_json = ?, url = ?, marks_json = ?,
+                                content_hash = ?, produced_at = ?, meta_json = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                body,
+                                d.title or "",
+                                _json_dumps(d.keywords),
+                                d.url or "",
+                                _json_dumps(d.marks),
+                                ch,
+                                produced,
+                                _json_dumps(meta),
+                                rid,
+                            ),
+                        )
+                        row = conn.execute("SELECT * FROM raw_message WHERE id = ?", (rid,)).fetchone()
+                        if row:
+                            inserted.append(_row_raw(row))
                         continue
-                body = d.content.strip()
-                ch = content_hash(body or d.title)
+
                 dup = conn.execute(
                     "SELECT id FROM raw_message WHERE source_id = ? AND content_hash = ? AND withdrawn = 0",
                     (d.source_id, ch),
                 ).fetchone()
                 if dup and not ext:
                     continue
-                rid = ext if ext and d.source_id == "xgb_msgs" else new_id()
-                if ext and d.source_id == "xgb_msgs":
-                    rid = f"xgb_{ext}"
-                produced = d.produced_at or now
+                rid = f"xgb_{ext}" if ext and d.source_id == "xgb_msgs" else new_id()
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO raw_message (
@@ -371,7 +402,7 @@ def insert_raw_batch(
                         ext,
                         produced,
                         now,
-                        _json_dumps(d.meta),
+                        _json_dumps(meta),
                     ),
                 )
                 if conn.total_changes:
@@ -390,11 +421,45 @@ def insert_raw_batch(
                             external_ref=ext,
                             produced_at=produced,
                             ingested_at=now,
-                            meta=dict(d.meta),
+                            meta=meta,
                         )
                     )
             conn.commit()
     return inserted
+
+
+def _sync_impact_targets(
+    conn: sqlite3.Connection,
+    analyzed_id: str,
+    targets: list[Any],
+) -> None:
+    conn.execute("DELETE FROM impact_target WHERE analyzed_id = ?", (analyzed_id,))
+    if not isinstance(targets, list):
+        return
+    for i, t in enumerate(targets):
+        if isinstance(t, dict):
+            conn.execute(
+                """
+                INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    analyzed_id,
+                    t.get("kind", "other"),
+                    t.get("code"),
+                    t.get("name", ""),
+                    i,
+                ),
+            )
+
+
+def _resolve_targets(raw: RawMessage, patch: dict[str, Any]) -> list[Any]:
+    if "targets" in patch and patch["targets"] is not None:
+        return patch["targets"]
+    from_meta = _json_loads(raw.meta.get("_targets_json"), [])
+    if from_meta:
+        return from_meta
+    return []
 
 
 def mark_withdrawn(source_id: str, external_ref: str, *, path: Optional[str] = None) -> bool:
@@ -607,6 +672,7 @@ def upsert_analyzed_from_raw(
                         aid,
                     ),
                 )
+                _sync_impact_targets(conn, aid, _resolve_targets(raw, patch))
             else:
                 aid = new_id("an")
                 summary = patch.get("summary") or (raw.title[:120] if raw.title else raw.content[:120])
@@ -643,19 +709,7 @@ def upsert_analyzed_from_raw(
                     "INSERT OR IGNORE INTO raw_analyzed_link (raw_id, analyzed_id) VALUES (?, ?)",
                     (raw.id, aid),
                 )
-                targets = patch.get("targets")
-                if targets is None:
-                    targets = _json_loads(raw.meta.get("_targets_json"), [])
-                if isinstance(targets, list):
-                    for i, t in enumerate(targets):
-                        if isinstance(t, dict):
-                            conn.execute(
-                                """
-                                INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
-                                VALUES (?, ?, ?, ?, ?)
-                                """,
-                                (aid, t.get("kind", "other"), t.get("code"), t.get("name", ""), i),
-                            )
+                _sync_impact_targets(conn, aid, _resolve_targets(raw, patch))
             conn.commit()
     result = get_analyzed(aid, path=path)
     assert result is not None
