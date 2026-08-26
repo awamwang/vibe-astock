@@ -49,11 +49,17 @@ function MainShell() {
   const open = !!panel?.target;
   const { pathname } = useLocation();
   const widePage = pathname === "/heat" || pathname === "/messages";
+  const settingsKeywordsPage = pathname === "/settings/keywords";
+  const contentMaxWidth = widePage
+    ? "max-w-none w-full"
+    : settingsKeywordsPage
+      ? "max-w-[85rem] w-full"
+      : "max-w-6xl";
 
   return (
     <main className="flex min-w-0 flex-1 overflow-hidden">
       <div className="min-w-0 flex-1 overflow-auto">
-        <div className={cn("mx-auto px-6 py-6", widePage ? "max-w-none w-full" : "max-w-6xl")}>
+        <div className={cn("mx-auto px-6 py-6", contentMaxWidth)}>
           <Outlet />
         </div>
       </div>
