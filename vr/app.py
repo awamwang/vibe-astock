@@ -29,6 +29,7 @@ import myreports as mr
 import firstboard
 import watchtower
 import message as msg_layer
+from message import analyze as msg_analyze
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
@@ -700,6 +701,12 @@ class AnalyzeIn(BaseModel):
     analyzed_ids: list[str] = []
 
 
+class MessageAnalyzeRunReq(BaseModel):
+    llm: LLMConfig
+    raw_ids: list[str] = []
+    analyzed_ids: list[str] = []
+
+
 class AnalyzedPatchIn(BaseModel):
     title: str | None = None
     keywords: list[str] | None = None
@@ -863,6 +870,21 @@ def messages_analyzed_patch(analyzed_id: str, body: AnalyzedPatchIn):
     if not row:
         raise HTTPException(404, "未找到分析消息")
     return {"data": row.model_dump()}
+
+
+@app.post("/api/messages/analyze/run")
+def messages_analyze_run(req: MessageAnalyzeRunReq):
+    """批量 AI 分析（NDJSON 流：progress / item / item_error / done）。"""
+    cfg = _check_llm(req.llm)
+
+    def events():
+        yield from msg_analyze.run_batch_stream(
+            cfg,
+            raw_ids=req.raw_ids,
+            analyzed_ids=req.analyzed_ids,
+        )
+
+    return _ndjson(events)
 
 
 @app.post("/api/messages/analyze")

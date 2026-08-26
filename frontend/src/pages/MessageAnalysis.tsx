@@ -12,6 +12,8 @@ import {
 import {
   EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, targetTitle,
 } from "@/lib/messages";
+import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
+import { Link } from "react-router-dom";
 
 const SORT_OPTIONS = [
   { value: "produced_at", label: "产生时间" },
@@ -83,6 +85,8 @@ export function MessageAnalysis() {
 
   const [selected, setSelected] = useState<AnalyzedMessage | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -189,16 +193,38 @@ export function MessageAnalysis() {
     });
   };
 
-  const queueAnalyze = async () => {
-    const ids = Array.from(selectedIds);
+  const runAnalyze = async (ids: string[]) => {
     if (!ids.length) return;
+    if (!hasLlm()) {
+      setErr("请先在「接入 AI」配置模型后再分析");
+      return;
+    }
+    setAnalyzing(true);
+    setAnalyzeProgress(null);
+    setErr(null);
     try {
-      await api.messageAnalyzeQueue([], ids);
-      setPollMsg(`已入队 ${ids.length} 条分析任务（Phase 2 执行）`);
+      const result = await messageAnalyzeRun(ids, [], {
+        onProgress: (p) => setAnalyzeProgress(`${p.current} / ${p.total}`),
+        onItem: (item) => {
+          setItems((list) => list.map((x) => (x.id === item.id ? item : x)));
+          setSelected((cur) => (cur?.id === item.id ? item : cur));
+        },
+      });
+      setPollMsg(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+      if (result.failed) {
+        setErr(result.errors.map((e) => `${e.id}: ${e.message}`).join("；"));
+      }
+      setSelectedIds(new Set());
+      await loadList();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "入队失败");
+      setErr(e instanceof ApiError ? e.message : "AI 分析失败");
+    } finally {
+      setAnalyzing(false);
+      setAnalyzeProgress(null);
     }
   };
+
+  const queueAnalyze = () => runAnalyze(Array.from(selectedIds));
 
   const confirmItem = async (item: AnalyzedMessage) => {
     try {
@@ -307,16 +333,25 @@ export function MessageAnalysis() {
             {selectedIds.size > 0 && (
               <button
                 type="button"
-                className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground"
+                disabled={analyzing}
+                className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                 onClick={queueAnalyze}
               >
-                <Sparkles className="h-4 w-4" />
-                分析 ({selectedIds.size})
+                {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                AI 分析 ({selectedIds.size})
               </button>
             )}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>共 <strong className="text-foreground">{total}</strong> 条</span>
+            {analyzeProgress && (
+              <span className="text-primary">AI 分析进度 {analyzeProgress}</span>
+            )}
+            {!hasLlm() && (
+              <Link to="/settings" className="text-primary hover:underline">
+                尚未接入 AI → 去配置
+              </Link>
+            )}
             {xgbSource?.last_error && (
               <span className="text-danger">选股宝：{xgbSource.last_error}</span>
             )}
@@ -514,7 +549,7 @@ export function MessageAnalysis() {
             ) : (
               <div className="space-y-4">
                 <div className="flex items-start justify-between gap-3 border-b border-border/60 pb-4">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h2 className="text-lg font-bold leading-snug text-foreground">
                       {selected.title || "—"}
                     </h2>
@@ -522,15 +557,26 @@ export function MessageAnalysis() {
                       {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
                     </p>
                   </div>
-                  {selected.status !== "confirmed" && (
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {selected.status !== "confirmed" && (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                        onClick={() => confirmItem(selected)}
+                      >
+                        <Check className="h-3.5 w-3.5" /> 确认
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
-                      onClick={() => confirmItem(selected)}
+                      disabled={analyzing || !hasLlm()}
+                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
+                      onClick={() => runAnalyze([selected.id])}
                     >
-                      <Check className="h-3.5 w-3.5" /> 确认
+                      {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      AI 分析
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 {selected.url && (

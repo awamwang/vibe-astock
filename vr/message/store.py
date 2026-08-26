@@ -464,6 +464,27 @@ def get_raw(raw_id: str, *, path: Optional[str] = None) -> RawMessage | None:
     return _row_raw(r) if r else None
 
 
+def get_analyzed_for_raw(raw_id: str, *, path: Optional[str] = None) -> AnalyzedMessage | None:
+    init_db(path)
+    db = path or DB_PATH
+    with _LOCK:
+        with closing(_connect(db)) as conn:
+            link = conn.execute(
+                "SELECT analyzed_id FROM raw_analyzed_link WHERE raw_id = ? LIMIT 1",
+                (raw_id,),
+            ).fetchone()
+            if not link:
+                return None
+            r = conn.execute(
+                "SELECT * FROM analyzed_message WHERE id = ?",
+                (link["analyzed_id"],),
+            ).fetchone()
+            if not r:
+                return None
+            aid = r["id"]
+            return _row_analyzed(r, _load_targets(conn, aid), _load_raw_ids(conn, aid))
+
+
 def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
     parts = ["1=1"]
     args: list[Any] = []
