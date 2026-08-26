@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from vr.message import parser, store, xgb
+from vr.message import cls, parser, store, xgb
 from vr.message.schemas import IngestPayload, RawMessageDraft
 
 
@@ -246,3 +246,104 @@ def test_follow_keywords_match_and_filter(msg_db, tmp_path, monkeypatch):
     rows_no, total_no = store.list_analyzed(store.ListQuery(followed="no"), path=msg_db)
     assert total_no == 1
     assert rows_no[0].followed is False
+
+
+def test_cls_map():
+    item = {
+        "id": 2465425,
+        "title": "蒙牛乳业：上半年净利润23.7亿元",
+        "content": "【蒙牛乳业：上半年净利润23.7亿元】财联社8月26日电，…",
+        "ctime": 1787752579,
+        "level": "A",
+        "subjects": [{"subject_name": "食品饮料"}, {"subject_name": "港股动态"}],
+        "shareurl": None,
+    }
+    draft = cls.map_cls_item(item)
+    assert draft.external_ref == "2465425"
+    assert draft.source_id == "cls_telegraph"
+    assert "highlight" in draft.marks
+    assert draft.keywords == ["食品饮料", "港股动态"]
+    assert cls.level_to_impact("A") == "high"
+    assert cls.level_to_impact("C") == "low"
+
+
+def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
+    from duanxian import message_follow_keywords as mfk
+    from vr.message import follow
+
+    cfg = tmp_path / "message_follow_keywords.json"
+    monkeypatch.setattr(mfk, "_CONFIG_PATH", str(cfg))
+    monkeypatch.setattr(mfk, "_KEYWORDS", None)
+    mfk.save_keywords(["半导体"])
+
+    d = RawMessageDraft(
+        draft_key="d-boost",
+        source_id="cls_telegraph",
+        source_label="财联社",
+        content="半导体板块走强",
+        title="半导体板块走强",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(
+        raw,
+        patch={"impact_level": "medium", "summary": "半导体板块走强"},
+        path=msg_db,
+    )
+    rows, _ = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
+    assert len(rows) == 1
+    assert rows[0].followed is True
+    assert rows[0].impact_level == "high"
+    assert follow.boost_impact_level("critical") == "critical"
+
+
+def test_cls_fetch_incremental(msg_db, monkeypatch):
+    batch1 = [
+        {
+            "id": 100,
+            "title": "第一条",
+            "content": "第一条内容",
+            "ctime": 1700000000,
+            "level": "C",
+            "subjects": [],
+        },
+        {
+            "id": 101,
+            "title": "第二条",
+            "content": "第二条内容",
+            "ctime": 1700000060,
+            "level": "B",
+            "subjects": [{"subject_name": "测试题材"}],
+        },
+    ]
+    batch2 = [
+        {
+            "id": 102,
+            "title": "第三条",
+            "content": "第三条内容",
+            "ctime": 1700000120,
+            "level": "A",
+            "subjects": [],
+        },
+        *batch1,
+    ]
+
+    calls = {"n": 0}
+
+    def fake_roll():
+        calls["n"] += 1
+        return batch1 if calls["n"] == 1 else batch2
+
+    monkeypatch.setattr(cls, "_fetch_roll_data", fake_roll)
+    r1 = cls.fetch_telegraph(path=msg_db)
+    assert r1["inserted"] == 2
+    assert r1["synced"] == 2
+    assert r1["tail_mark"] == "101"
+
+    r2 = cls.fetch_telegraph(path=msg_db)
+    assert r2["inserted"] == 1
+    assert r2["new_candidates"] == 1
+    assert r2["tail_mark"] == "102"
+
+    rows, total = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
+    assert total == 3
+

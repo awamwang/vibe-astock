@@ -298,6 +298,16 @@ export interface XgbPollResult {
   tail_mark?: string;
 }
 
+export interface ClsPollResult {
+  fetched: number;
+  new_candidates: number;
+  inserted: number;
+  updated?: number;
+  synced: number;
+  tail_mark?: string;
+  last_id?: number;
+}
+
 export interface Holding {
   code: string; name: string; price: number; shares: number; cost: number;
   market_value: number; pnl: number; pnl_pct: number;
@@ -742,6 +752,7 @@ export const api = {
     }),
   messageAnalyzeQueueStatus: () =>
     get<{ counts: Record<string, number>; pending: unknown[] }>("/messages/analyze/queue"),
+  messagePollCls: () => request<ClsPollResult>("/messages/poll/cls", "POST"),
   messagePollXgb: () => request<XgbPollResult>("/messages/poll/xgb", "POST"),
   messageXgbResyncTargets: () => request<{ synced: number }>("/messages/xgb/resync-targets", "POST"),
 };

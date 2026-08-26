@@ -35,7 +35,7 @@ app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
-# 选股宝消息轮询（默认 30s，可用 MESSAGE_POLL_INTERVAL 调整）
+# 消息轮询钩子（财联社由前端 5s 刷新；选股宝仅手动）
 msg_layer.poller.start_poller()
 
 # CORS：默认放开（本地自托管友好）；公网部署时用 VR_ALLOW_ORIGINS 收紧成白名单。
@@ -905,6 +905,15 @@ def messages_analyze_queue():
             "pending": msg_layer.store.list_pending_jobs(),
         }
     }
+
+
+@app.post("/api/messages/poll/cls")
+def messages_poll_cls():
+    try:
+        return {"data": msg_layer.cls.fetch_telegraph()}
+    except Exception as e:  # noqa: BLE001
+        msg_layer.store.set_poll_state("cls_telegraph", last_error=str(e)[:500])
+        raise HTTPException(502, f"财联社轮询失败：{e}") from e
 
 
 @app.post("/api/messages/poll/xgb")

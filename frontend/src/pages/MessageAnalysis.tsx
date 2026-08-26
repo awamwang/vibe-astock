@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown,
+  ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown, Radio,
 } from "lucide-react";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { cn } from "@/lib/utils";
@@ -248,6 +248,9 @@ export function MessageAnalysis() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pollMsg, setPollMsg] = useState<string | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [pollingCls, setPollingCls] = useState(false);
+  const pollInFlight = useRef(false);
 
   const [q, setQ] = useState("");
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
@@ -308,6 +311,7 @@ export function MessageAnalysis() {
     loadList();
   }, [loadList]);
 
+  const clsSource = useMemo(() => sources.find((s) => s.id === "cls_telegraph"), [sources]);
   const xgbSource = useMemo(() => sources.find((s) => s.id === "xgb_msgs"), [sources]);
 
   const toggleSort = (col: string) => {
@@ -362,6 +366,39 @@ export function MessageAnalysis() {
   };
 
   const removeDraft = (key: string) => setDrafts((d) => d.filter((x) => x.draft_key !== key));
+
+  const pollCls = useCallback(async (opts?: { silent?: boolean }) => {
+    if (pollInFlight.current) return;
+    pollInFlight.current = true;
+    setPollingCls(true);
+    if (!opts?.silent) setPollMsg(null);
+    try {
+      const r = await api.messagePollCls();
+      if (r.inserted > 0) {
+        setPollMsg(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
+        await loadList();
+        await loadSources();
+      } else if (!opts?.silent) {
+        setPollMsg(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增`);
+      }
+    } catch (e) {
+      if (!opts?.silent) {
+        setPollMsg(e instanceof ApiError ? e.message : "财联社同步失败");
+      }
+    } finally {
+      pollInFlight.current = false;
+      setPollingCls(false);
+    }
+  }, [loadList, loadSources]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    void pollCls({ silent: true });
+    const timer = window.setInterval(() => {
+      void pollCls({ silent: true });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, pollCls]);
 
   const pollXgb = async () => {
     setPollMsg(null);
@@ -437,17 +474,46 @@ export function MessageAnalysis() {
             消息分析
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            多源快讯归集与标注 · 辅助信息整理，不构成投资建议
-            {xgbSource?.last_poll_at && ` · 选股宝同步 ${xgbSource.last_poll_at}`}
+            多源快讯归集与标注 · 主源财联社电报 · 辅助信息整理，不构成投资建议
+            {clsSource?.last_poll_at && ` · 财联社同步 ${clsSource.last_poll_at}`}
+            {clsSource?.last_error && (
+              <span className="text-danger"> · 同步异常：{clsSource.last_error}</span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={pollXgb}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
+            onClick={() => setAutoRefresh((v) => !v)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
+              autoRefresh
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border bg-background text-foreground",
+            )}
           >
-            <RefreshCw className="h-4 w-4" />
+            {autoRefresh ? (
+              pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />
+            ) : (
+              <Radio className="h-4 w-4" />
+            )}
+            {autoRefresh ? "自动刷新中 · 5s" : "自动刷新"}
+          </button>
+          <button
+            type="button"
+            onClick={() => pollCls()}
+            disabled={pollingCls}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-50"
+          >
+            {pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            拉财联社
+          </button>
+          <button
+            type="button"
+            onClick={pollXgb}
+            className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-opacity hover:bg-muted/50 hover:text-foreground"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
             拉选股宝
           </button>
           <button

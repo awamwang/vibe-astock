@@ -236,4 +236,5 @@ def _default_label(source_id: str) -> str:
         "structured": "结构化 JSON",
         "calendar": "财经大事日历",
         "xgb_msgs": "选股宝快讯",
+        "cls_telegraph": "财联社电报",
     }.get(source_id, source_id)

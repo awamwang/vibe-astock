@@ -47,9 +47,10 @@ export function targetHint(t: { kind: string; name: string; code?: string | null
   return t.code ? `${kind} · 代码 ${t.code}` : kind;
 }
 
-/** 选股宝 keywords = SubjIds 主题分类 ID；其它来源为自定义关键词 */
+/** 选股宝 keywords = SubjIds 主题分类 ID；财联社 = 题材名；其它来源为自定义关键词 */
 export function keywordHint(sourceId: string): string {
   if (sourceId === "xgb_msgs") return "选股宝 SubjIds（主题/频道分类编号）";
+  if (sourceId === "cls_telegraph") return "财联社题材标签";
   return "关键词";
 }
 

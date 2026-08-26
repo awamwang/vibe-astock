@@ -1,6 +1,6 @@
 """消息分析模块。"""
 
-from . import poller, store, xgb
+from . import cls, poller, store, xgb
 from .parser import merge_drafts, parse_ingest, resplit_draft
 from .schemas import (
     AnalyzedMessage,
@@ -12,6 +12,7 @@ from .schemas import (
 )
 
 __all__ = [
+    "cls",
     "poller",
     "store",
     "xgb",

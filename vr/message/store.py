@@ -35,7 +35,8 @@ DEFAULT_SOURCES = [
     ("paste", "粘贴录入", "manual", 1, None),
     ("structured", "结构化 JSON", "manual", 1, None),
     ("calendar", "财经大事日历", "manual", 1, None),
-    ("xgb_msgs", "选股宝快讯", "poll", 1, 30),
+    ("cls_telegraph", "财联社电报", "poll", 1, 5),
+    ("xgb_msgs", "选股宝快讯", "poll", 0, None),
 ]
 
 
@@ -172,6 +173,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """,
             (sid, label, atype, enabled, interval),
         )
+    conn.execute(
+        """
+        UPDATE message_source SET
+            label = '财联社电报', adapter_type = 'poll', enabled = 1, poll_interval_s = 5
+        WHERE id = 'cls_telegraph'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE message_source SET enabled = 0, poll_interval_s = NULL WHERE id = 'xgb_msgs'
+        """
+    )
 
 
 def init_db(path: Optional[str] = None) -> str:
@@ -372,9 +385,6 @@ def insert_raw_batch(
                                 rid,
                             ),
                         )
-                        row = conn.execute("SELECT * FROM raw_message WHERE id = ?", (rid,)).fetchone()
-                        if row:
-                            inserted.append(_row_raw(row))
                         continue
 
                 dup = conn.execute(
@@ -383,7 +393,12 @@ def insert_raw_batch(
                 ).fetchone()
                 if dup and not ext:
                     continue
-                rid = f"xgb_{ext}" if ext and d.source_id == "xgb_msgs" else new_id()
+                if ext and d.source_id == "xgb_msgs":
+                    rid = f"xgb_{ext}"
+                elif ext and d.source_id == "cls_telegraph":
+                    rid = f"cls_{ext}"
+                else:
+                    rid = new_id()
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO raw_message (
