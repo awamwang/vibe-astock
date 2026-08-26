@@ -141,7 +141,7 @@ def _draft_from_calendar_v4_event(
         keywords=keywords,
         marks=marks,
         external_ref=str(event.get("id") or "").strip() or None,
-        produced_at=effective_at or _now_str(),
+        produced_at=_now_str(),
         effective_mode="scheduled",
         effective_at=effective_at,
         targets=_calendar_targets(event.get("targets")),

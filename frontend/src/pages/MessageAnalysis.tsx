@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
+  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -352,6 +352,27 @@ export function MessageAnalysis() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageTo = Math.min(page * PAGE_SIZE, total);
+
+  const hasActiveFilters = useMemo(
+    () =>
+      q.trim() !== "" ||
+      sourcesFilter.length > 0 ||
+      impactLevels.length > 0 ||
+      effectStatuses.length > 0 ||
+      followedFilter.length > 0 ||
+      favoritedFilter.length > 0,
+    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter],
+  );
+
+  const resetFilters = () => {
+    setPage(1);
+    setQ("");
+    setSourcesFilter([]);
+    setImpactLevels([]);
+    setEffectStatuses([]);
+    setFollowedFilter([]);
+    setFavoritedFilter([]);
+  };
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -713,20 +734,20 @@ export function MessageAnalysis() {
           <SectionLabel>筛选 · Filter</SectionLabel>
         </div>
         <div className="glass w-full rounded-2xl p-4 lg:p-5">
-          <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-            <div className="relative min-w-[220px] flex-1">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <input
-                className={inputCls}
-                placeholder="搜索标题、摘要、关键词…"
-                value={q}
-                onChange={(e) => {
-                  setPage(1);
-                  setQ(e.target.value);
-                }}
-                onKeyDown={(e) => e.key === "Enter" && loadList()}
-              />
-            </div>
+          <div className="relative w-full">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <input
+              className={inputCls}
+              placeholder="搜索标题、摘要、关键词…"
+              value={q}
+              onChange={(e) => {
+                setPage(1);
+                setQ(e.target.value);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && loadList()}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 lg:gap-3">
             <FilterMultiSelect
               placeholder="全部来源"
               options={sources.map((s) => ({ value: s.id, label: s.label }))}
@@ -778,6 +799,15 @@ export function MessageAnalysis() {
                 setFavoritedFilter(v);
               }}
             />
+            <button
+              type="button"
+              disabled={!hasActiveFilters}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-muted-foreground transition-opacity hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={resetFilters}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              重置筛选
+            </button>
             {selectedIds.size > 0 && (
               <>
                 <button

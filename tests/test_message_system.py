@@ -71,7 +71,8 @@ def test_calendar_effective(msg_db):
     assert an.effective_at == "2026-09-17 02:00:00"
 
 
-def test_calendar_v4_json_import(msg_db):
+def test_calendar_v4_json_import(msg_db, monkeypatch):
+    monkeypatch.setattr(parser, "_now_str", lambda: "2026-08-26 12:00:00")
     doc = {
         "meta": {
             "title": "2026年9月财经大事",
@@ -117,6 +118,8 @@ def test_calendar_v4_json_import(msg_db):
     assert drafts[0].title == "美联储议息"
     assert drafts[0].effective_mode == "scheduled"
     assert drafts[0].effective_at == "2026-09-30 00:00:00"
+    assert drafts[0].produced_at == "2026-08-26 12:00:00"
+    assert drafts[0].produced_at != drafts[0].effective_at
     assert drafts[0].external_ref == "evt-001"
     assert drafts[0].keywords == ["必看大事"]
     assert "must_watch" in drafts[0].marks
