@@ -18,7 +18,9 @@ import {
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 
-const SORTABLE_COLS = new Set(["produced_at", "title", "impact_level"]);
+const PAGE_SIZE = 100;
+
+const SORTABLE_COLS = new Set(["produced_at", "title", "impact_level", "effect_status"]);
 
 const sortThLabelCls = "text-xs font-semibold uppercase tracking-wide";
 
@@ -179,19 +181,19 @@ function Badge({
   );
 }
 
-function MessageTags({ item }: { item: AnalyzedMessage }) {
+function ImpactBadge({ level }: { level: string }) {
   return (
-    <div className="flex flex-wrap gap-1">
-      <Badge className={IMPACT_BADGE[item.impact_level] || IMPACT_BADGE.medium}>
-        {IMPACT_LABEL[item.impact_level] || item.impact_level}
-      </Badge>
-      <Badge className="border-border bg-muted/50 text-foreground">
-        {EFFECT_LABEL[item.effect_status] || item.effect_status}
-      </Badge>
-      <Badge className="border-border bg-muted/30 text-muted-foreground">
-        {FRESHNESS_LABEL[item.freshness] || item.freshness}
-      </Badge>
-    </div>
+    <Badge className={IMPACT_BADGE[level] || IMPACT_BADGE.medium}>
+      {IMPACT_LABEL[level] || level}
+    </Badge>
+  );
+}
+
+function EffectBadge({ status }: { status: string }) {
+  return (
+    <Badge className="border-border bg-muted/50 text-foreground">
+      {EFFECT_LABEL[status] || status}
+    </Badge>
   );
 }
 
@@ -252,6 +254,7 @@ export function MessageAnalysis() {
   const [followedFilter, setFollowedFilter] = useState<string[]>([]);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
 
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar">("plain");
@@ -267,6 +270,10 @@ export function MessageAnalysis() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const pageTo = Math.min(page * PAGE_SIZE, total);
+
   const loadList = useCallback(async () => {
     setLoading(true);
     setErr(null);
@@ -279,7 +286,8 @@ export function MessageAnalysis() {
         followed: followedFilter.length ? followedFilter : undefined,
         sort,
         order,
-        limit: 100,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
       });
       setItems(data.items || []);
       setTotal(data.total || 0);
@@ -288,7 +296,12 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, sort, order]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, sort, order, page]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (total > 0 && page > maxPage) setPage(maxPage);
+  }, [total, page]);
 
   const loadSources = useCallback(async () => {
     try {
@@ -330,6 +343,7 @@ export function MessageAnalysis() {
 
   const toggleSort = (col: string) => {
     if (!SORTABLE_COLS.has(col)) return;
+    setPage(1);
     if (sort === col) setOrder((o) => (o === "desc" ? "asc" : "desc"));
     else {
       setSort(col);
@@ -573,7 +587,10 @@ export function MessageAnalysis() {
                 className={inputCls}
                 placeholder="搜索标题、摘要、关键词…"
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setPage(1);
+                  setQ(e.target.value);
+                }}
                 onKeyDown={(e) => e.key === "Enter" && loadList()}
               />
             </div>
@@ -581,19 +598,28 @@ export function MessageAnalysis() {
               placeholder="全部来源"
               options={sources.map((s) => ({ value: s.id, label: s.label }))}
               selected={sourcesFilter}
-              onChange={setSourcesFilter}
+              onChange={(v) => {
+                setPage(1);
+                setSourcesFilter(v);
+              }}
             />
             <FilterMultiSelect
               placeholder="全部级别"
               options={Object.entries(IMPACT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
               selected={impactLevels}
-              onChange={setImpactLevels}
+              onChange={(v) => {
+                setPage(1);
+                setImpactLevels(v);
+              }}
             />
             <FilterMultiSelect
               placeholder="全部生效"
               options={Object.entries(EFFECT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
               selected={effectStatuses}
-              onChange={setEffectStatuses}
+              onChange={(v) => {
+                setPage(1);
+                setEffectStatuses(v);
+              }}
             />
             <FilterMultiSelect
               placeholder="全部关注"
@@ -602,7 +628,10 @@ export function MessageAnalysis() {
                 { value: "no", label: "未关注" },
               ]}
               selected={followedFilter}
-              onChange={setFollowedFilter}
+              onChange={(v) => {
+                setPage(1);
+                setFollowedFilter(v);
+              }}
             />
             {selectedIds.size > 0 && (
               <button
@@ -617,7 +646,12 @@ export function MessageAnalysis() {
             )}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>共 <strong className="text-foreground">{total}</strong> 条</span>
+            <span>
+              共 <strong className="text-foreground">{total}</strong> 条
+              {total > 0 && (
+                <> · 当前 {pageFrom}–{pageTo}</>
+              )}
+            </span>
             {analyzeProgress && (
               <span className="text-primary">AI 分析进度 {analyzeProgress}</span>
             )}
@@ -763,7 +797,8 @@ export function MessageAnalysis() {
                       </th>
                       <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[220px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
-                      <SortTh col="impact_level" label="级别/状态" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-36 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="impact_level" label="级别" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="effect_status" label="生效" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("effect_status")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="followed" label="关注" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("followed")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("keywords")} className="w-28 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="targets" label="关联标的" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("targets")} className="min-w-[160px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
@@ -807,7 +842,10 @@ export function MessageAnalysis() {
                           {item.source_label}
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <MessageTags item={item} />
+                          <ImpactBadge level={item.impact_level} />
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <EffectBadge status={item.effect_status} />
                         </td>
                         <td className="px-3 py-3 align-top">
                           {item.followed ? (
@@ -840,6 +878,31 @@ export function MessageAnalysis() {
                 </table>
               )}
             </div>
+            {total > PAGE_SIZE && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-4 py-3">
+                <span className="text-xs text-muted-foreground">
+                  第 {page} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={page <= 1 || loading}
+                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-40"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    上一页
+                  </button>
+                  <button
+                    type="button"
+                    disabled={page >= totalPages || loading}
+                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-40"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    下一页
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="glass min-w-0 rounded-2xl p-4 xl:col-span-1 max-h-[calc(100vh-220px)] overflow-auto">

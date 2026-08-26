@@ -123,7 +123,9 @@ class ListQuery(BaseModel):
     effect_status: str | None = None
     status: str | None = None
     followed: str | None = None
-    sort: Literal["produced_at", "ingested_at", "impact_level", "title"] = "produced_at"
+    sort: Literal[
+        "produced_at", "ingested_at", "impact_level", "effect_status", "freshness", "status", "title"
+    ] = "produced_at"
     order: Literal["asc", "desc"] = "desc"
     limit: int = 50
     offset: int = 0

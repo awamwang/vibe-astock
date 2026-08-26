@@ -649,6 +649,9 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
         "produced_at": "produced_at",
         "ingested_at": "analyzed_at",
         "impact_level": "impact_level",
+        "effect_status": "effect_status",
+        "freshness": "freshness",
+        "status": "status",
         "title": "title",
     }
     sort_col = sort_map.get(q.sort, "produced_at")

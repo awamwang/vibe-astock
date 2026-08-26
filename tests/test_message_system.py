@@ -359,3 +359,43 @@ def test_cls_fetch_incremental(msg_db, monkeypatch):
     rows, total = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
     assert total == 3
 
+
+def test_list_analyzed_pagination_and_sort(msg_db):
+    def _insert(title: str, impact: str, effect: str):
+        d = RawMessageDraft(
+            draft_key=f"pg-{title}",
+            source_id="paste",
+            source_label="粘贴",
+            content=title,
+            title=title,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        store.upsert_analyzed_from_raw(
+            raw,
+            patch={"impact_level": impact, "effect_status": effect},
+            path=msg_db,
+        )
+
+    for i in range(5):
+        _insert(f"消息{i}", "medium", "not_erupted" if i % 2 == 0 else "early_hype")
+
+    page1, total = store.list_analyzed(
+        store.ListQuery(limit=2, offset=0, sort="title", order="asc"),
+        path=msg_db,
+    )
+    assert total == 5
+    assert len(page1) == 2
+
+    page3, _ = store.list_analyzed(
+        store.ListQuery(limit=2, offset=4, sort="title", order="asc"),
+        path=msg_db,
+    )
+    assert len(page3) == 1
+
+    by_effect, _ = store.list_analyzed(
+        store.ListQuery(sort="effect_status", order="asc"),
+        path=msg_db,
+    )
+    effects = [r.effect_status for r in by_effect]
+    assert effects == sorted(effects)
+
