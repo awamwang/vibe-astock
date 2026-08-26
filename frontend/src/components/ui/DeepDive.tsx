@@ -357,9 +357,11 @@ interface RunAllProps {
   dd: DeepDiveState;
   items: DiveItem[];
   nameOf?: (key: string) => string; // 进度里显示名称（默认显示 key）
+  /** 为 true 时按钮文案指向「所选」而非「全部」（items 应由调用方过滤） */
+  selectedOnly?: boolean;
 }
 
-export function RunAllButton({ dd, items, nameOf }: RunAllProps) {
+export function RunAllButton({ dd, items, nameOf, selectedOnly }: RunAllProps) {
   const remaining = items.filter((it) => !dd.analysis[it.key]).length;
   if (dd.batch) {
     return (
@@ -383,7 +385,11 @@ export function RunAllButton({ dd, items, nameOf }: RunAllProps) {
       className="inline-flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
     >
       <Sparkles className="h-3 w-3" />
-      {remaining === 0 ? "已全部分析" : `一键全部分析（剩 ${remaining} 只）`}
+      {remaining === 0
+        ? selectedOnly ? "所选已全部分析" : "已全部分析"
+        : selectedOnly
+          ? `一键分析所选（剩 ${remaining} 只）`
+          : `一键全部分析（剩 ${remaining} 只）`}
     </button>
   );
 }

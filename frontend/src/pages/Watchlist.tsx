@@ -197,6 +197,11 @@ export function Watchlist() {
     [codes, quotes],
   );
 
+  const batchDiveItems = useMemo(
+    () => (someSelected ? codes.filter((c) => selected.has(c)) : codes).map(diveItem),
+    [codes, quotes, someSelected, selected],
+  );
+
   const aiContext = useMemo(
     () =>
       codes.length
@@ -327,7 +332,12 @@ export function Watchlist() {
                   <Trash2 className="h-3 w-3" />
                   一键清空
                 </button>
-                <RunAllButton dd={dd} items={codes.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+                <RunAllButton
+                  dd={dd}
+                  items={batchDiveItems}
+                  selectedOnly={someSelected}
+                  nameOf={(k) => nameByCode[k] || k}
+                />
               </>
             )}
             {error ? (
