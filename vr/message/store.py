@@ -564,6 +564,24 @@ def get_raw(raw_id: str, *, path: Optional[str] = None) -> RawMessage | None:
     return _row_raw(r) if r else None
 
 
+def get_raws_for_analyzed(analyzed_id: str, *, path: Optional[str] = None) -> list[RawMessage]:
+    """按 analyzed_id 取关联的原始消息（按入库顺序）。"""
+    init_db(path)
+    db = path or DB_PATH
+    with _LOCK:
+        with closing(_connect(db)) as conn:
+            rows = conn.execute(
+                """
+                SELECT r.* FROM raw_message r
+                INNER JOIN raw_analyzed_link l ON l.raw_id = r.id
+                WHERE l.analyzed_id = ?
+                ORDER BY r.ingested_at ASC
+                """,
+                (analyzed_id,),
+            ).fetchall()
+    return [_row_raw(r) for r in rows]
+
+
 def get_analyzed_for_raw(raw_id: str, *, path: Optional[str] = None) -> AnalyzedMessage | None:
     init_db(path)
     db = path or DB_PATH

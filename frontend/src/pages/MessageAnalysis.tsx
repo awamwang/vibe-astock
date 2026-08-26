@@ -7,7 +7,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type AnalyzedMessage, type MessageSourceInfo, type RawMessageDraft,
+  type AnalyzedMessage, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
 } from "@/lib/api";
 import {
   EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
@@ -268,6 +268,8 @@ export function MessageAnalysis() {
   const [commitLoading, setCommitLoading] = useState(false);
 
   const [selected, setSelected] = useState<AnalyzedMessage | null>(null);
+  const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
@@ -310,6 +312,25 @@ export function MessageAnalysis() {
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  const loadDetail = useCallback(async (item: AnalyzedMessage) => {
+    setSelected(item);
+    setRawMessages([]);
+    setDetailLoading(true);
+    try {
+      const detail = await api.messageAnalyzedDetail(item.id);
+      setSelected(detail);
+      setRawMessages(detail.raw_messages || []);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "加载详情失败");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const selectItem = (item: AnalyzedMessage) => {
+    void loadDetail(item);
+  };
 
   const clsSource = useMemo(() => sources.find((s) => s.id === "cls_telegraph"), [sources]);
   const xgbSource = useMemo(() => sources.find((s) => s.id === "xgb_msgs"), [sources]);
@@ -436,7 +457,10 @@ export function MessageAnalysis() {
         onProgress: (p) => setAnalyzeProgress(`${p.current} / ${p.total}`),
         onItem: (item) => {
           setItems((list) => list.map((x) => (x.id === item.id ? item : x)));
-          setSelected((cur) => (cur?.id === item.id ? item : cur));
+          setSelected((cur) => {
+            if (cur?.id === item.id) void loadDetail(item);
+            return cur?.id === item.id ? item : cur;
+          });
         },
       });
       setPollMsg(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
@@ -459,7 +483,10 @@ export function MessageAnalysis() {
     try {
       const updated = await api.messageAnalyzedPatch(item.id, { status: "confirmed" });
       setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-      if (selected?.id === updated.id) setSelected(updated);
+      if (selected?.id === updated.id) {
+        setSelected(updated);
+        void loadDetail(updated);
+      }
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "更新失败");
     }
@@ -758,7 +785,7 @@ export function MessageAnalysis() {
                           "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/25",
                           selected?.id === item.id && "bg-primary/8",
                         )}
-                        onClick={() => setSelected(item)}
+                        onClick={() => selectItem(item)}
                       >
                         <td className="px-3 py-3 align-top" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -917,6 +944,43 @@ export function MessageAnalysis() {
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
                     {selected.detail || "—"}
                   </p>
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    原始消息
+                  </p>
+                  {detailLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      加载中…
+                    </div>
+                  ) : rawMessages.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">未找到关联的原始消息</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {rawMessages.map((raw, i) => (
+                        <div
+                          key={raw.id}
+                          className="rounded-xl border border-border/60 bg-muted/15 p-3"
+                        >
+                          {rawMessages.length > 1 && (
+                            <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+                              原始 #{i + 1}
+                              {raw.title ? ` · ${raw.title}` : ""}
+                            </p>
+                          )}
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                            {raw.content || "—"}
+                          </p>
+                          <p className="mt-2 text-[11px] tabular-nums text-muted-foreground">
+                            入库 {raw.ingested_at}
+                            {raw.external_ref ? ` · ref ${raw.external_ref}` : ""}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="glass rounded-xl bg-muted/20 p-4 text-sm">

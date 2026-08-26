@@ -71,6 +71,18 @@ def test_calendar_effective(msg_db):
     assert an.effective_at == "2026-09-17 02:00:00"
 
 
+def test_get_raws_for_analyzed(msg_db):
+    items = [{"title": "原始标题", "content": "原始正文内容"}]
+    payload = IngestPayload(format="structured", source_id="paste", items=items)
+    drafts = parser.parse_ingest(payload)
+    inserted = store.insert_raw_batch(drafts, path=msg_db)
+    an = store.upsert_analyzed_from_raw(inserted[0], path=msg_db)
+    raws = store.get_raws_for_analyzed(an.id, path=msg_db)
+    assert len(raws) == 1
+    assert raws[0].content == "原始正文内容"
+    assert raws[0].id == inserted[0].id
+
+
 def test_xgb_map():
     item = {
         "Id": "12345",
