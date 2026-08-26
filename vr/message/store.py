@@ -478,12 +478,29 @@ def mark_withdrawn(source_id: str, external_ref: str, *, path: Optional[str] = N
             return cur.rowcount > 0
 
 
+def _parse_csv_filter(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _append_in_filter(parts: list[str], args: list[Any], column: str, value: str | None) -> None:
+    items = _parse_csv_filter(value)
+    if not items:
+        return
+    if len(items) == 1:
+        parts.append(f"{column} = ?")
+        args.append(items[0])
+        return
+    placeholders = ",".join("?" * len(items))
+    parts.append(f"{column} IN ({placeholders})")
+    args.extend(items)
+
+
 def _build_raw_where(q: ListQuery) -> tuple[str, list[Any]]:
     parts = ["withdrawn = 0"]
     args: list[Any] = []
-    if q.source:
-        parts.append("source_id = ?")
-        args.append(q.source)
+    _append_in_filter(parts, args, "source_id", q.source)
     if q.from_dt:
         parts.append("produced_at >= ?")
         args.append(q.from_dt)
@@ -553,24 +570,16 @@ def get_analyzed_for_raw(raw_id: str, *, path: Optional[str] = None) -> Analyzed
 def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
     parts = ["1=1"]
     args: list[Any] = []
-    if q.source:
-        parts.append("source_id = ?")
-        args.append(q.source)
+    _append_in_filter(parts, args, "source_id", q.source)
     if q.from_dt:
         parts.append("produced_at >= ?")
         args.append(q.from_dt)
     if q.to_dt:
         parts.append("produced_at <= ?")
         args.append(q.to_dt)
-    if q.impact_level:
-        parts.append("impact_level = ?")
-        args.append(q.impact_level)
-    if q.effect_status:
-        parts.append("effect_status = ?")
-        args.append(q.effect_status)
-    if q.status:
-        parts.append("status = ?")
-        args.append(q.status)
+    _append_in_filter(parts, args, "impact_level", q.impact_level)
+    _append_in_filter(parts, args, "effect_status", q.effect_status)
+    _append_in_filter(parts, args, "status", q.status)
     if q.q:
         like = f"%{q.q.strip()}%"
         parts.append(

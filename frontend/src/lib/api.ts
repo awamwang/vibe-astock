@@ -699,13 +699,13 @@ export const api = {
   messageIngestCommit: (drafts: RawMessageDraft[]) =>
     request<{ inserted: unknown[]; analyzed: AnalyzedMessage[] }>("/messages/ingest/commit", "POST", { drafts }),
   messageAnalyzedList: (params: {
-    source?: string;
+    source?: string | string[];
     q?: string;
     from_dt?: string;
     to_dt?: string;
-    impact_level?: string;
-    effect_status?: string;
-    status?: string;
+    impact_level?: string | string[];
+    effect_status?: string | string[];
+    status?: string | string[];
     sort?: string;
     order?: string;
     limit?: number;
@@ -713,7 +713,13 @@ export const api = {
   } = {}) => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== "") qs.set(k, String(v));
+      if (v === undefined || v === "") return;
+      if (Array.isArray(v)) {
+        const joined = v.filter(Boolean).join(",");
+        if (joined) qs.set(k, joined);
+        return;
+      }
+      qs.set(k, String(v));
     });
     const q = qs.toString();
     return get<MessageListResult>(`/messages/analyzed${q ? `?${q}` : ""}`);

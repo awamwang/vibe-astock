@@ -84,8 +84,23 @@ def test_xgb_map():
     draft = xgb.map_xgb_item(item)
     assert draft.external_ref == "12345"
     assert draft.title == "某股涨停"
+    assert draft.content == "摘要"
+    assert draft.keywords == []
+    assert draft.meta.get("subj_ids") == ["9"]
     assert any(t.kind == "stock" and t.code == "600519" for t in draft.targets)
     assert any(t.kind == "sector" and t.name == "白酒" and t.code == "bk1" for t in draft.targets)
+
+
+def test_xgb_body_fallback_title():
+    item = {
+        "Id": "99",
+        "Title": "夜盘期货开盘，乙二醇跌近4%",
+        "Summary": "",
+        "Content": "",
+        "CreatedAtInSec": 1700000000,
+    }
+    draft = xgb.map_xgb_item(item)
+    assert draft.content == "夜盘期货开盘，乙二醇跌近4%"
 
 
 def test_xgb_targets_sync_to_analyzed(msg_db):
@@ -142,6 +157,50 @@ def test_search_analyzed(msg_db):
     )
     assert total >= 1
     assert any("低空" in r.title or "低空" in r.summary for r in rows)
+
+
+def test_multi_filter_analyzed(msg_db):
+    def _insert(title: str, source_id: str, impact: str, effect: str):
+        d = RawMessageDraft(
+            draft_key=f"d-{title}",
+            source_id=source_id,
+            source_label=source_id,
+            content=title,
+            title=title,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        store.upsert_analyzed_from_raw(
+            raw,
+            patch={"impact_level": impact, "effect_status": effect},
+            path=msg_db,
+        )
+
+    _insert("高影响A", "paste", "high", "not_erupted")
+    _insert("中影响B", "paste", "medium", "early_hype")
+    _insert("选股宝C", "xgb_msgs", "high", "ongoing_hype")
+
+    rows, total = store.list_analyzed(
+        store.ListQuery(impact_level="high,medium"),
+        path=msg_db,
+    )
+    assert total == 3
+    titles = {r.title for r in rows}
+    assert titles == {"高影响A", "中影响B", "选股宝C"}
+
+    rows, total = store.list_analyzed(
+        store.ListQuery(impact_level="medium"),
+        path=msg_db,
+    )
+    assert total == 1
+    assert rows[0].title == "中影响B"
+
+    rows2, total2 = store.list_analyzed(
+        store.ListQuery(source="paste,xgb_msgs", effect_status="not_erupted,ongoing_hype"),
+        path=msg_db,
+    )
+    assert total2 == 2
+    titles2 = {r.title for r in rows2}
+    assert titles2 == {"高影响A", "选股宝C"}
 
 
 def test_merge_drafts():

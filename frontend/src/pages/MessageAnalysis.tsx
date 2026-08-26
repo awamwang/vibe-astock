@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
   ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown,
@@ -75,6 +75,90 @@ const selectCls =
 const inputCls =
   "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
+function FilterMultiSelect({
+  placeholder,
+  options,
+  selected,
+  onChange,
+}: {
+  placeholder: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const label = useMemo(() => {
+    if (!selected.length) return placeholder;
+    if (selected.length === 1) {
+      return options.find((o) => o.value === selected[0])?.label || selected[0];
+    }
+    return `已选 ${selected.length} 项`;
+  }, [selected, options, placeholder]);
+
+  const toggle = (value: string) => {
+    onChange(
+      selected.includes(value)
+        ? selected.filter((v) => v !== value)
+        : [...selected, value],
+    );
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        className={cn(
+          selectCls,
+          "inline-flex min-w-[120px] items-center justify-between gap-2",
+          selected.length > 0 && "border-primary/40 text-primary",
+        )}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 min-w-[160px] rounded-lg border border-border bg-background py-1 shadow-lg">
+          {selected.length > 0 && (
+            <button
+              type="button"
+              className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              onClick={() => onChange([])}
+            >
+              清除选择
+            </button>
+          )}
+          {options.map((o) => (
+            <label
+              key={o.value}
+              className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/50"
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+                checked={selected.includes(o.value)}
+                onChange={() => toggle(o.value)}
+              />
+              <span className="text-foreground">{o.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-primary">
@@ -119,7 +203,9 @@ function MessageTags({ item }: { item: AnalyzedMessage }) {
 }
 
 function MessageKeywords({ item }: { item: AnalyzedMessage }) {
-  if (!item.keywords.length) return <span className="text-muted-foreground">—</span>;
+  if (item.source_id === "xgb_msgs" || !item.keywords.length) {
+    return <span className="text-muted-foreground">—</span>;
+  }
   return (
     <div className="flex flex-wrap gap-1" title={keywordHint(item.source_id)}>
       {item.keywords.slice(0, 6).map((k) => (
@@ -164,9 +250,9 @@ export function MessageAnalysis() {
   const [pollMsg, setPollMsg] = useState<string | null>(null);
 
   const [q, setQ] = useState("");
-  const [source, setSource] = useState("");
-  const [impactLevel, setImpactLevel] = useState("");
-  const [effectStatus, setEffectStatus] = useState("");
+  const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
+  const [impactLevels, setImpactLevels] = useState<string[]>([]);
+  const [effectStatuses, setEffectStatuses] = useState<string[]>([]);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
 
@@ -188,9 +274,9 @@ export function MessageAnalysis() {
     try {
       const data = await api.messageAnalyzedList({
         q: q.trim() || undefined,
-        source: source || undefined,
-        impact_level: impactLevel || undefined,
-        effect_status: effectStatus || undefined,
+        source: sourcesFilter.length ? sourcesFilter : undefined,
+        impact_level: impactLevels.length ? impactLevels : undefined,
+        effect_status: effectStatuses.length ? effectStatuses : undefined,
         sort,
         order,
         limit: 100,
@@ -202,7 +288,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, source, impactLevel, effectStatus, sort, order]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, sort, order]);
 
   const loadSources = useCallback(async () => {
     try {
@@ -403,24 +489,24 @@ export function MessageAnalysis() {
                 onKeyDown={(e) => e.key === "Enter" && loadList()}
               />
             </div>
-            <select className={selectCls} value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">全部来源</option>
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>{s.label}</option>
-              ))}
-            </select>
-            <select className={selectCls} value={impactLevel} onChange={(e) => setImpactLevel(e.target.value)}>
-              <option value="">全部级别</option>
-              {Object.entries(IMPACT_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-            <select className={selectCls} value={effectStatus} onChange={(e) => setEffectStatus(e.target.value)}>
-              <option value="">全部生效</option>
-              {Object.entries(EFFECT_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <FilterMultiSelect
+              placeholder="全部来源"
+              options={sources.map((s) => ({ value: s.id, label: s.label }))}
+              selected={sourcesFilter}
+              onChange={setSourcesFilter}
+            />
+            <FilterMultiSelect
+              placeholder="全部级别"
+              options={Object.entries(IMPACT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+              selected={impactLevels}
+              onChange={setImpactLevels}
+            />
+            <FilterMultiSelect
+              placeholder="全部生效"
+              options={Object.entries(EFFECT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+              selected={effectStatuses}
+              onChange={setEffectStatuses}
+            />
             {selectedIds.size > 0 && (
               <button
                 type="button"
@@ -581,7 +667,7 @@ export function MessageAnalysis() {
                       <SortTh col="title" label="标题" sort={sort} order={order} onSort={toggleSort} className="min-w-[220px]" />
                       <SortTh col="source" label="来源" sort={sort} order={order} onSort={toggleSort} className="w-24" />
                       <SortTh col="impact_level" label="级别/状态" sort={sort} order={order} onSort={toggleSort} className="w-36" />
-                      <SortTh col="keywords" label="分类ID" hint="选股宝=SubjIds" sort={sort} order={order} onSort={toggleSort} className="w-28" />
+                      <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sort={sort} order={order} onSort={toggleSort} className="w-28" />
                       <SortTh col="targets" label="关联标的" sort={sort} order={order} onSort={toggleSort} className="min-w-[160px]" />
                       <SortTh col="produced_at" label="产生时间" sort={sort} order={order} onSort={toggleSort} className="w-36" />
                     </tr>
@@ -689,22 +775,23 @@ export function MessageAnalysis() {
                   </a>
                 )}
 
-                {(selected.marks.length > 0 || selected.keywords.length > 0) && (
+                {(selected.marks.length > 0 || (selected.source_id !== "xgb_msgs" && selected.keywords.length > 0)) && (
                   <div className="flex flex-wrap gap-2">
                     {selected.marks.map((m) => (
                       <Badge key={m} className="border-muted-foreground/30 bg-muted/40 text-foreground" title={formatMarkLabel(m)}>
                         {formatMarkLabel(m)}
                       </Badge>
                     ))}
-                    {selected.keywords.map((k) => (
-                      <Badge
-                        key={k}
-                        className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200"
-                        title={keywordHint(selected.source_id)}
-                      >
-                        {k}
-                      </Badge>
-                    ))}
+                    {selected.source_id !== "xgb_msgs" &&
+                      selected.keywords.map((k) => (
+                        <Badge
+                          key={k}
+                          className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200"
+                          title={keywordHint(selected.source_id)}
+                        >
+                          {k}
+                        </Badge>
+                      ))}
                   </div>
                 )}
 
