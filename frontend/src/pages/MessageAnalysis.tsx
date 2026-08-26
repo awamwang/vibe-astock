@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
   ExternalLink, Sparkles, Check, Newspaper, ArrowUpDown, Radio,
@@ -88,11 +89,37 @@ function FilterMultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; minWidth: number } | null>(null);
+
+  const updateMenuPos = useCallback(() => {
+    const btn = btnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    setMenuPos({ top: rect.bottom + 4, left: rect.left, minWidth: Math.max(rect.width, 160) });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+    updateMenuPos();
+    window.addEventListener("scroll", updateMenuPos, true);
+    window.addEventListener("resize", updateMenuPos);
+    return () => {
+      window.removeEventListener("scroll", updateMenuPos, true);
+      window.removeEventListener("resize", updateMenuPos);
+    };
+  }, [open, updateMenuPos]);
 
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
@@ -114,9 +141,42 @@ function FilterMultiSelect({
     );
   };
 
+  const menu = open && menuPos && (
+    <div
+      ref={menuRef}
+      className="fixed z-[80] max-h-[min(320px,calc(100vh-1rem))] overflow-auto rounded-lg border border-border bg-background py-1 shadow-lg"
+      style={{ top: menuPos.top, left: menuPos.left, minWidth: menuPos.minWidth }}
+    >
+      {selected.length > 0 && (
+        <button
+          type="button"
+          className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          onClick={() => onChange([])}
+        >
+          清除选择
+        </button>
+      )}
+      {options.map((o) => (
+        <label
+          key={o.value}
+          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/50"
+        >
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+            checked={selected.includes(o.value)}
+            onChange={() => toggle(o.value)}
+          />
+          <span className="text-foreground">{o.label}</span>
+        </label>
+      ))}
+    </div>
+  );
+
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={btnRef}
         type="button"
         className={cn(
           selectCls,
@@ -128,33 +188,7 @@ function FilterMultiSelect({
         <span className="truncate">{label}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")} />
       </button>
-      {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 min-w-[160px] rounded-lg border border-border bg-background py-1 shadow-lg">
-          {selected.length > 0 && (
-            <button
-              type="button"
-              className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              onClick={() => onChange([])}
-            >
-              清除选择
-            </button>
-          )}
-          {options.map((o) => (
-            <label
-              key={o.value}
-              className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/50"
-            >
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
-                checked={selected.includes(o.value)}
-                onChange={() => toggle(o.value)}
-              />
-              <span className="text-foreground">{o.label}</span>
-            </label>
-          ))}
-        </div>
-      )}
+      {menu && createPortal(menu, document.body)}
     </div>
   );
 }
@@ -854,16 +888,16 @@ export function MessageAnalysis() {
               <p className="py-12 text-center text-sm text-muted-foreground">选择左侧消息查看详情</p>
             ) : (
               <div className="space-y-4">
-                <div className="flex items-start justify-between gap-3 border-b border-border/60 pb-4">
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-base font-bold leading-snug text-foreground line-clamp-3">
+                <div className="space-y-3 border-b border-border/60 pb-4">
+                  <div className="min-w-0">
+                    <h2 className="text-base font-bold leading-snug text-foreground">
                       {selected.title || "—"}
                     </h2>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
                     </p>
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {selected.status !== "confirmed" && (
                       <button
                         type="button"
