@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -10,6 +11,19 @@ from typing import Any
 from .schemas import ImpactTarget, IngestPayload, RawMessageDraft
 
 BEIJING = timezone(timedelta(hours=8))
+CALENDAR_SCHEMA_ID = "market-event-calendar/v4"
+
+_CATEGORY_MARKS: dict[str, str] = {
+    "必看大事": "must_watch",
+    "关键数据": "key_data",
+    "行业会展": "industry_exhibition",
+}
+
+_TARGET_KIND_MAP: dict[str, str] = {
+    "sector": "sector",
+    "stock": "stock",
+    "subject": "theme",
+}
 
 
 def _now_str() -> str:
@@ -51,6 +65,153 @@ def _first_str(d: dict[str, Any], keys: list[str]) -> str:
         if v is not None and str(v).strip():
             return str(v).strip()
     return ""
+
+
+def _ms_to_beijing_str(ms: int | float) -> str:
+    dt = datetime.fromtimestamp(float(ms) / 1000, tz=BEIJING)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _is_calendar_v4(doc: Any) -> bool:
+    return isinstance(doc, dict) and isinstance(doc.get("events"), list)
+
+
+_IMPACT_BY_IMPORTANCE = ("noise", "low", "medium", "high", "critical")
+
+
+def importance_to_impact(level: Any) -> str:
+    """财经日历 importanceLevel 1~5 → 系统 impact_level（从低到高）。"""
+    try:
+        n = int(level)
+    except (TypeError, ValueError):
+        return "medium"
+    n = max(1, min(5, n))
+    return _IMPACT_BY_IMPORTANCE[n - 1]
+
+
+def _calendar_targets(raw_targets: Any) -> list[ImpactTarget]:
+    out: list[ImpactTarget] = []
+    if not isinstance(raw_targets, list):
+        return out
+    for t in raw_targets:
+        if not isinstance(t, dict):
+            continue
+        kind = _TARGET_KIND_MAP.get(str(t.get("type") or ""), "other")
+        code = str(t.get("code") or "").strip() or None
+        out.append(ImpactTarget(kind=kind, code=code, name=str(t.get("name") or "")))
+    return out
+
+
+def _calendar_event_content(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    category = str(event.get("category") or "").strip()
+    if category:
+        parts.append(f"类别：{category}")
+    targets = event.get("targets")
+    if isinstance(targets, list) and targets:
+        names: list[str] = []
+        for t in targets:
+            if not isinstance(t, dict):
+                continue
+            name = str(t.get("name") or "").strip()
+            code = str(t.get("code") or "").strip()
+            if name and code:
+                names.append(f"{name}({code})")
+            elif name:
+                names.append(name)
+        if names:
+            parts.append("相关标的：" + "、".join(names))
+    return "\n".join(parts) if parts else str(event.get("title") or "")
+
+
+def _draft_from_calendar_v4_event(
+    event: dict[str, Any],
+    *,
+    label: str,
+    calendar_meta: dict[str, Any] | None = None,
+) -> RawMessageDraft | None:
+    title = str(event.get("title") or "").strip()
+    if not title:
+        return None
+    start_ms = event.get("startTime")
+    effective_at = _ms_to_beijing_str(start_ms) if start_ms is not None else None
+    category = str(event.get("category") or "").strip()
+    importance = event.get("importanceLevel")
+    impact_level = importance_to_impact(importance)
+    keywords = [category] if category else []
+    marks: list[str] = []
+    mark_key = _CATEGORY_MARKS.get(category)
+    if mark_key:
+        marks.append(mark_key)
+    if isinstance(importance, int) and importance >= 4:
+        marks.append("flame")
+    meta: dict[str, Any] = {
+        "format": "calendar",
+        "calendar_schema": CALENDAR_SCHEMA_ID,
+        "importance_level": importance,
+        "impact_level": impact_level,
+        "category": category,
+    }
+    if calendar_meta:
+        meta["calendar_meta"] = calendar_meta
+    return RawMessageDraft(
+        draft_key=_draft_key(),
+        source_id="calendar",
+        source_label=label or "财经大事日历",
+        content=_calendar_event_content(event),
+        title=title,
+        keywords=keywords,
+        marks=marks,
+        external_ref=str(event.get("id") or "").strip() or None,
+        produced_at=effective_at or _now_str(),
+        effective_mode="scheduled",
+        effective_at=effective_at,
+        targets=_calendar_targets(event.get("targets")),
+        meta=meta,
+    )
+
+
+def _parse_calendar_v4(doc: dict[str, Any], *, label: str) -> list[RawMessageDraft]:
+    meta_block = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+    source = meta_block.get("source") if isinstance(meta_block.get("source"), dict) else {}
+    source_name = str(source.get("brand_display") or source.get("name") or "").strip()
+    calendar_label = label or source_name or "财经大事日历"
+    calendar_meta = {
+        "title": meta_block.get("title"),
+        "month": meta_block.get("month"),
+        "year": meta_block.get("year"),
+        "source": source,
+        "disclaimer": meta_block.get("disclaimer"),
+        "total_events": meta_block.get("total_events"),
+        "legend": doc.get("legend"),
+    }
+    drafts: list[RawMessageDraft] = []
+    for event in doc.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        draft = _draft_from_calendar_v4_event(event, label=calendar_label, calendar_meta=calendar_meta)
+        if draft:
+            drafts.append(draft)
+    return drafts
+
+
+def _collect_calendar_docs(payload: IngestPayload) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    if payload.text:
+        try:
+            parsed = json.loads(payload.text)
+        except json.JSONDecodeError:
+            parsed = None
+        if _is_calendar_v4(parsed):
+            docs.append(parsed)
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if _is_calendar_v4(item):
+                    docs.append(item)
+    for item in payload.items or []:
+        if _is_calendar_v4(item):
+            docs.append(item)
+    return docs
 
 
 def _parse_targets(item: dict[str, Any]) -> list[ImpactTarget]:
@@ -143,19 +304,27 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
         return drafts
 
     if fmt == "calendar":
-        items = payload.items or []
-        if not items and payload.text:
-            import json
+        v4_docs = _collect_calendar_docs(payload)
+        if v4_docs:
+            drafts: list[RawMessageDraft] = []
+            for doc in v4_docs:
+                drafts.extend(_parse_calendar_v4(doc, label=label))
+            return drafts
 
+        items: list[dict[str, Any]] = []
+        if payload.items:
+            items = [i for i in payload.items if isinstance(i, dict)]
+        elif payload.text:
             try:
                 parsed = json.loads(payload.text)
-                items = parsed if isinstance(parsed, list) else [parsed]
+                if isinstance(parsed, list):
+                    items = [i for i in parsed if isinstance(i, dict)]
+                elif isinstance(parsed, dict):
+                    items = [parsed]
             except json.JSONDecodeError:
                 items = []
-        drafts = []
+        legacy_drafts: list[RawMessageDraft] = []
         for item in items:
-            if not isinstance(item, dict):
-                continue
             title = _first_str(item, ["title", "标题", "事件"])
             content = _first_str(item, ["content", "详情", "说明"]) or title
             effective_at = _first_str(item, ["effective_at", "生效时间", "datetime", "时间"])
@@ -163,7 +332,7 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
             keywords = keywords_raw if isinstance(keywords_raw, list) else (
                 [str(keywords_raw)] if keywords_raw else []
             )
-            drafts.append(
+            legacy_drafts.append(
                 RawMessageDraft(
                     draft_key=_draft_key(),
                     source_id="calendar",
@@ -180,7 +349,7 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
                     meta={"format": "calendar"},
                 )
             )
-        return drafts
+        return legacy_drafts
 
     return []
 

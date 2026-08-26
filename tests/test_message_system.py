@@ -71,6 +71,84 @@ def test_calendar_effective(msg_db):
     assert an.effective_at == "2026-09-17 02:00:00"
 
 
+def test_calendar_v4_json_import(msg_db):
+    doc = {
+        "meta": {
+            "title": "2026年9月财经大事",
+            "month": 9,
+            "year": 2026,
+            "source": {"name": "同花顺", "brand_display": "同花顺财经日历"},
+            "disclaimer": "仅供参考",
+            "total_events": 2,
+        },
+        "legend": [
+            {
+                "key": "must_watch",
+                "label": "必看大事",
+                "icon_hint": "red",
+                "color_hint": "#ff0000",
+            }
+        ],
+        "events": [
+            {
+                "id": "evt-001",
+                "startTime": 1790697600000,
+                "title": "美联储议息",
+                "importanceLevel": 4,
+                "category": "必看大事",
+                "targets": [
+                    {"type": "sector", "name": "银行", "code": "bk0475"},
+                    {"type": "stock", "name": "招商银行", "code": "600036"},
+                ],
+            },
+            {
+                "id": "evt-002",
+                "startTime": 1790784000000,
+                "title": "消费电子展",
+                "importanceLevel": 2,
+                "category": "行业会展",
+                "targets": [{"type": "subject", "name": "消费电子", "code": ""}],
+            },
+        ],
+    }
+    payload = IngestPayload(format="calendar", text=json.dumps(doc, ensure_ascii=False))
+    drafts = parser.parse_ingest(payload)
+    assert len(drafts) == 2
+    assert drafts[0].title == "美联储议息"
+    assert drafts[0].effective_mode == "scheduled"
+    assert drafts[0].effective_at == "2026-09-30 00:00:00"
+    assert drafts[0].external_ref == "evt-001"
+    assert drafts[0].keywords == ["必看大事"]
+    assert "must_watch" in drafts[0].marks
+    assert "flame" in drafts[0].marks
+    assert drafts[0].meta.get("impact_level") == "high"
+    assert drafts[1].meta.get("impact_level") == "low"
+    assert any(t.kind == "sector" and t.name == "银行" for t in drafts[0].targets)
+    assert any(t.kind == "stock" and t.code == "600036" for t in drafts[0].targets)
+    assert drafts[1].title == "消费电子展"
+    assert any(t.kind == "theme" and t.name == "消费电子" for t in drafts[1].targets)
+    inserted = store.insert_raw_batch(drafts, path=msg_db)
+    assert len(inserted) == 2
+    an = store.upsert_analyzed_from_raw(
+        inserted[0],
+        patch={
+            "effective_mode": "scheduled",
+            "effective_at": drafts[0].effective_at,
+            "impact_level": drafts[0].meta["impact_level"],
+        },
+        path=msg_db,
+    )
+    assert an.impact_level == "high"
+
+
+@pytest.mark.parametrize(
+    ("level", "impact"),
+    [(1, "noise"), (2, "low"), (3, "medium"), (4, "high"), (5, "critical")],
+)
+def test_importance_to_impact(level, impact):
+    assert parser.importance_to_impact(level) == impact
+
+
 def test_get_raws_for_analyzed(msg_db):
     items = [{"title": "原始标题", "content": "原始正文内容"}]
     payload = IngestPayload(format="structured", source_id="paste", items=items)

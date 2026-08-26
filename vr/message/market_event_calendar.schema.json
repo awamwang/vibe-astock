@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibe-astock.local/schemas/market-event-calendar/v4",
+  "title": "MarketEventCalendar",
+  "type": "object",
+  "required": ["meta", "legend", "events"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["title", "month", "year", "source", "disclaimer"],
+      "properties": {
+        "title": { "type": "string" },
+        "month": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "year": { "type": "integer" },
+        "source": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "brand_display": { "type": "string" }
+          }
+        },
+        "disclaimer": { "type": "string" },
+        "total_events": { "type": "integer" }
+      }
+    },
+    "legend": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/LegendItem" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/EventItem" }
+    }
+  },
+  "$defs": {
+    "LegendItem": {
+      "type": "object",
+      "required": ["key", "label", "icon_hint", "color_hint"],
+      "properties": {
+        "key": { "type": "string", "enum": ["must_watch", "key_data", "industry_exhibition"] },
+        "label": { "type": "string" },
+        "icon_hint": { "type": "string" },
+        "color_hint": { "type": "string" }
+      }
+    },
+    "Target": {
+      "type": "object",
+      "required": ["type", "name", "code"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["sector", "stock", "subject"],
+          "description": "sector=影响板块, stock=人气龙头, subject=主题图标语义"
+        },
+        "name": { "type": "string" },
+        "code": { "type": "string", "description": "无代码则留空字符串" }
+      }
+    },
+    "EventItem": {
+      "type": "object",
+      "required": ["id", "startTime", "title", "importanceLevel", "category", "targets"],
+      "properties": {
+        "id": { "type": "string" },
+        "startTime": {
+          "type": "integer",
+          "description": "毫秒时间戳（Asia/Shanghai 当日 00:00:00）"
+        },
+        "title": { "type": "string" },
+        "importanceLevel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "重要程度 1~5；右侧火焰标记为 4，无标记为 2"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["必看大事", "关键数据", "行业会展", "其他"],
+          "description": "由日期气泡颜色解析：红/蓝/绿对应图例，紫/橙等为其他"
+        },
+        "targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Target" }
+        }
+      }
+    }
+  }
+}

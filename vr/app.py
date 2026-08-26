@@ -787,6 +787,9 @@ def messages_ingest_commit(body: IngestAdjustIn):
                 patch["effective_at"] = draft.effective_at
             if draft.targets:
                 patch["targets"] = [t.model_dump() for t in draft.targets]
+            meta_il = (draft.meta or {}).get("impact_level")
+            if meta_il:
+                patch["impact_level"] = meta_il
         analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
@@ -805,6 +808,9 @@ def messages_ingest_adjust(body: IngestAdjustIn):
                 patch["effective_at"] = d.effective_at
             if d.targets:
                 patch["targets"] = [t.model_dump() for t in d.targets]
+            meta_il = (d.meta or {}).get("impact_level")
+            if meta_il:
+                patch["impact_level"] = meta_il
         analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
