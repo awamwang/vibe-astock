@@ -98,7 +98,7 @@ def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
     if impact is not None:
         marks.append(f"impact:{impact}")
     subj = item.get("SubjIds")
-    keywords = [str(x) for x in subj] if isinstance(subj, list) else []
+    subj_ids = [str(x) for x in subj] if isinstance(subj, list) else []
     url = str(item.get("Image") or "")
     return RawMessageDraft(
         draft_key=f"xgb_{msg_id}",
@@ -106,13 +106,17 @@ def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
         source_label="选股宝快讯",
         content=body,
         title=title,
-        keywords=keywords,
+        keywords=[],
         url=url if url.startswith("http") else "",
         marks=marks,
         external_ref=msg_id or None,
         produced_at=_ts_to_str(ts),
         targets=targets,
-        meta={"xgb_raw": item, "_targets_json": [t.model_dump() for t in targets]},
+        meta={
+            "xgb_raw": item,
+            "subj_ids": subj_ids,
+            "_targets_json": [t.model_dump() for t in targets],
+        },
     )
 
 
@@ -157,6 +161,12 @@ def fetch_pc_msgs(
             targets = [t.model_dump() for t in extract_targets(raw.meta["xgb_raw"])]
         if targets:
             patch["targets"] = targets
+        xgb_raw = raw.meta.get("xgb_raw") if isinstance(raw.meta.get("xgb_raw"), dict) else {}
+        api_summary = (xgb_raw.get("Summary") or "").strip()
+        api_title = (xgb_raw.get("Title") or raw.title or "").strip()
+        patch["summary"] = api_summary or api_title[:120]
+        patch["detail"] = raw.content or api_summary or api_title
+        patch["keywords"] = []
         store.upsert_analyzed_from_raw(raw, patch=patch, path=path)
 
     store.set_poll_state(
