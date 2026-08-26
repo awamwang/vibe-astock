@@ -12,6 +12,9 @@ from contextlib import closing
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
+from duanxian.message_follow_keywords import build_follow_sql, load_keywords
+
+from .follow import enrich_follow
 from .schemas import (
     AnalyzedMessage,
     ImpactTarget,
@@ -564,7 +567,9 @@ def get_analyzed_for_raw(raw_id: str, *, path: Optional[str] = None) -> Analyzed
             if not r:
                 return None
             aid = r["id"]
-            return _row_analyzed(r, _load_targets(conn, aid), _load_raw_ids(conn, aid))
+            return enrich_follow(
+                _row_analyzed(r, _load_targets(conn, aid), _load_raw_ids(conn, aid))
+            )
 
 
 def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
@@ -586,6 +591,20 @@ def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
             "(title LIKE ? OR summary LIKE ? OR detail LIKE ? OR keywords_json LIKE ?)"
         )
         args.extend([like, like, like, like])
+    if q.followed:
+        selected = {x.strip().lower() for x in q.followed.split(",") if x.strip()}
+        want_yes = "yes" in selected or "1" in selected or "true" in selected
+        want_no = "no" in selected or "0" in selected or "false" in selected
+        if want_yes != want_no:
+            follow_kws = load_keywords()
+            match_sql, match_args = build_follow_sql(follow_kws)
+            if want_yes:
+                parts.append(match_sql)
+                args.extend(match_args)
+            else:
+                if follow_kws:
+                    parts.append(f"NOT ({match_sql})")
+                    args.extend(match_args)
     return " AND ".join(parts), args
 
 
@@ -615,12 +634,13 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
                 """,
                 [*args, limit, offset],
             ).fetchall()
+            follow_kws = load_keywords()
             out: list[AnalyzedMessage] = []
             for r in rows:
                 aids = r["id"]
                 targets = _load_targets(conn, aids)
                 raw_ids = _load_raw_ids(conn, aids)
-                out.append(_row_analyzed(r, targets, raw_ids))
+                out.append(enrich_follow(_row_analyzed(r, targets, raw_ids), follow_kws))
     return out, int(total)
 
 
@@ -632,7 +652,9 @@ def get_analyzed(analyzed_id: str, *, path: Optional[str] = None) -> AnalyzedMes
             r = conn.execute("SELECT * FROM analyzed_message WHERE id = ?", (analyzed_id,)).fetchone()
             if not r:
                 return None
-            return _row_analyzed(r, _load_targets(conn, analyzed_id), _load_raw_ids(conn, analyzed_id))
+            return enrich_follow(
+                _row_analyzed(r, _load_targets(conn, analyzed_id), _load_raw_ids(conn, analyzed_id))
+            )
 
 
 def upsert_analyzed_from_raw(

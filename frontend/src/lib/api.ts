@@ -281,6 +281,8 @@ export interface AnalyzedMessage {
   analyzed_by?: string | null;
   version: number;
   status: "draft" | "confirmed" | "archived";
+  followed?: boolean;
+  matched_follow_keywords?: string[];
 }
 
 export interface MessageListResult {
@@ -646,6 +648,11 @@ export const api = {
     request<{ keywords: string[]; count: number }>("/config/zt-keywords", "POST", { keywords }),
   resetZtKeywords: () =>
     request<{ keywords: string[]; count: number }>("/config/zt-keywords/reset", "POST", {}),
+  messageFollowKeywords: () => get<MessageFollowKeywordConfig>("/config/message-follow-keywords"),
+  saveMessageFollowKeywords: (keywords: string[]) =>
+    request<{ keywords: string[]; count: number }>("/config/message-follow-keywords", "POST", { keywords }),
+  resetMessageFollowKeywords: () =>
+    request<{ keywords: string[]; count: number }>("/config/message-follow-keywords/reset", "POST", {}),
   tradePhaseConfig: () => get<TradePhaseConfig>("/config/trade-phases"),
   saveTradePhaseConfig: (phases: TradePhaseConfigRow[]) =>
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases", "POST", { phases }),
@@ -706,6 +713,7 @@ export const api = {
     impact_level?: string | string[];
     effect_status?: string | string[];
     status?: string | string[];
+    followed?: string | string[];
     sort?: string;
     order?: string;
     limit?: number;
@@ -776,6 +784,11 @@ export interface ZtKeywordConfig {
   locked: string[];
   path: string;
   defaults: string[];
+}
+export interface MessageFollowKeywordConfig {
+  schema: number;
+  keywords: string[];
+  path: string;
 }
 export interface ThemeAliasEntry {
   alias: string;

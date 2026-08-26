@@ -253,6 +253,7 @@ export function MessageAnalysis() {
   const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
   const [impactLevels, setImpactLevels] = useState<string[]>([]);
   const [effectStatuses, setEffectStatuses] = useState<string[]>([]);
+  const [followedFilter, setFollowedFilter] = useState<string[]>([]);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
 
@@ -277,6 +278,7 @@ export function MessageAnalysis() {
         source: sourcesFilter.length ? sourcesFilter : undefined,
         impact_level: impactLevels.length ? impactLevels : undefined,
         effect_status: effectStatuses.length ? effectStatuses : undefined,
+        followed: followedFilter.length ? followedFilter : undefined,
         sort,
         order,
         limit: 100,
@@ -288,7 +290,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, sort, order]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, sort, order]);
 
   const loadSources = useCallback(async () => {
     try {
@@ -507,6 +509,15 @@ export function MessageAnalysis() {
               selected={effectStatuses}
               onChange={setEffectStatuses}
             />
+            <FilterMultiSelect
+              placeholder="全部关注"
+              options={[
+                { value: "yes", label: "已关注" },
+                { value: "no", label: "未关注" },
+              ]}
+              selected={followedFilter}
+              onChange={setFollowedFilter}
+            />
             {selectedIds.size > 0 && (
               <button
                 type="button"
@@ -667,6 +678,7 @@ export function MessageAnalysis() {
                       <SortTh col="title" label="标题" sort={sort} order={order} onSort={toggleSort} className="min-w-[220px]" />
                       <SortTh col="source" label="来源" sort={sort} order={order} onSort={toggleSort} className="w-24" />
                       <SortTh col="impact_level" label="级别/状态" sort={sort} order={order} onSort={toggleSort} className="w-36" />
+                      <SortTh col="followed" label="关注" sort={sort} order={order} onSort={toggleSort} className="w-20" />
                       <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sort={sort} order={order} onSort={toggleSort} className="w-28" />
                       <SortTh col="targets" label="关联标的" sort={sort} order={order} onSort={toggleSort} className="min-w-[160px]" />
                       <SortTh col="produced_at" label="产生时间" sort={sort} order={order} onSort={toggleSort} className="w-36" />
@@ -710,6 +722,22 @@ export function MessageAnalysis() {
                         </td>
                         <td className="px-3 py-3 align-top">
                           <MessageTags item={item} />
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          {item.followed ? (
+                            <div className="space-y-1">
+                              <Badge className="border-primary/40 bg-primary/15 text-primary">关注</Badge>
+                              {(item.matched_follow_keywords?.length ?? 0) > 0 && (
+                                <div className="flex flex-wrap gap-0.5">
+                                  {item.matched_follow_keywords!.slice(0, 3).map((k) => (
+                                    <span key={k} className="text-[10px] text-primary/80">{k}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="px-3 py-3 align-top">
                           <MessageKeywords item={item} />
@@ -774,6 +802,24 @@ export function MessageAnalysis() {
                     <ExternalLink className="h-4 w-4" /> 原文链接
                   </a>
                 )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">关注</span>
+                  {selected.followed ? (
+                    <>
+                      <Badge className="border-primary/40 bg-primary/15 text-primary">已命中</Badge>
+                      {(selected.matched_follow_keywords?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {selected.matched_follow_keywords!.map((k) => (
+                            <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">未命中关注词</span>
+                  )}
+                </div>
 
                 {(selected.marks.length > 0 || (selected.source_id !== "xgb_msgs" && selected.keywords.length > 0)) && (
                   <div className="flex flex-wrap gap-2">

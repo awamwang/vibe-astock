@@ -1,13 +1,41 @@
 import { useEffect, useState } from "react";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { cn } from "@/lib/utils";
 import {
   addZtKeyword, removeZtKeyword, setZtKeywordsCache,
   LOCKED_ZT_KEYWORDS,
 } from "@/lib/zt-keywords";
+import {
+  addMessageFollowKeyword,
+  removeMessageFollowKeyword,
+  setMessageFollowKeywordsCache,
+} from "@/lib/message-follow-keywords";
 import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig } from "@/lib/api";
+
+type ConfigSectionId =
+  | "zt-keywords"
+  | "message-follow"
+  | "theme-aliases"
+  | "sentiment-s"
+  | "trade-thresholds"
+  | "trade-phases";
+
+const CONFIG_SECTIONS: {
+  id: ConfigSectionId;
+  label: string;
+  icon: typeof Tags;
+  hint: string;
+}[] = [
+  { id: "zt-keywords", label: "上涨关键词", icon: Tags, hint: "首板深入分析闭集标签" },
+  { id: "message-follow", label: "消息关注词", icon: Eye, hint: "消息分析命中筛选" },
+  { id: "theme-aliases", label: "题材别名", icon: GitMerge, hint: "统计时别名合并" },
+  { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
+  { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
+  { id: "trade-phases", label: "仓位预算档位", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
+];
 
 function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   return [...entries].sort((a, b) => {
@@ -92,10 +120,17 @@ function refForField(
 }
 
 export function ZtKeywordsSettings() {
+  const [activeSection, setActiveSection] = useState<ConfigSectionId>("zt-keywords");
+
   const [tags, setTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
   const [tagsSaving, setTagsSaving] = useState(false);
   const [draft, setDraft] = useState("");
+
+  const [followTags, setFollowTags] = useState<string[]>([]);
+  const [followLoading, setFollowLoading] = useState(true);
+  const [followSaving, setFollowSaving] = useState(false);
+  const [followDraft, setFollowDraft] = useState("");
 
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
   const [aliasLoading, setAliasLoading] = useState(true);
@@ -132,6 +167,26 @@ export function ZtKeywordsSettings() {
         }
       } finally {
         if (!cancelled) setTagsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.messageFollowKeywords();
+        if (!cancelled) {
+          const kw = setMessageFollowKeywordsCache(cfg.keywords || []);
+          setFollowTags(kw);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取消息关注词失败");
+        }
+      } finally {
+        if (!cancelled) setFollowLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -380,6 +435,55 @@ export function ZtKeywordsSettings() {
     }
   };
 
+  const persistFollowKeywords = async (next: string[]) => {
+    setFollowSaving(true);
+    try {
+      const r = await api.saveMessageFollowKeywords(next);
+      const kw = setMessageFollowKeywordsCache(r.keywords);
+      setFollowTags(kw);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setFollowSaving(false);
+    }
+  };
+
+  const addFollowKeyword = async () => {
+    const label = followDraft.replace(/\s+/g, "").trim();
+    const r = addMessageFollowKeyword(followTags, followDraft);
+    if (!r.ok) {
+      toast.error(r.reason || "添加失败");
+      return;
+    }
+    setFollowDraft("");
+    await persistFollowKeywords(r.next);
+    toast.success(`已添加「${label}」`);
+  };
+
+  const removeFollowKeyword = async (tag: string) => {
+    const r = removeMessageFollowKeyword(followTags, tag);
+    if (!r.ok) {
+      toast.error(r.reason || "删除失败");
+      return;
+    }
+    await persistFollowKeywords(r.next);
+    toast.success(`已移除「${tag}」`);
+  };
+
+  const resetFollowKeywords = async () => {
+    setFollowSaving(true);
+    try {
+      const r = await api.resetMessageFollowKeywords();
+      const kw = setMessageFollowKeywordsCache(r.keywords);
+      setFollowTags(kw);
+      toast.success("已清空消息关注词");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "清空失败");
+    } finally {
+      setFollowSaving(false);
+    }
+  };
+
   const addAlias = async () => {
     const alias = aliasDraft.alias.replace(/\s+/g, "").trim();
     const canonical = aliasDraft.canonical.replace(/\s+/g, "").trim();
@@ -468,10 +572,48 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、题材别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
+        subtitle="上涨关键词、消息关注词、题材别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
       />
 
-      <GlassCard className="mb-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <nav className="glass shrink-0 rounded-2xl p-2 lg:w-52">
+          <p className="px-3 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+            配置项
+          </p>
+          <ul className="space-y-0.5">
+            {CONFIG_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              const active = activeSection === section.id;
+              return (
+                <li key={section.id}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection(section.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                      active
+                        ? "bg-primary/15 font-semibold text-primary"
+                        : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 opacity-60", active && "opacity-100")} />
+                  </button>
+                  {active && (
+                    <p className="px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground lg:hidden">
+                      {section.hint}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <div className="min-w-0 flex-1">
+          {activeSection === "zt-keywords" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <Tags className="h-4 w-4 text-primary" /> 上涨关键词
         </h3>
@@ -547,8 +689,81 @@ export function ZtKeywordsSettings() {
           </button>
         </div>
       </GlassCard>
+          )}
 
-      <GlassCard className="mb-4">
+          {activeSection === "message-follow" && (
+      <GlassCard className="mb-0">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <Eye className="h-4 w-4 text-primary" /> 消息关注词
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          存于本机后端数据目录。消息分析列表会标记是否命中下列词（标题、摘要、详情、关键词字段），
+          并支持按「已关注 / 未关注」筛选。无内置默认词，可随时增删。
+        </p>
+
+        {followLoading ? (
+          <p className="text-xs text-muted-foreground">正在读取消息关注词…</p>
+        ) : followTags.length === 0 ? (
+          <p className="mb-4 text-xs text-muted-foreground">暂无关注词，可在下方添加。</p>
+        ) : (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {followTags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
+              >
+                {tag}
+                <button
+                  type="button"
+                  disabled={followSaving}
+                  onClick={() => void removeFollowKeyword(tag)}
+                  className="rounded p-0.5 hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
+                  title={`删除「${tag}」`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={followDraft}
+            onChange={(e) => setFollowDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addFollowKeyword();
+              }
+            }}
+            maxLength={20}
+            placeholder="新关注词，最多 20 字"
+            disabled={followSaving || followLoading}
+            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={() => void addFollowKeyword()}
+            disabled={followSaving || followLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" /> 添加
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetFollowKeywords()}
+            disabled={followSaving || followLoading || followTags.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 清空全部
+          </button>
+        </div>
+      </GlassCard>
+          )}
+
+          {activeSection === "theme-aliases" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <GitMerge className="h-4 w-4 text-primary" /> 题材别名
         </h3>
@@ -638,8 +853,10 @@ export function ZtKeywordsSettings() {
           </button>
         </div>
       </GlassCard>
+          )}
 
-      <GlassCard>
+          {activeSection === "sentiment-s" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <SlidersHorizontal className="h-4 w-4 text-primary" /> 合成情绪分 S
         </h3>
@@ -727,8 +944,10 @@ export function ZtKeywordsSettings() {
           </button>
         </div>
       </GlassCard>
+          )}
 
-      <GlassCard>
+          {activeSection === "trade-thresholds" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <SlidersHorizontal className="h-4 w-4 text-primary" /> 定档阈值
         </h3>
@@ -809,8 +1028,10 @@ export function ZtKeywordsSettings() {
           </button>
         </div>
       </GlassCard>
+          )}
 
-      <GlassCard>
+          {activeSection === "trade-phases" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <SlidersHorizontal className="h-4 w-4 text-primary" /> 仓位预算档位
         </h3>
@@ -889,6 +1110,9 @@ export function ZtKeywordsSettings() {
           </button>
         </div>
       </GlassCard>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

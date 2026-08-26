@@ -210,3 +210,39 @@ def test_merge_drafts():
     ]
     merged = parser.merge_drafts(drafts, [0, 1])
     assert "段1" in merged.content and "段2" in merged.content
+
+
+def test_follow_keywords_match_and_filter(msg_db, tmp_path, monkeypatch):
+    from duanxian import message_follow_keywords as mfk
+
+    cfg = tmp_path / "message_follow_keywords.json"
+    monkeypatch.setattr(mfk, "_CONFIG_PATH", str(cfg))
+    monkeypatch.setattr(mfk, "_KEYWORDS", None)
+    mfk.save_keywords(["光通信", "算力"])
+
+    def _insert(title: str, summary: str = ""):
+        d = RawMessageDraft(
+            draft_key=f"d-{title}",
+            source_id="paste",
+            source_label="粘贴",
+            content=title,
+            title=title,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        store.upsert_analyzed_from_raw(
+            raw,
+            patch={"summary": summary or title},
+            path=msg_db,
+        )
+
+    _insert("光通信板块走强")
+    _insert("普通新闻", "与关注词无关")
+
+    rows, total = store.list_analyzed(store.ListQuery(followed="yes"), path=msg_db)
+    assert total == 1
+    assert rows[0].followed is True
+    assert "光通信" in rows[0].matched_follow_keywords
+
+    rows_no, total_no = store.list_analyzed(store.ListQuery(followed="no"), path=msg_db)
+    assert total_no == 1
+    assert rows_no[0].followed is False

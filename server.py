@@ -1123,6 +1123,43 @@ def api_zt_keywords_reset():
     return {"data": {"keywords": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/message-follow-keywords")
+def api_message_follow_keywords_get():
+    """读取消息关注词配置。"""
+    from duanxian import message_follow_keywords as mfk
+
+    return {"data": mfk.export_config()}
+
+
+@app.post("/api/config/message-follow-keywords")
+def api_message_follow_keywords_save(body: dict = Body(...)):
+    """保存消息关注词列表。"""
+    from duanxian.message_follow_keywords import MessageFollowKeywordError, save_keywords
+
+    raw = (body or {}).get("keywords")
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "keywords 须为数组", "detail": "keywords 须为数组"}, status_code=400)
+    try:
+        saved = save_keywords([str(x) for x in raw])
+    except MessageFollowKeywordError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"keywords": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/message-follow-keywords/reset")
+def api_message_follow_keywords_reset():
+    """清空消息关注词列表。"""
+    from duanxian import message_follow_keywords as mfk
+
+    try:
+        saved = mfk.reset_keywords()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"keywords": saved, "count": len(saved)}}
+
+
 @app.get("/api/config/sentiment-s")
 def api_sentiment_s_config_get():
     """读取合成情绪分 S 的算法与序列状态。"""

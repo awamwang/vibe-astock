@@ -4514,6 +4514,42 @@ class TestThemeNormalize:
         assert "提示词" in page
         assert "自定义配置" in page
         assert "自定义配置" in nav
+        assert "/config/message-follow-keywords" in fe
+        assert "/api/config/message-follow-keywords" in be
+        assert "消息关注词" in page
+
+
+@pytest.mark.unit
+class TestMessageFollowKeywords:
+    """消息关注词：消息分析命中筛选。"""
+
+    def test_default_empty(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_keywords as mfk
+
+        cfg = tmp_path / "message_follow_keywords.json"
+        monkeypatch.setattr(mfk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfk, "_KEYWORDS", None)
+        assert mfk.load_keywords() == []
+
+    def test_save_and_match(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_keywords as mfk
+
+        cfg = tmp_path / "message_follow_keywords.json"
+        monkeypatch.setattr(mfk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfk, "_KEYWORDS", None)
+        saved = mfk.save_keywords(["CPO", "算力"])
+        assert saved == ["CPO", "算力"]
+        matched = mfk.match_in_text(saved, "CPO概念拉升", "", "", [])
+        assert matched == ["CPO"]
+
+    def test_reset_clears(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_keywords as mfk
+
+        cfg = tmp_path / "message_follow_keywords.json"
+        monkeypatch.setattr(mfk, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfk, "_KEYWORDS", None)
+        mfk.save_keywords(["涨停"])
+        assert mfk.reset_keywords() == []
 
 
 @pytest.mark.unit
