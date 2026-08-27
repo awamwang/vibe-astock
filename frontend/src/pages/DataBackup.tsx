@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Archive, ChevronRight, Database, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
   RefreshCw, ListOrdered,
@@ -10,8 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   api, downloadBackup, type BackupStatus, type StockUniverseStatus,
 } from "@/lib/api";
-
-type DataSectionId = "stock-universe" | "data-dirs" | "series" | "import-export";
+import { dataSettingsTo, parseDataSection, type DataSectionId } from "@/lib/settingsNav";
 
 const DATA_SECTIONS: {
   id: DataSectionId;
@@ -109,7 +109,8 @@ function DirRow({
 }
 
 export function DataBackup() {
-  const [activeSection, setActiveSection] = useState<DataSectionId>("stock-universe");
+  const [searchParams] = useSearchParams();
+  const activeSection = parseDataSection(searchParams.get("section"));
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [stockUni, setStockUni] = useState<StockUniverseStatus | null>(null);
@@ -287,9 +288,9 @@ export function DataBackup() {
               const active = activeSection === section.id;
               return (
                 <li key={section.id}>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSection(section.id)}
+                  <Link
+                    to={dataSettingsTo(section.id)}
+                    replace
                     className={cn(
                       "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
                       active
@@ -300,7 +301,7 @@ export function DataBackup() {
                     <Icon className="h-4 w-4 shrink-0" />
                     <span className="min-w-0 flex-1 truncate">{section.label}</span>
                     <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 opacity-60", active && "opacity-100")} />
-                  </button>
+                  </Link>
                   {active && (
                     <p className="px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground lg:hidden">
                       {section.hint}

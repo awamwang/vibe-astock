@@ -20,7 +20,7 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
         </div>
         <p className="text-[13px] text-muted-foreground">
           尚未计算。跑完复盘会自动写入，也可在
-          <Link to="/trade" className="mx-1 text-primary underline-offset-2 hover:underline">持仓与预算</Link>
+          <Link to="/trade" target="_blank" rel="noreferrer" className="mx-1 text-primary underline-offset-2 hover:underline">持仓与预算</Link>
           页手动刷新。
         </p>
       </div>
@@ -42,7 +42,7 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
       <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground/70">
         情绪定「最多几成仓」；不算买卖点。
         {date && (
-          <Link to={`/trade?date=${date}`} className="ml-2 text-primary underline-offset-2 hover:underline">
+          <Link to={`/trade?date=${date}`} target="_blank" rel="noreferrer" className="ml-2 text-primary underline-offset-2 hover:underline">
             打开持仓对照 →
           </Link>
         )}

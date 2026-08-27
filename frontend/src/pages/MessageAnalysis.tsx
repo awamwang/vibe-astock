@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
   ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw, Pencil,
@@ -28,7 +29,7 @@ import {
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
-import { Link } from "react-router-dom";
+import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { StockLabel } from "@/components/stock/StockLabel";
 import { StockResolveScope, useStockResolve, useStockResolveOptional } from "@/components/stock/StockResolveContext";
 import { BlockLabel } from "@/components/block/BlockLabel";
@@ -419,10 +420,13 @@ function MessageDetailTargets({
   );
 }
 
-function DetailSection({ label, children }: { label: string; children: ReactNode }) {
+function DetailSection({ label, action, children }: { label: string; action?: ReactNode; children: ReactNode }) {
   return (
     <div>
-      <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -1640,7 +1644,19 @@ export function MessageAnalysis() {
                   </a>
                 )}
 
-                <DetailSection label="关注">
+                <DetailSection
+                  label="关注"
+                  action={(
+                    <Link
+                      to={keywordsSettingsTo("message-follow")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      消息关注词
+                    </Link>
+                  )}
+                >
                   {selected.followed ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className="border-primary/40 bg-primary/15 text-primary">已命中</Badge>

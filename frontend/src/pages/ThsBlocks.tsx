@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
   LayoutList, Loader2, Network, RefreshCw, Search,
@@ -18,6 +19,7 @@ import {
   collectThsBranchIds, filterThsTree, parseThsTree,
   sortRowsByTreeOrder, thsBlockKindLabel, thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
+import { keywordsSettingsTo } from "@/lib/settingsNav";
 
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
@@ -426,6 +428,17 @@ export function ThsBlocks() {
               </button>
             );
           })}
+        </div>
+
+        <div className="mt-2">
+          <Link
+            to={keywordsSettingsTo("theme-aliases")}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+          >
+            板块别名
+          </Link>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

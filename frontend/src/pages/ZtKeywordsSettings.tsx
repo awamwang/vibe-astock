@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -14,17 +15,10 @@ import {
   setMessageFollowKeywordsCache,
 } from "@/lib/message-follow-keywords";
 import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem } from "@/lib/api";
-
-type ConfigSectionId =
-  | "zt-keywords"
-  | "message-follow"
-  | "theme-aliases"
-  | "sentiment-s"
-  | "trade-thresholds"
-  | "trade-phases";
+import { keywordsSettingsTo, parseKeywordsSection, type KeywordsSectionId } from "@/lib/settingsNav";
 
 const CONFIG_SECTIONS: {
-  id: ConfigSectionId;
+  id: KeywordsSectionId;
   label: string;
   icon: typeof Tags;
   hint: string;
@@ -138,7 +132,8 @@ function refForField(
 }
 
 export function ZtKeywordsSettings() {
-  const [activeSection, setActiveSection] = useState<ConfigSectionId>("zt-keywords");
+  const [searchParams] = useSearchParams();
+  const activeSection = parseKeywordsSection(searchParams.get("section"));
 
   const [tags, setTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
@@ -718,9 +713,9 @@ export function ZtKeywordsSettings() {
               const active = activeSection === section.id;
               return (
                 <li key={section.id}>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSection(section.id)}
+                  <Link
+                    to={keywordsSettingsTo(section.id)}
+                    replace
                     className={cn(
                       "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
                       active
@@ -731,7 +726,7 @@ export function ZtKeywordsSettings() {
                     <Icon className="h-4 w-4 shrink-0" />
                     <span className="min-w-0 flex-1 truncate">{section.label}</span>
                     <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 opacity-60", active && "opacity-100")} />
-                  </button>
+                  </Link>
                   {active && (
                     <p className="px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground lg:hidden">
                       {section.hint}

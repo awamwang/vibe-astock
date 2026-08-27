@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -13,6 +14,7 @@ import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SortTh, type SortOrder } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
+import { keywordsSettingsTo } from "@/lib/settingsNav";
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`);
@@ -422,6 +424,16 @@ export function FirstBoard() {
       </GlassCard>
 
       <GlassCard>
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Link
+            to={keywordsSettingsTo("zt-keywords")}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+          >
+            上涨关键词
+          </Link>
+        </div>
         <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold">
           <Flame className="h-4 w-4 text-primary" /> 涨停名单
           <Caliber text={
