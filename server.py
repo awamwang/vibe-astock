@@ -1810,6 +1810,8 @@ if __name__ == "__main__":
         print("↻ 开发模式：Python 源码变化后自动重启")
         print(f"→ 后端 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
         print("→ 改前端请打开 Vite Watch（默认 http://127.0.0.1:5910 ）")
+        # 前端页面会持续轮询 /api；graceful shutdown 默认无限等待，热重启会卡死
+        shutdown_s = float(os.environ.get("VIBE_RELOAD_SHUTDOWN_S", "3"))
         uvicorn.run(
             "server:app",
             host="127.0.0.1",
@@ -1817,7 +1819,15 @@ if __name__ == "__main__":
             reload=True,
             reload_dirs=[_HERE],
             reload_includes=["*.py"],
-            reload_excludes=["frontend/*", "tests/*", "scripts/*"],
+            reload_excludes=[
+                "frontend/*",
+                "tests/*",
+                "scripts/*",
+                "**/__pycache__/**",
+                ".pytest_cache/**",
+            ],
+            reload_delay=0.4,
+            timeout_graceful_shutdown=shutdown_s,
         )
     else:
         print(f"→ 打开 http://127.0.0.1:{port}  （VR 分栏路由 {_VR_ROUTES} 条已并入）")
