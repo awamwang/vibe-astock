@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from . import service
+from . import linker, service
 
 _BEIJING = timezone(timedelta(hours=8))
 
@@ -37,9 +37,12 @@ _SOURCE_LABELS: dict[str, str] = {
 }
 
 _LOCK = threading.Lock()
+_ENSURE_LOCK = threading.Lock()
 _PENDING: dict[str, dict[str, Any]] = {}
 _NAME_INDEX: dict[str, list[dict[str, Any]]] | None = None
 _NAME_INDEX_AT: float | None = None
+_ENSURE_SNAPSHOT_AT: Any = None
+_ENSURE_TRIED: set[str] = set()
 
 
 def _now() -> str:
@@ -119,8 +122,52 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
     return index
 
 
+def _kind_has_data(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    blocks = entry.get("blocks")
+    if isinstance(blocks, dict) and blocks:
+        return True
+    rows = entry.get("rows")
+    return isinstance(rows, list) and bool(rows)
+
+
+def _sync_ensure_state(snap: dict[str, Any]) -> None:
+    global _ENSURE_SNAPSHOT_AT, _ENSURE_TRIED
+    at = snap.get("updated_at")
+    if at != _ENSURE_SNAPSHOT_AT:
+        _ENSURE_SNAPSHOT_AT = at
+        _ENSURE_TRIED = set()
+
+
+def ensure_kinds_cached() -> list[str]:
+    """确保各板块类型均有缓存；缺失的类型各触发一次 refresh_kind。"""
+    refreshed: list[str] = []
+    with _ENSURE_LOCK:
+        snap = service.get_snapshot()
+        _sync_ensure_state(snap)
+        kinds_data = snap.get("kinds") or {}
+        for kind in linker.list_kinds():
+            if kind in _ENSURE_TRIED:
+                continue
+            if _kind_has_data(kinds_data.get(kind)):
+                continue
+            _ENSURE_TRIED.add(kind)
+            try:
+                service.refresh_kind(kind=kind)
+                refreshed.append(kind)
+                snap = service.get_snapshot()
+                kinds_data = snap.get("kinds") or {}
+            except Exception:  # noqa: BLE001
+                pass
+    if refreshed:
+        invalidate_index()
+    return refreshed
+
+
 def _get_name_index() -> dict[str, list[dict[str, Any]]]:
     global _NAME_INDEX, _NAME_INDEX_AT
+    ensure_kinds_cached()
     snap = service.get_snapshot()
     updated_at = snap.get("updated_at")
     with _LOCK:
@@ -133,10 +180,13 @@ def _get_name_index() -> dict[str, list[dict[str, Any]]]:
 
 def invalidate_index() -> None:
     """板块缓存刷新后调用，使名称索引失效。"""
-    global _NAME_INDEX, _NAME_INDEX_AT
+    global _NAME_INDEX, _NAME_INDEX_AT, _ENSURE_SNAPSHOT_AT, _ENSURE_TRIED
     with _LOCK:
         _NAME_INDEX = None
         _NAME_INDEX_AT = None
+    with _ENSURE_LOCK:
+        _ENSURE_SNAPSHOT_AT = None
+        _ENSURE_TRIED = set()
 
 
 def _partial_matches(mapped: str, index: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:

@@ -15,33 +15,29 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ths_block import cache as block_cache
+from ths_block import linker
 from ths_block import processor as bp
 
 
 def _fake_snapshot() -> dict:
+    kinds: dict = {}
+    for kind in linker.list_kinds():
+        label = {"conception": "概念", "industry": "行业", "region": "地域", "custom": "自定义", "daily": "日线"}.get(kind, kind)
+        if kind == "conception":
+            blocks = {"D001": "华为概念", "D002": "存储芯片"}
+        elif kind == "industry":
+            blocks = {"I001": "半导体", "I002": "华为概念"}
+        else:
+            blocks = {f"{kind[:1].upper()}001": f"{label}样例"}
+        rows = [
+            {"kind": kind, "kind_label": label, "id": bid, "name": name}
+            for bid, name in blocks.items()
+        ]
+        kinds[kind] = {"kind": kind, "kind_label": label, "blocks": blocks, "rows": rows}
     return {
         "updated_at": "2026-08-27 12:00:00",
         "ths_dir": "/tmp/ths",
-        "kinds": {
-            "conception": {
-                "kind": "conception",
-                "kind_label": "概念",
-                "blocks": {"D001": "华为概念", "D002": "存储芯片"},
-                "rows": [
-                    {"kind": "conception", "kind_label": "概念", "id": "D001", "name": "华为概念"},
-                    {"kind": "conception", "kind_label": "概念", "id": "D002", "name": "存储芯片"},
-                ],
-            },
-            "industry": {
-                "kind": "industry",
-                "kind_label": "行业",
-                "blocks": {"I001": "半导体", "I002": "华为概念"},
-                "rows": [
-                    {"kind": "industry", "kind_label": "行业", "id": "I001", "name": "半导体"},
-                    {"kind": "industry", "kind_label": "行业", "id": "I002", "name": "华为概念"},
-                ],
-            },
-        },
+        "kinds": kinds,
     }
 
 
@@ -53,6 +49,10 @@ def _reset_processor(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "duanxian.theme_normalize.canonicalize_tag",
         lambda tag, aliases=None: str(tag or "").replace(" ", "").strip(),
+    )
+    monkeypatch.setattr(
+        "ths_block.service.refresh_kind",
+        lambda *, kind, ths_dir=None: block_cache.get() or {},
     )
 
 
@@ -108,3 +108,41 @@ def test_remove_pending():
     bp.feed("mood_block", ["完全不存在的板块名"])
     assert bp.remove_pending(raw="完全不存在的板块名")
     assert bp.get_pending() == []
+
+
+def test_ensure_kinds_cached_triggers_missing(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    called: list[str] = []
+
+    def fake_refresh(*, kind: str, ths_dir=None):
+        called.append(kind)
+        snap = block_cache.get() or {"kinds": {}}
+        kinds = dict(snap.get("kinds") or {})
+        kinds[kind] = {
+            "kind": kind,
+            "kind_label": kind,
+            "blocks": {"X1": "测试板块"},
+            "rows": [{"kind": kind, "kind_label": kind, "id": "X1", "name": "测试板块"}],
+        }
+        block_cache.set_snapshot({"updated_at": "2026-08-27 13:00:00", "ths_dir": "/tmp", "kinds": kinds})
+        return block_cache.get()
+
+    monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
+    bp.invalidate_index()
+    refreshed = bp.ensure_kinds_cached()
+    assert set(called) == set(linker.list_kinds())
+    assert set(refreshed) == set(linker.list_kinds())
+
+
+def test_ensure_kinds_cached_skips_when_complete(monkeypatch: pytest.MonkeyPatch):
+    called: list[str] = []
+    monkeypatch.setattr(
+        "ths_block.service.refresh_kind",
+        lambda *, kind, ths_dir=None: called.append(kind),
+    )
+    bp.invalidate_index()
+    bp.ensure_kinds_cached()
+    assert called == []
+    bp.ensure_kinds_cached()
+    assert called == []
+
