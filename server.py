@@ -1531,6 +1531,15 @@ def api_plugins_list():
     }
 
 
+@app.get("/api/plugins/current-stock")
+def api_plugins_current_stock():
+    """读取插件上报的当前股票（如同花顺焦点股）。"""
+    from duanxian import current_stock as cs
+
+    data = cs.to_dict()
+    return {"data": data}
+
+
 @app.post("/api/plugins/register")
 def api_plugins_register(request: Request, body: Optional[dict] = Body(None)):
     """注册插件（.py 须导出 PACK）。"""

@@ -212,6 +212,52 @@ class TestHookRegistryImport:
         with pytest.raises(ValueError, match="replace=true"):
             reg.import_watchlist({"replace": False, "codes": ["600000"]})
 
+    def test_report_current_stock(self):
+        from duanxian import current_stock as cs
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug0001")
+        res = reg.report_current_stock({
+            "code": "600000",
+            "source": "push",
+            "ths_dir": "C:\\同花顺",
+            "symbol": "600000.SH",
+        })
+        assert res.ok
+        assert res.kind == "current_stock"
+        assert res.detail == "600000"
+        data = cs.to_dict()
+        assert data is not None
+        assert data["code"] == "600000"
+        assert data["plugin_id"] == "plug0001"
+        assert data["source"] == "push"
+        assert data["ths_dir"] == "C:\\同花顺"
+
+        res2 = reg.report_current_stock({"code": "600000", "source": "push"})
+        assert res2.ok
+        assert res2.detail == "unchanged"
+
+        res3 = reg.report_current_stock({"code": "000001", "source": "push", "prev": "600000"})
+        assert res3.detail == "000001"
+        data3 = cs.to_dict()
+        assert data3["prev"] == "600000"
+
+    def test_report_current_stock_requires_bind(self):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        with pytest.raises(RuntimeError, match="bind_plugin"):
+            reg.report_current_stock({"code": "600000"})
+
+    def test_report_current_stock_rejects_bad_code(self):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug0001")
+        with pytest.raises(ValueError, match="6 位数字"):
+            reg.report_current_stock({"code": "bad"})
+
 
 @pytest.mark.unit
 class TestHookPayloads:

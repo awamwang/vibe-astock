@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import threading
 import time
 import traceback
@@ -28,10 +29,7 @@ except ImportError as exc:
     ) from exc
 
 _WS_URL = os.environ.get("THS_LINKER_WS_URL", "ws://127.0.0.1:8765")
-_STATE_DIR = Path.home() / ".vibe-astock"
-_STATE_FILE = _STATE_DIR / "ths-linker-current.json"
 
-_STOCK_INTERVAL = 1.0
 _SYNC_INTERVAL = 60.0
 _WS_TIMEOUT = 20.0
 _DRAIN_TIMEOUT = 2.0
@@ -94,13 +92,18 @@ def _account_fields_from_snapshot(snapshot: dict) -> dict[str, Any]:
 
 
 class ThsLinkerWsClient:
-    """ths-linker WebSocket 同步客户端（单连接、请求-响应配对）。"""
+    """ths-linker WebSocket 客户端（后台读线程 + 请求-响应配对）。"""
 
     def __init__(self, url: str) -> None:
         self._url = url
         self._ws: websocket.WebSocket | None = None
-        self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._response_lock = threading.Lock()
+        self._response_queues: list[queue.Queue[dict]] = []
+        self._initial_get: dict | None = None
         self._on_push: Callable[[dict], None] | None = None
+        self._stop = threading.Event()
+        self._reader: threading.Thread | None = None
 
     def set_push_handler(self, handler: Callable[[dict], None] | None) -> None:
         self._on_push = handler
@@ -114,23 +117,32 @@ class ThsLinkerWsClient:
                 f"无法连接 ths-linker（{self._url}）：请先启动 ths-linker 服务后再启用本插件"
             ) from exc
         except Exception as exc:  # noqa: BLE001
-            # websocket-client 在部分环境下会包一层 WebSocketException
             err = str(exc).lower()
             if "refused" in err or "10061" in err or "timed out" in err:
                 raise RuntimeError(
                     f"无法连接 ths-linker（{self._url}）：请先启动 ths-linker 服务后再启用本插件"
                 ) from exc
             raise
-        ws.settimeout(2.0)
+        ws.settimeout(1.0)
         self._ws = ws
+        self._stop.clear()
+        self._reader = threading.Thread(target=self._reader_loop, name="ths-linker-ws-reader", daemon=True)
+        self._reader.start()
 
     def close(self) -> None:
+        self._stop.set()
         if self._ws is not None:
             try:
                 self._ws.close()
             except Exception:  # noqa: BLE001
                 pass
             self._ws = None
+        if self._reader is not None and self._reader.is_alive() and self._reader is not threading.current_thread():
+            self._reader.join(timeout=2.0)
+        self._reader = None
+        with self._response_lock:
+            self._response_queues.clear()
+            self._initial_get = None
 
     @staticmethod
     def _is_push(msg: dict) -> bool:
@@ -144,6 +156,41 @@ class ThsLinkerWsClient:
         if self._on_push:
             self._on_push(msg)
 
+    def _enqueue_response(self, msg: dict) -> None:
+        with self._response_lock:
+            if self._response_queues:
+                self._response_queues[0].put(msg)
+            elif msg.get("type") == "stock_code" and msg.get("action") == "get":
+                self._initial_get = msg
+
+    def _reader_loop(self) -> None:
+        while not self._stop.is_set():
+            ws = self._ws
+            if ws is None:
+                break
+            try:
+                raw = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                continue
+            except Exception:  # noqa: BLE001
+                if not self._stop.is_set():
+                    break
+                continue
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if self._is_push(msg):
+                self._deliver_push(msg)
+                continue
+            self._enqueue_response(msg)
+
+    def take_initial_get(self) -> dict | None:
+        with self._response_lock:
+            msg = self._initial_get
+            self._initial_get = None
+            return msg
+
     def request(
         self,
         payload: dict,
@@ -152,21 +199,24 @@ class ThsLinkerWsClient:
         expect_types: tuple[str, ...] | None = None,
     ) -> dict:
         allowed = set(expect_types or ([] if expect_type is None else [expect_type]))
-        with self._lock:
-            if self._ws is None:
-                self.connect()
-            assert self._ws is not None
-            action = payload.get("action")
-            self._ws.send(json.dumps(payload, ensure_ascii=False))
+        resp_q: queue.Queue[dict] = queue.Queue()
+        with self._response_lock:
+            self._response_queues.append(resp_q)
+        try:
+            with self._send_lock:
+                if self._ws is None:
+                    self.connect()
+                assert self._ws is not None
+                action = payload.get("action")
+                self._ws.send(json.dumps(payload, ensure_ascii=False))
             deadline = time.monotonic() + _WS_TIMEOUT
             while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 try:
-                    raw = self._ws.recv()
-                except websocket.WebSocketTimeoutException:
-                    continue
-                msg = json.loads(raw)
-                if self._is_push(msg):
-                    self._deliver_push(msg)
+                    msg = resp_q.get(timeout=min(remaining, 1.0))
+                except queue.Empty:
                     continue
                 mtype = msg.get("type")
                 if allowed and mtype not in allowed:
@@ -175,50 +225,20 @@ class ThsLinkerWsClient:
                     continue
                 return msg
             raise TimeoutError(f"等待 {allowed or '响应'} 超时：{payload}")
+        finally:
+            with self._response_lock:
+                if resp_q in self._response_queues:
+                    self._response_queues.remove(resp_q)
 
     def drain_initial(self) -> dict | None:
-        """连接后读取服务端主动推送：返回 stock_code get，并分发 push。"""
-        stock_get: dict | None = None
+        """连接后读取服务端主动推送的 stock_code get。"""
         deadline = time.monotonic() + _DRAIN_TIMEOUT
-        with self._lock:
-            if self._ws is None:
-                return None
-            while time.monotonic() < deadline:
-                try:
-                    raw = self._ws.recv()
-                except websocket.WebSocketTimeoutException:
-                    if stock_get is not None:
-                        break
-                    continue
-                except Exception:  # noqa: BLE001
-                    break
-                msg = json.loads(raw)
-                mtype = msg.get("type")
-                action = msg.get("action")
-                if mtype == "stock_code" and action == "get":
-                    stock_get = msg
-                    continue
-                if self._is_push(msg):
-                    self._deliver_push(msg)
-                    continue
-            return stock_get
-
-    def pump_pushes(self, timeout: float = _DRAIN_TIMEOUT) -> None:
-        """短暂读取并分发服务端 push（不发送请求）。"""
-        deadline = time.monotonic() + timeout
-        with self._lock:
-            if self._ws is None:
-                return
-            while time.monotonic() < deadline:
-                try:
-                    raw = self._ws.recv()
-                except websocket.WebSocketTimeoutException:
-                    break
-                except Exception:  # noqa: BLE001
-                    break
-                msg = json.loads(raw)
-                if self._is_push(msg):
-                    self._deliver_push(msg)
+        while time.monotonic() < deadline:
+            snap = self.take_initial_get()
+            if snap is not None:
+                return snap
+            time.sleep(0.05)
+        return None
 
 
 class ThsLinkerBridge:
@@ -260,14 +280,12 @@ class ThsLinkerBridge:
         self._apply_stock_from_get(snap)
         self._ready = True
         self._flush_pending_pushes()
-        self._client.pump_pushes()
-        _STATE_DIR.mkdir(parents=True, exist_ok=True)
-        self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
-        self._thread.start()
         try:
             self._sync_watchlist()
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
+        self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
+        self._thread.start()
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
@@ -288,14 +306,10 @@ class ThsLinkerBridge:
             ps.set_status(self._plugin_id, level, message, detail)
 
     def _run_loop(self) -> None:
-        last_stock = 0.0
         last_sync = 0.0
         while not self._stop.is_set():
             now = time.monotonic()
             try:
-                if now - last_stock >= _STOCK_INTERVAL:
-                    self._poll_stock_code()
-                    last_stock = now
                 if now - last_sync >= _SYNC_INTERVAL:
                     self._sync_watchlist()
                     self._sync_risk_control()
@@ -309,11 +323,15 @@ class ThsLinkerBridge:
                     self._ready = False
                     self._client.connect()
                     snap = self._client.drain_initial()
+                    if snap is None:
+                        snap = self._client.request(
+                            {"type": "stock_code", "action": "get"},
+                            expect_types=("stock_code", "stock_code_result"),
+                        )
                     if snap is not None:
                         self._apply_stock_from_get(snap)
                     self._ready = True
                     self._flush_pending_pushes()
-                    self._client.pump_pushes()
                 except Exception as re_exc:  # noqa: BLE001
                     re_err = f"{type(re_exc).__name__}: {re_exc}"
                     print(f"⚠️ [vibe-ths-linker] 重连失败：{re_exc}")
@@ -330,20 +348,18 @@ class ThsLinkerBridge:
             body["pid"] = str(pid)
         return body
 
-    def _poll_stock_code(self) -> None:
-        resp = self._client.request(
-            {"type": "stock_code", "action": "get"},
-            expect_types=("stock_code", "stock_code_result"),
-        )
-        self._apply_stock_from_get(resp)
-
     def _apply_stock_from_get(self, msg: dict) -> None:
         stocks = msg.get("stocks") or {}
         info = stocks.get(self._ths_dir) or {}
         code = str(info.get("code") or "").strip()
         if not code:
             return
-        self._on_stock_changed(code, source="poll")
+        self._on_stock_changed(
+            code,
+            source="get",
+            symbol=str(info.get("symbol") or "").strip() or None,
+            market_id=str(info.get("market_id") or "").strip() or None,
+        )
 
     def _on_ws_push(self, msg: dict) -> None:
         if not self._ready:
@@ -370,7 +386,12 @@ class ThsLinkerBridge:
             return
         code = str(msg.get("code") or "").strip()
         if code:
-            self._on_stock_changed(code, source="push")
+            self._on_stock_changed(
+                code,
+                source="push",
+                symbol=str(msg.get("symbol") or "").strip() or None,
+                market_id=str(msg.get("market_id") or "").strip() or None,
+            )
 
     def _on_trade_push(self, msg: dict) -> None:
         ths_dir = str(msg.get("ths_dir") or "").strip()
@@ -392,27 +413,35 @@ class ThsLinkerBridge:
             traceback.print_exc()
             self._report_status("warn", f"持仓推送同步失败：{err}", traceback.format_exc())
 
-    def _on_stock_changed(self, code: str, *, source: str) -> None:
+    def _on_stock_changed(
+        self,
+        code: str,
+        *,
+        source: str,
+        symbol: str | None = None,
+        market_id: str | None = None,
+    ) -> None:
         if code == self._last_stock_code:
             return
         prev = self._last_stock_code
         self._last_stock_code = code
-        payload = {
+        payload: dict[str, Any] = {
             "code": code,
             "ths_dir": self._ths_dir,
             "instance_id": self._instance.get("id") if self._instance else None,
             "source": source,
             "prev": prev,
-            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+        if symbol:
+            payload["symbol"] = symbol
+        if market_id:
+            payload["market_id"] = market_id
         try:
-            _STATE_FILE.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            print(f"⚠️ [vibe-ths-linker] 写入状态文件失败：{exc}")
-        print(f"[vibe-ths-linker] 股票切换 {prev or '—'} → {code} ({source})")
+            result = self._reg.report_current_stock(payload)
+            if result.ok and result.detail != "unchanged":
+                print(f"[vibe-ths-linker] 股票切换 {prev or '—'} → {code} ({source})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ [vibe-ths-linker] 上报当前股票失败：{exc}")
 
     def _sync_watchlist(self) -> None:
         _ensure_vr_path()

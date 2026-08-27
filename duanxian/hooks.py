@@ -114,6 +114,21 @@ class HookRegistry:
             raise RuntimeError("report_status 需在 on_register 内调用，或先 bind_plugin")
         ps.set_status(pid, level, message, detail)
 
+    def report_current_stock(self, payload: dict) -> ImportResult:
+        """上报插件侧当前股票（如同花顺焦点股）；代码未变时仍返回 ok。"""
+        from . import current_stock as cs
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("report_current_stock 需在 on_enable 内调用，或先 bind_plugin")
+        try:
+            rec = cs.report(pid, payload)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
+        if rec is None:
+            return ImportResult(True, "current_stock", "unchanged")
+        return ImportResult(True, "current_stock", rec.code)
+
     def import_portfolio(self, payload: dict) -> ImportResult:
         from . import screenshot_parse as sp
 

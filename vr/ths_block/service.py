@@ -32,15 +32,14 @@ def _resolve_ths_dir(explicit: str | None = None) -> str:
     env = os.environ.get("THS_DIR", "").strip()
     if env:
         return env
-    state = Path.home() / ".vibe-astock" / "ths-linker-current.json"
-    if state.is_file():
-        try:
-            data = json.loads(state.read_text(encoding="utf-8"))
-            ths_dir = str(data.get("ths_dir") or "").strip()
-            if ths_dir:
-                return ths_dir
-        except (OSError, json.JSONDecodeError):
-            pass
+    try:
+        from duanxian import current_stock as cs
+
+        ths_dir = cs.load_legacy_ths_dir()
+        if ths_dir:
+            return ths_dir
+    except Exception:  # noqa: BLE001
+        pass
     raise RuntimeError(
         "无法定位同花顺目录：请设置环境变量 THS_DIR，或启用 vibe-ths-linker 插件连接同花顺"
     )
