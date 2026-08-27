@@ -641,7 +641,7 @@ END)
 
 def _collect_stock_match_ids(conn: sqlite3.Connection, stock_code: str) -> set[str]:
     """直接股票标的或板块成分股包含该代码的分析消息 id。"""
-    from ..ths_block import match as block_match
+    from ths_block import match as block_match
 
     code = (stock_code or "").strip().zfill(6)
     if not code.isdigit() or len(code) != 6:

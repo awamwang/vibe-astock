@@ -513,3 +513,15 @@ class TestMergeSource:
         src = pathlib.Path("server.py").read_text(encoding="utf-8")
         assert "_merge_vr_routes = _vr_host._merge_vr_routes" in src
         assert "add_middleware" not in src, "不该把 VR 的 CORS 中间件搬过来"
+
+    def test_vr_app_imports_via_sys_path(self):
+        """与 vr_host 相同的路径策略下，VR app 必须能完整 import。"""
+        import sys
+        from pathlib import Path
+
+        vr_dir = str(Path("vr").resolve())
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import app as vr_app  # noqa: PLC0415
+
+        assert vr_app.app.title == "Vibe-Research API"

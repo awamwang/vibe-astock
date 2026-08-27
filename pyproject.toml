@@ -1,0 +1,10 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["TID252"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# vr/ 经 sys.path 加载为顶层包，禁止 from ..xxx（会 beyond top-level package）
+ban-relative-imports = "parents"

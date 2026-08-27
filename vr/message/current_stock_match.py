@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..ths_block import match as block_match
+from ths_block import match as block_match
 
 from .schemas import AnalyzedMessage
 
