@@ -397,11 +397,14 @@ def _merge_pending(key: str, item: dict[str, Any], source: str) -> None:
         prev["suggested_canonical"] = _suggested_canonical("partial", prev.get("candidates") or [])
 
 
-def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
+def feed(source: str, strings: list[str], *, track_pending: bool | None = None) -> list[dict[str, Any]]:
     """批量喂入字符串并更新待匹配列表，返回每条解析结果。
 
     仅使用已有板块缓存做匹配；缓存为空或 ths-linker 未就绪时静默跳过。
+    message_target 来源默认不写入待匹配列表（消息关联标的可能并非板块名）。
     """
+    if track_pending is None:
+        track_pending = source != "message_target"
     cleaned = [_norm(s) for s in (strings or []) if _norm(s)]
     if not cleaned:
         return []
@@ -416,7 +419,7 @@ def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
         for raw in cleaned:
             result = resolve_one(raw, index=index)
             results.append(result)
-            if result["status"] not in ("partial", "unmatched"):
+            if not track_pending or result["status"] not in ("partial", "unmatched"):
                 continue
             key = str(result["mapped"] or result["raw"])
             candidates = result.get("candidates") or []
@@ -540,16 +543,27 @@ def feed_turnover(payload: dict[str, Any] | None) -> None:
 
 
 def _feed_message_targets(items: list[Any]) -> None:
+    import stock_processor
+
     names: list[str] = []
     for row in items or []:
         targets = row.get("targets") if isinstance(row, dict) else getattr(row, "targets", None)
         if not targets:
             continue
         for t in targets:
-            kind = t.get("kind") if isinstance(t, dict) else getattr(t, "kind", "")
             name = t.get("name") if isinstance(t, dict) else getattr(t, "name", "")
-            if kind in ("sector", "theme") and name:
-                names.append(str(name))
+            code = t.get("code") if isinstance(t, dict) else getattr(t, "code", "")
+            if not name and not code:
+                continue
+            hit = stock_processor.resolve_one(
+                code=str(code) if code else None,
+                name=str(name) if name else None,
+            )
+            if hit.get("status") == "matched":
+                continue
+            label = str(name or "").strip()
+            if label:
+                names.append(label)
     feed("message_target", names)
 
 

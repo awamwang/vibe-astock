@@ -21,15 +21,17 @@ import {
   type AnalyzedMessage, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
 } from "@/lib/api";
 import {
-  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
+  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, TARGET_KIND_LABEL,
   effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
   monthRange, setDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { StockResolveScope, useStockResolve } from "@/components/stock/StockResolveContext";
 import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
+import { isStockMatched } from "@/lib/stocks";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
@@ -272,23 +274,57 @@ function sortMessageTargets(targets: AnalyzedMessage["targets"]) {
 }
 
 function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
-  if (t.kind === "stock" && t.code) {
+  const stockResolved = useStockResolve({ code: t.code, name: t.name });
+  const stockMatched = isStockMatched(stockResolved);
+
+  if (stockMatched) {
+    const stock = stockResolved!.stock!;
     return (
       <Badge
-        className="border-primary/30 bg-primary/10 text-foreground"
-        title={targetHint(t)}
+        className="border-sky-500/30 bg-sky-500/10 p-0 text-foreground"
+        title={`${TARGET_KIND_LABEL.stock} · 代码 ${stock.code}`}
+        data-stock-code={stock.code}
       >
-        <StockLabel code={t.code} name={t.name} variant="inline" />
+        <StockLabel
+          code={stock.code}
+          name={stock.name}
+          resolved={stockResolved}
+          variant="inline"
+          className="border-0 bg-transparent px-1.5 py-0.5"
+        />
       </Badge>
     );
   }
-  if (t.kind === "sector" || t.kind === "theme") {
+  if (t.kind === "market") {
+    return (
+      <Badge className="border-border bg-background text-foreground" title={targetHint(t)}>
+        {targetTitle(t)}
+      </Badge>
+    );
+  }
+  if (t.kind === "sector" || t.kind === "theme" || t.name) {
     return (
       <Badge
         className="border-amber-500/30 bg-amber-500/10 p-0 text-foreground"
         title={targetHint(t)}
       >
         <BlockLabel name={targetTitle(t)} variant="tag" className="border-0 bg-transparent" />
+      </Badge>
+    );
+  }
+  if (t.kind === "stock" && (t.name || t.code)) {
+    return (
+      <Badge
+        className="border-primary/30 bg-primary/10 p-0 text-foreground"
+        title={targetHint(t)}
+      >
+        <StockLabel
+          code={t.code || ""}
+          name={t.name}
+          resolved={stockResolved}
+          variant="inline"
+          className="border-0 bg-transparent px-1.5 py-0.5"
+        />
       </Badge>
     );
   }
@@ -860,19 +896,33 @@ export function MessageAnalysis() {
     }
   };
 
+  const stockQueries = useMemo(() => {
+    const out: { code?: string | null; name?: string | null }[] = [];
+    const pool = [...items, ...calendarItems];
+    if (selected) pool.push(selected);
+    for (const item of pool) {
+      for (const t of item.targets) {
+        if (t.name || t.code) out.push({ code: t.code, name: t.name });
+      }
+    }
+    return out;
+  }, [items, calendarItems, selected]);
+
   const blockNames = useMemo(() => {
     const names: string[] = [];
     const pool = [...items, ...calendarItems];
     if (selected) pool.push(selected);
     for (const item of pool) {
       for (const t of item.targets) {
-        if ((t.kind === "sector" || t.kind === "theme") && t.name) names.push(t.name);
+        if (t.kind === "market" || !t.name) continue;
+        names.push(t.name);
       }
     }
     return names;
   }, [items, calendarItems, selected]);
 
   return (
+    <StockResolveScope queries={stockQueries}>
     <BlockResolveScope names={blockNames}>
     <div className="w-full min-w-0 space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -1719,5 +1769,6 @@ export function MessageAnalysis() {
       )}
     </div>
     </BlockResolveScope>
+    </StockResolveScope>
   );
 }

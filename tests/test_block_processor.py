@@ -118,12 +118,12 @@ def test_dedupe_and_source_merge():
     assert "firstboard_theme" in pending[0]["sources"]
 
 
-def test_message_target_sorted_last():
+def test_message_target_not_in_pending():
     bp.feed("message_target", ["未知题材A"])
     bp.feed("emotion_industry", ["未知题材B"])
     pending = bp.get_pending()
+    assert len(pending) == 1
     assert pending[0]["raw"] == "未知题材B"
-    assert pending[1]["raw"] == "未知题材A"
 
 
 def test_matched_not_in_pending():
