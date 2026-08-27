@@ -455,8 +455,10 @@ class ThsLinkerBridge:
         if market_id:
             payload["market_id"] = market_id
         try:
-            result = self._reg.report_current_stock(payload)
-            if result.ok and result.detail != "unchanged":
+            from duanxian import current_stock as cs
+
+            rec = cs.report(self._plugin_id, payload)
+            if rec is not None:
                 print(f"[vibe-ths-linker] 股票切换 {prev or '—'} → {code} ({source})")
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ [vibe-ths-linker] 上报当前股票失败：{exc}")
