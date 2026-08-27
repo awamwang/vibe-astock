@@ -63,6 +63,24 @@ function keywordSortIndex(kw: string, list: readonly string[]): number {
   return i >= 0 ? i : list.length;
 }
 
+function filterByBoard(stocks: FirstBoardStock[], boardFilter: BoardFilter): FirstBoardStock[] {
+  if (boardFilter === "first") return stocks.filter((s) => s.boards <= 1);
+  if (boardFilter === "lianban") return stocks.filter((s) => s.boards >= 2);
+  return stocks;
+}
+
+function themeOptionsFromStocks(stocks: FirstBoardStock[]): { tag: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const s of stocks) {
+    for (const t of s.themes ?? []) {
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
+    .map(([tag, count]) => ({ tag, count }));
+}
+
 export function FirstBoard() {
   const [data, setData] = useState<FirstBoardData | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -95,18 +113,32 @@ export function FirstBoard() {
 
   const allStocks = data?.stocks ?? [];
 
+  const boardFilteredStocks = useMemo(
+    () => filterByBoard(allStocks, boardFilter),
+    [allStocks, boardFilter],
+  );
+
+  const themeOptions = useMemo(
+    () => themeOptionsFromStocks(boardFilteredStocks),
+    [boardFilteredStocks],
+  );
+
+  useEffect(() => {
+    setSelectedThemes((prev) => {
+      if (prev.length === 0) return prev;
+      const available = new Set(themeOptions.map((o) => o.tag));
+      const next = prev.filter((t) => available.has(t));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [boardFilter, themeOptions]);
+
   const filteredStocks = useMemo(() => {
-    let list = allStocks;
-    if (boardFilter === "first") list = list.filter((s) => s.boards <= 1);
-    else if (boardFilter === "lianban") list = list.filter((s) => s.boards >= 2);
-    if (selectedThemes.length > 0) {
-      list = list.filter((s) => {
-        const tags = new Set(s.themes ?? []);
-        return selectedThemes.every((t) => tags.has(t));
-      });
-    }
-    return list;
-  }, [allStocks, boardFilter, selectedThemes]);
+    if (selectedThemes.length === 0) return boardFilteredStocks;
+    return boardFilteredStocks.filter((s) => {
+      const tags = new Set(s.themes ?? []);
+      return selectedThemes.every((t) => tags.has(t));
+    });
+  }, [boardFilteredStocks, selectedThemes]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
@@ -253,7 +285,6 @@ export function FirstBoard() {
   const diveItem = (s: FirstBoardStock): DiveItem => ({ key: s.code, prompt: buildPrompt(s), context: ctx(s) });
 
   const nameByCode = Object.fromEntries(sortedStocks.map((s) => [s.code, s.name]));
-  const themeOptions = data?.theme_options ?? [];
 
   return (
     <div>
@@ -335,7 +366,8 @@ export function FirstBoard() {
               <span className="text-xs font-semibold text-muted-foreground">题材筛选</span>
               <Caliber text={
                 "与题材事件树、多日题材矩阵同一套规则：「+」拆散 → 过滤属性词（国资/低价股等）→ 别名映射。\n" +
-                "可多选；须**同时命中**所选题材才显示（与关系）。标签旁数字 = 当日该题材涨停家数。"
+                "可多选；须**同时命中**所选题材才显示（与关系）。标签旁数字 = 当前板位筛选下该题材涨停家数；\n" +
+                "切换首板/连板会联动刷新题材列表，题材筛选不影响板位筛选。"
               } />
             </div>
             <div className="flex flex-wrap gap-1.5">

@@ -791,6 +791,8 @@ export const api = {
   thsBlocksSnapshot: () => get<ThsBlocksSnapshot>("/ths-blocks"),
   thsBlocksRefresh: (ths_dir = "") =>
     request<ThsBlocksSnapshot>("/ths-blocks/refresh", "POST", ths_dir ? { ths_dir } : {}),
+  thsBlocksRefreshKind: (kind: string, ths_dir = "") =>
+    request<ThsBlocksSnapshot>(`/ths-blocks/refresh/${encodeURIComponent(kind)}`, "POST", ths_dir ? { ths_dir } : {}),
   thsBlockStocks: (kind: string, blockId: string) =>
     get<ThsBlockStocksDetail>(`/ths-blocks/stocks?kind=${encodeURIComponent(kind)}&block_id=${encodeURIComponent(blockId)}`),
 };
@@ -847,6 +849,11 @@ export interface ThsBlockRow {
   name: string;
   node_type: "branch" | "leaf" | "flat";
   tree_path: string;
+  custom_type?: "static" | "dynamic";
+  dynamic_kind?: "broker" | "concept" | "rule";
+  query_key?: string;
+  hex_id?: string;
+  stock_count?: number;
 }
 
 export interface ThsBlockKindSnapshot {
@@ -854,10 +861,12 @@ export interface ThsBlockKindSnapshot {
   kind_label: string;
   count: number;
   blocks: Record<string, string>;
+  blocks_meta?: Record<string, Record<string, unknown>>;
   root_id?: string;
   root_name?: string;
   branch_count?: number;
   leaf_count?: number;
+  tree_mode?: "tree" | "flat_fallback";
   tree?: Record<string, unknown>;
   rows: ThsBlockRow[];
 }

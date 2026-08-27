@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from . import cache, linker, stocks
 
 _BEIJING = timezone(timedelta(hours=8))
 _TREE_KINDS = set(linker.tree_kinds())
+_REFRESH_LOCK = threading.Lock()
 
 
 def _now() -> str:
@@ -36,6 +38,36 @@ def _resolve_ths_dir(explicit: str | None = None) -> str:
     raise RuntimeError(
         "无法定位同花顺目录：请设置环境变量 THS_DIR，或启用 vibe-ths-linker 插件连接同花顺"
     )
+
+
+def _normalize_blocks(
+    blocks: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """将 list 返回的 blocks 规范为 id→名称 与 id→扩展元数据。"""
+    names: dict[str, str] = {}
+    meta: dict[str, dict[str, Any]] = {}
+    for block_id, raw in (blocks or {}).items():
+        bid = str(block_id)
+        if isinstance(raw, dict):
+            names[bid] = str(raw.get("name") or "").strip()
+            meta[bid] = dict(raw)
+        else:
+            names[bid] = str(raw or "").strip()
+    return names, meta
+
+
+def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    custom_type = meta.get("custom_type")
+    if custom_type:
+        out["custom_type"] = str(custom_type)
+    dynamic_kind = meta.get("dynamic_kind")
+    if dynamic_kind:
+        out["dynamic_kind"] = str(dynamic_kind)
+    for key in ("query_key", "hex_id", "stock_count"):
+        if key in meta and meta[key] is not None:
+            out[key] = meta[key]
+    return out
 
 
 def _flatten_tree(
@@ -67,68 +99,152 @@ def _flatten_tree(
     return rows
 
 
-def _rows_from_list(kind: str, kind_label: str, blocks: dict[str, str]) -> list[dict[str, Any]]:
+def _rows_from_list(
+    kind: str,
+    kind_label: str,
+    blocks: dict[str, str],
+    *,
+    blocks_meta: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    meta_map = blocks_meta or {}
     for block_id, name in sorted(blocks.items(), key=lambda x: (x[1], x[0])):
-        rows.append({
+        row: dict[str, Any] = {
             "kind": kind,
             "kind_label": kind_label,
             "id": block_id,
             "name": name,
             "node_type": "flat",
             "tree_path": name,
-        })
+        }
+        if kind == "custom" or block_id in meta_map:
+            row.update(_custom_row_fields(meta_map.get(block_id) or {}))
+        rows.append(row)
     return rows
 
 
-def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
-    """从 ths-linker 拉取全部板块类型并写入内存缓存。"""
-    resolved = _resolve_ths_dir(ths_dir)
-    kinds_data: dict[str, Any] = {}
-    errors: list[str] = []
+def _fetch_kind_entry(ths_dir: str, kind: str) -> tuple[dict[str, Any], list[str]]:
+    """拉取单个板块类型；树不可用时回退为 flat 列表。"""
+    warnings: list[str] = []
+    list_payload = linker.fetch_list(kind, ths_dir=ths_dir)
+    blocks_raw = dict(list_payload.get("blocks") or {})
+    blocks_names, blocks_meta = _normalize_blocks(blocks_raw)
 
-    for kind in linker.list_kinds():
+    entry: dict[str, Any] = {
+        "kind": list_payload.get("kind") or kind,
+        "kind_label": list_payload.get("kind_label") or kind,
+        "count": int(list_payload.get("count") or len(blocks_names)),
+        "blocks": blocks_names,
+    }
+    if blocks_meta:
+        entry["blocks_meta"] = blocks_meta
+
+    kind_key = str(entry["kind"])
+    kind_label = str(entry["kind_label"])
+
+    if kind in _TREE_KINDS:
         try:
-            list_payload = linker.fetch_list(kind, ths_dir=resolved)
-            entry: dict[str, Any] = {
-                "kind": list_payload.get("kind") or kind,
-                "kind_label": list_payload.get("kind_label") or kind,
-                "count": int(list_payload.get("count") or 0),
-                "blocks": dict(list_payload.get("blocks") or {}),
-            }
-            if kind in _TREE_KINDS:
-                tree_payload = linker.fetch_tree(kind, ths_dir=resolved)
-                tree = tree_payload.get("tree") or {}
-                entry["root_id"] = tree_payload.get("root_id")
-                entry["root_name"] = tree_payload.get("root_name")
-                entry["branch_count"] = tree_payload.get("branch_count")
-                entry["leaf_count"] = tree_payload.get("leaf_count")
-                entry["tree"] = tree
-                entry["rows"] = _flatten_tree(
-                    tree,
-                    kind=entry["kind"],
-                    kind_label=str(entry["kind_label"]),
-                ) if isinstance(tree, dict) else []
-            else:
-                entry["rows"] = _rows_from_list(
-                    entry["kind"],
-                    str(entry["kind_label"]),
-                    entry["blocks"],
-                )
-            kinds_data[kind] = entry
+            tree_payload = linker.fetch_tree(kind, ths_dir=ths_dir)
+            tree = tree_payload.get("tree")
+            if not isinstance(tree, dict) or not tree:
+                raise RuntimeError("板块树为空")
+            entry["root_id"] = tree_payload.get("root_id")
+            entry["root_name"] = tree_payload.get("root_name")
+            entry["branch_count"] = tree_payload.get("branch_count")
+            entry["leaf_count"] = tree_payload.get("leaf_count")
+            entry["tree"] = tree
+            entry["tree_mode"] = "tree"
+            entry["rows"] = _flatten_tree(tree, kind=kind_key, kind_label=kind_label)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{kind}: {exc}")
+            warnings.append(f"{kind}: 树结构不可用（{exc}），已使用 flat 列表")
+            entry["tree_mode"] = "flat_fallback"
+            entry["rows"] = _rows_from_list(
+                kind_key,
+                kind_label,
+                blocks_names,
+                blocks_meta=blocks_meta,
+            )
+    else:
+        entry["rows"] = _rows_from_list(
+            kind_key,
+            kind_label,
+            blocks_names,
+            blocks_meta=blocks_meta,
+        )
 
-    if not kinds_data and errors:
-        raise RuntimeError("；".join(errors))
+    return entry, warnings
 
-    snapshot = {
+
+def _merge_errors(existing: list[str], *, kind: str, new_items: list[str]) -> list[str]:
+    kept = [e for e in existing if not e.startswith(f"{kind}:")]
+    return kept + new_items
+
+
+def _apply_kind_refresh(
+    snap: dict[str, Any],
+    kind: str,
+    *,
+    ths_dir: str | None = None,
+) -> dict[str, Any]:
+    resolved = _resolve_ths_dir(ths_dir or snap.get("ths_dir"))
+    kinds_data: dict[str, Any] = dict(snap.get("kinds") or {})
+    errors: list[str] = list(snap.get("errors") or [])
+
+    try:
+        entry, warnings = _fetch_kind_entry(resolved, kind)
+        kinds_data[kind] = entry
+        errors = _merge_errors(errors, kind=kind, new_items=warnings)
+    except Exception as exc:  # noqa: BLE001
+        errors = _merge_errors(errors, kind=kind, new_items=[f"{kind}: {exc}"])
+
+    return {
         "updated_at": _now(),
         "ths_dir": resolved,
         "kinds": kinds_data,
         "errors": errors,
     }
-    return cache.set_snapshot(snapshot)
+
+
+def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
+    """刷新单个板块类型并合并进全局缓存；失败时保留该类型旧数据。"""
+    kind_norm = kind.strip()
+    if kind_norm not in linker.list_kinds():
+        raise ValueError(f"未知板块类型: {kind_norm}")
+
+    with _REFRESH_LOCK:
+        snap = cache.get() or {}
+        snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
+        if not snapshot["kinds"] and snapshot["errors"]:
+            raise RuntimeError("；".join(snapshot["errors"]))
+        return cache.set_snapshot(snapshot)
+
+
+def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
+    """从 ths-linker 逐类型拉取板块并写入内存缓存；部分失败不影响其它类型。"""
+    with _REFRESH_LOCK:
+        resolved = _resolve_ths_dir(ths_dir)
+        snap = cache.get() or {}
+        kinds_data: dict[str, Any] = dict(snap.get("kinds") or {})
+        errors: list[str] = []
+
+        for kind in linker.list_kinds():
+            try:
+                entry, warnings = _fetch_kind_entry(resolved, kind)
+                kinds_data[kind] = entry
+                errors.extend(warnings)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{kind}: {exc}")
+
+        if not kinds_data and errors:
+            raise RuntimeError("；".join(errors))
+
+        snapshot = {
+            "updated_at": _now(),
+            "ths_dir": resolved,
+            "kinds": kinds_data,
+            "errors": errors,
+        }
+        return cache.set_snapshot(snapshot)
 
 
 def get_snapshot() -> dict[str, Any]:

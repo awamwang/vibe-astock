@@ -44,13 +44,23 @@ def _run(action: str, kind: str, *, ths_dir: str | None = None) -> dict[str, Any
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ths-linker 超时（{kind}/{action}）") from exc
+
+    payload: dict[str, Any] | None = None
+    if (proc.stdout or "").strip():
+        try:
+            payload = _extract_json(proc.stdout)
+        except RuntimeError:
+            payload = None
+
+    if payload is not None:
+        if not payload.get("ok"):
+            raise RuntimeError(str(payload.get("error") or "ths-linker 返回失败"))
+        return payload
+
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()[:500]
         raise RuntimeError(err or f"ths-linker 退出码 {proc.returncode}")
-    payload = _extract_json(proc.stdout)
-    if not payload.get("ok"):
-        raise RuntimeError(str(payload.get("error") or "ths-linker 返回失败"))
-    return payload
+    raise RuntimeError("ths-linker 无有效输出")
 
 
 def fetch_list(kind: str, *, ths_dir: str | None = None) -> dict[str, Any]:

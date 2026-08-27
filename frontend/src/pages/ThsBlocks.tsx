@@ -9,7 +9,10 @@ import {
   api, ApiError,
   type Quote, type ThsBlockRow, type ThsBlocksSnapshot, type ThsBlockStocksDetail,
 } from "@/lib/api";
-import { THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL, thsBlockKindLabel } from "@/lib/thsBlocks";
+import {
+  THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL,
+  thsBlockKindLabel, thsCustomSubtypeLabel,
+} from "@/lib/thsBlocks";
 
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
@@ -21,7 +24,7 @@ const selectCls =
 const inputCls =
   "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
-type SortKey = "id" | "name" | "node_type" | "tree_path";
+type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype";
 
 function DetailSection({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -38,10 +41,15 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+function kindHasError(errors: string[] | undefined, kind: string): boolean {
+  return (errors || []).some((e) => e.startsWith(`${kind}:`));
+}
+
 export function ThsBlocks() {
   const [snapshot, setSnapshot] = useState<ThsBlocksSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingKind, setRefreshingKind] = useState<string | null>(null);
 
   const [kindFilter, setKindFilter] = useState<string>("conception");
   const [q, setQ] = useState("");
@@ -70,28 +78,60 @@ export function ThsBlocks() {
     void loadSnapshot();
   }, [loadSnapshot]);
 
-  const refresh = async () => {
+  const refreshAll = async () => {
     setRefreshing(true);
+    const failed: string[] = [];
+    let latest: ThsBlocksSnapshot | null = snapshot;
+
+    for (const k of THS_BLOCK_KINDS) {
+      setRefreshingKind(k.value);
+      try {
+        latest = await api.thsBlocksRefreshKind(k.value);
+        setSnapshot(latest);
+      } catch (e) {
+        const msg = e instanceof ApiError ? e.message : "刷新失败";
+        failed.push(`${k.label}: ${msg}`);
+      }
+    }
+
+    setRefreshingKind(null);
+    setSelected(null);
+    setStocksDetail(null);
+    setQuotes({});
+
+    const loaded = latest?.kinds ? Object.keys(latest.kinds).length : 0;
+    if (failed.length) {
+      notify.error(`部分类型刷新失败（${loaded}/${THS_BLOCK_KINDS.length} 成功）：${failed.join("；")}`);
+    } else {
+      notify.success(`板块已刷新 · ${latest?.updated_at || ""}`);
+    }
+    setRefreshing(false);
+  };
+
+  const refreshOneKind = async (kind: string) => {
+    setRefreshing(true);
+    setRefreshingKind(kind);
     try {
-      const data = await api.thsBlocksRefresh();
+      const data = await api.thsBlocksRefreshKind(kind);
       setSnapshot(data);
-      setSelected(null);
-      setStocksDetail(null);
-      setQuotes({});
-      if (data.errors?.length) {
-        notify.error(`部分类型刷新失败：${data.errors.join("；")}`);
+      const label = thsBlockKindLabel(kind);
+      const err = (data.errors || []).find((e) => e.startsWith(`${kind}:`));
+      if (err) {
+        notify.error(`${label}：${err.slice(kind.length + 2)}`);
       } else {
-        notify.success(`板块已刷新 · ${data.updated_at || ""}`);
+        notify.success(`${label} 已刷新`);
       }
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "刷新失败");
     } finally {
+      setRefreshingKind(null);
       setRefreshing(false);
     }
   };
 
   const kindEntry = snapshot?.kinds?.[kindFilter];
   const allRows = kindEntry?.rows || [];
+  const showSubtypeCol = kindFilter === "custom";
 
   const filteredRows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -99,15 +139,25 @@ export function ThsBlocks() {
       if (nodeFilter === "leaf" && row.node_type === "branch") return false;
       if (nodeFilter === "branch" && row.node_type !== "branch") return false;
       if (!query) return true;
+      const subtype = thsCustomSubtypeLabel(row) || "";
       return (
         row.id.toLowerCase().includes(query)
         || row.name.toLowerCase().includes(query)
         || row.tree_path.toLowerCase().includes(query)
+        || subtype.toLowerCase().includes(query)
+        || (row.query_key || "").toLowerCase().includes(query)
       );
     });
     rows = [...rows].sort((a, b) => {
-      const av = String(a[sort] ?? "");
-      const bv = String(b[sort] ?? "");
+      let av: string;
+      let bv: string;
+      if (sort === "subtype") {
+        av = thsCustomSubtypeLabel(a) || "";
+        bv = thsCustomSubtypeLabel(b) || "";
+      } else {
+        av = String(a[sort] ?? "");
+        bv = String(b[sort] ?? "");
+      }
       const cmp = av.localeCompare(bv, "zh-CN");
       return order === "asc" ? cmp : -cmp;
     });
@@ -151,6 +201,7 @@ export function ThsBlocks() {
   };
 
   const emptyCache = !snapshot?.updated_at;
+  const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
 
   return (
     <div className="space-y-6">
@@ -168,39 +219,47 @@ export function ThsBlocks() {
           <button
             type="button"
             disabled={refreshing}
-            onClick={() => void refresh()}
+            onClick={() => void refreshAll()}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
           >
             {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            刷新板块
+            {refreshingKind ? `刷新 ${thsBlockKindLabel(refreshingKind)}…` : "刷新板块"}
           </button>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {THS_BLOCK_KINDS.map((k) => (
-            <button
-              key={k.value}
-              type="button"
-              onClick={() => {
-                setKindFilter(k.value);
-                setSelected(null);
-                setStocksDetail(null);
-              }}
-              className={cn(
-                "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
-                kindFilter === k.value
-                  ? "border-primary/40 bg-primary/10 text-primary"
-                  : "border-border bg-background text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {k.label}
-              {snapshot?.kinds?.[k.value]?.count != null && (
-                <span className="ml-1.5 tabular-nums opacity-70">
-                  {snapshot.kinds[k.value].count}
-                </span>
-              )}
-            </button>
-          ))}
+          {THS_BLOCK_KINDS.map((k) => {
+            const loaded = snapshot?.kinds?.[k.value] != null;
+            const hasErr = kindHasError(snapshot?.errors, k.value);
+            return (
+              <button
+                key={k.value}
+                type="button"
+                onClick={() => {
+                  setKindFilter(k.value);
+                  setSelected(null);
+                  setStocksDetail(null);
+                }}
+                className={cn(
+                  "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+                  kindFilter === k.value
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:text-foreground",
+                  hasErr && "border-amber-500/50",
+                )}
+              >
+                {k.label}
+                {snapshot?.kinds?.[k.value]?.count != null && (
+                  <span className="ml-1.5 tabular-nums opacity-70">
+                    {snapshot.kinds[k.value].count}
+                  </span>
+                )}
+                {!loaded && !emptyCache && (
+                  <span className="ml-1 text-xs opacity-60">未加载</span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -216,6 +275,19 @@ export function ThsBlocks() {
           )}
           {kindEntry?.branch_count != null && (
             <span>· 树节点 {kindEntry.branch_count} · 叶子 {kindEntry.leaf_count}</span>
+          )}
+          {kindEntry?.tree_mode === "flat_fallback" && (
+            <span className="text-amber-700 dark:text-amber-300">· 树结构不可用，已展示 flat 列表</span>
+          )}
+          {kindEntry && (
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={() => void refreshOneKind(kindFilter)}
+              className="text-primary hover:underline disabled:opacity-50"
+            >
+              仅刷新当前类型
+            </button>
           )}
         </div>
       </section>
@@ -261,7 +333,12 @@ export function ThsBlocks() {
                 </div>
               ) : !kindEntry ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
-                  该类型刷新失败或未加载
+                  该类型尚未加载
+                  {kindHasError(snapshot?.errors, kindFilter) && (
+                    <p className="mt-2 text-amber-700 dark:text-amber-300">
+                      {(snapshot?.errors || []).find((e) => e.startsWith(`${kindFilter}:`))?.slice(kindFilter.length + 2)}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <table className="w-full min-w-[640px] text-sm">
@@ -269,6 +346,9 @@ export function ThsBlocks() {
                     <tr className="border-b border-border/60 text-left">
                       <SortTh label="ID" active={sort === "id"} order={order} onClick={() => toggleSort("id")} />
                       <SortTh label="名称" active={sort === "name"} order={order} onClick={() => toggleSort("name")} />
+                      {showSubtypeCol && (
+                        <SortTh label="子类型" active={sort === "subtype"} order={order} onClick={() => toggleSort("subtype")} />
+                      )}
                       <SortTh label="节点" active={sort === "node_type"} order={order} onClick={() => toggleSort("node_type")} />
                       <SortTh label="树路径" active={sort === "tree_path"} order={order} onClick={() => toggleSort("tree_path")} />
                     </tr>
@@ -276,6 +356,7 @@ export function ThsBlocks() {
                   <tbody>
                     {filteredRows.map((row) => {
                       const active = selected?.kind === row.kind && selected?.id === row.id;
+                      const subtype = thsCustomSubtypeLabel(row);
                       return (
                         <tr
                           key={`${row.kind}-${row.id}`}
@@ -286,7 +367,17 @@ export function ThsBlocks() {
                           onClick={() => void openDetail(row)}
                         >
                           <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{row.id}</td>
-                          <td className="px-4 py-2.5 font-medium text-foreground">{row.name || "—"}</td>
+                          <td className="px-4 py-2.5 font-medium text-foreground">
+                            {row.name || "—"}
+                            {row.stock_count != null && (
+                              <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">
+                                ({row.stock_count})
+                              </span>
+                            )}
+                          </td>
+                          {showSubtypeCol && (
+                            <td className="px-4 py-2.5 text-muted-foreground">{subtype || "—"}</td>
+                          )}
                           <td className="px-4 py-2.5 text-muted-foreground">
                             {THS_NODE_TYPE_LABEL[row.node_type] || row.node_type}
                           </td>
@@ -298,7 +389,7 @@ export function ThsBlocks() {
                     })}
                     {!filteredRows.length && (
                       <tr>
-                        <td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">
+                        <td colSpan={showSubtypeCol ? 5 : 4} className="px-4 py-10 text-center text-muted-foreground">
                           无匹配板块
                         </td>
                       </tr>
@@ -327,6 +418,30 @@ export function ThsBlocks() {
                     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
                       <dt className="text-muted-foreground">类型</dt>
                       <dd className="text-foreground">{thsBlockKindLabel(selected.kind)}</dd>
+                      {selectedSubtype && (
+                        <>
+                          <dt className="text-muted-foreground">子类型</dt>
+                          <dd className="text-foreground">{selectedSubtype}</dd>
+                        </>
+                      )}
+                      {selected.hex_id && (
+                        <>
+                          <dt className="text-muted-foreground">Hex ID</dt>
+                          <dd className="font-mono text-foreground">{selected.hex_id}</dd>
+                        </>
+                      )}
+                      {selected.query_key && (
+                        <>
+                          <dt className="text-muted-foreground">问财 Key</dt>
+                          <dd className="break-all text-foreground">{selected.query_key}</dd>
+                        </>
+                      )}
+                      {selected.stock_count != null && (
+                        <>
+                          <dt className="text-muted-foreground">成分数</dt>
+                          <dd className="text-foreground">{selected.stock_count}</dd>
+                        </>
+                      )}
                       <dt className="text-muted-foreground">节点</dt>
                       <dd className="text-foreground">{THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}</dd>
                       <dt className="text-muted-foreground">路径</dt>

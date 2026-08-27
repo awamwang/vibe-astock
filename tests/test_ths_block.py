@@ -81,7 +81,21 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
 
     def fake_list(kind: str, *, ths_dir: str | None = None):
         mapping = {
-            "custom": {"278": "测试板块"},
+            "custom": {
+                "278": {
+                    "name": "测试板块",
+                    "custom_type": "static",
+                    "hex_id": "116",
+                    "stock_count": 2,
+                },
+                "233": {
+                    "name": "营业部动态",
+                    "custom_type": "dynamic",
+                    "dynamic_kind": "broker",
+                    "query_key": "测试营业部",
+                    "hex_id": "E9",
+                },
+            },
             "conception": {"D574": "华为概念", "CFE6": "智能电网"},
             "industry": {"C6AC": "IT服务Ⅲ"},
             "region": {"48": "安徽"},
@@ -143,6 +157,15 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     assert any(r["id"] == "D574" and r["node_type"] == "leaf" for r in rows)
     assert any(r["id"] == "DBD0" and r["node_type"] == "branch" for r in rows)
 
+    custom_rows = snap["kinds"]["custom"]["rows"]
+    static_row = next(r for r in custom_rows if r["id"] == "278")
+    assert static_row["custom_type"] == "static"
+    assert static_row["hex_id"] == "116"
+    dynamic_row = next(r for r in custom_rows if r["id"] == "233")
+    assert dynamic_row["custom_type"] == "dynamic"
+    assert dynamic_row["dynamic_kind"] == "broker"
+    assert dynamic_row["query_key"] == "测试营业部"
+
     detail = block_service.get_block_stocks(kind="conception", block_id="D574")
     assert detail["count"] == 2
     assert detail["stocks"][0]["code"] == "600519"
@@ -150,3 +173,32 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     block_cache.set_snapshot({})
     with pytest.raises(RuntimeError, match="请先点击刷新"):
         block_service.get_block_stocks(kind="conception", block_id="D574")
+
+
+def test_tree_fallback_to_flat_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    ths = _make_ths_fixture(tmp_path)
+    ths_str = str(ths)
+
+    def fake_list(kind: str, *, ths_dir: str | None = None):
+        return {
+            "ok": True,
+            "action": "list",
+            "kind": kind,
+            "kind_label": "概念",
+            "count": 1,
+            "blocks": {"D574": "华为概念"},
+        }
+
+    def fake_tree_fail(kind: str, *, ths_dir: str | None = None):
+        raise RuntimeError("板块树缺失 conception 根节点")
+
+    monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: ths_str)
+    monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
+    monkeypatch.setattr("ths_block.linker.fetch_tree", fake_tree_fail)
+
+    snap = block_service.refresh_cache()
+    entry = snap["kinds"]["conception"]
+    assert entry["tree_mode"] == "flat_fallback"
+    assert len(entry["rows"]) == 1
+    assert entry["rows"][0]["id"] == "D574"
+    assert any("树结构不可用" in e for e in snap["errors"])
