@@ -204,8 +204,10 @@ out of the engine*.
 
 | Doc | Contents |
 |---|---|
-| [doc/hook-lifecycle.md](doc/hook-lifecycle.md) | Process load order, event triggers, `emit_after_review` chain |
-| [doc/plugin-development.md](doc/plugin-development.md) | `HookPack`, `HookRegistry` API, custom verification metrics, CLI |
+| [doc/README.md](doc/README.md) | **Documentation index** (domain rules, dev docs, backlog) |
+| [doc/development/architecture.md](doc/development/architecture.md) | Code layout, data flow, in-process locking |
+| [doc/development/hook-lifecycle.md](doc/development/hook-lifecycle.md) | Process load order, event triggers, `emit_after_review` chain |
+| [doc/development/plugin-development.md](doc/development/plugin-development.md) | `HookPack`, `HookRegistry` API, custom verification metrics, CLI |
 
 Minimal setup:
 

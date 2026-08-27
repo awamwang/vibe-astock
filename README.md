@@ -162,8 +162,10 @@ PACK = PromptPack(
 
 | 文档 | 内容 |
 |---|---|
-| [doc/hook-lifecycle.md](doc/hook-lifecycle.md) | 进程加载、事件触发顺序、`emit_after_review` 链路 |
-| [doc/plugin-development.md](doc/plugin-development.md) | `HookPack` 写法、`HookRegistry` API、自定义验证指标、CLI |
+| [doc/README.md](doc/README.md) | **文档索引**（领域规则、开发文档、待办） |
+| [doc/development/architecture.md](doc/development/architecture.md) | 代码分区、数据流、并发加锁 |
+| [doc/development/hook-lifecycle.md](doc/development/hook-lifecycle.md) | 进程加载、事件触发顺序、`emit_after_review` 链路 |
+| [doc/development/plugin-development.md](doc/development/plugin-development.md) | `HookPack` 写法、`HookRegistry` API、自定义验证指标、CLI |
 
 最简注册：
 
