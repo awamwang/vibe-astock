@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -93,8 +93,9 @@ export function FirstBoard() {
   const [ztKeywords, setZtKeywords] = useState<string[]>([...DEFAULT_ZT_KEYWORDS]);
   const [boardFilter, setBoardFilter] = useState<BoardFilter>("all");
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
-  const [sortKey, setSortKey] = useState<SortKey>("seal_time");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [themeExpanded, setThemeExpanded] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("boards");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const dd = useDeepDive("firstboard", data?.date || "");
 
   const reload = () =>
@@ -374,15 +375,28 @@ export function FirstBoard() {
 
         {themeOptions.length > 0 && (
           <div>
-            <div className="mb-1.5 flex items-center gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-muted-foreground">题材筛选</span>
               <Caliber text={
                 "与题材事件树、多日题材矩阵同一套规则：「+」拆散 → 过滤属性词（国资/低价股等）→ 别名映射。\n" +
                 "可多选；须**同时命中**所选题材才显示（与关系）。标签旁数字 = 当前板位筛选下该题材涨停家数；\n" +
-                "切换首板/连板会联动刷新题材列表，题材筛选不影响板位筛选。"
+                "切换首板/连板会联动刷新题材列表，题材筛选不影响板位筛选。默认只展示第一行，可展开全部。"
               } />
+              {themeOptions.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setThemeExpanded((v) => !v)}
+                  className="ml-auto inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-primary"
+                >
+                  {themeExpanded ? (
+                    <>收起 <ChevronUp className="h-3.5 w-3.5" /></>
+                  ) : (
+                    <>展开全部 ({themeOptions.length}) <ChevronDown className="h-3.5 w-3.5" /></>
+                  )}
+                </button>
+              )}
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className={cn("flex flex-wrap gap-1.5", !themeExpanded && "max-h-7 overflow-hidden")}>
               {themeOptions.map((opt) => {
                 const active = selectedThemes.includes(opt.tag);
                 return (
@@ -413,7 +427,7 @@ export function FirstBoard() {
           <Caliber text={
             "「炸板」是当天开板过几次，0 就是全天没开过板 —— 这张表里的票**最终都封住了涨停**，\n" +
             "所以炸板次数说的是过程有多难看，不是最后有没有封住。\n" +
-            "名单默认按首次封板时间从早到晚排；点击表头可切换排序。\n" +
+            "名单默认按连板数从高到低排；点击表头可切换排序。\n" +
             "「行业」经常只有四个字（像「互联网电」「自动化设」）——行业名称常被截断为四字，\n" +
             "不是这里显示不全；怕猜错所以不替它补全称。"
           } />
