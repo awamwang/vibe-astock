@@ -219,6 +219,55 @@ def test_xgb_targets_sync_to_analyzed(msg_db):
     assert stock.code == "601118" and stock.name == "海南橡胶"
 
 
+def test_list_analyzed_match_current_stock(msg_db, monkeypatch):
+    from duanxian import current_stock as cs
+
+    def _make_msg(title: str, code: str):
+        d = RawMessageDraft(
+            draft_key=f"stk-{code}-{title}",
+            source_id="manual",
+            source_label="手动",
+            content=title,
+            title=title,
+            targets=[{"kind": "stock", "code": code, "name": f"股{code}"}],
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        return store.upsert_analyzed_from_raw(
+            raw,
+            patch={"targets": [t.model_dump() for t in d.targets]},
+            path=msg_db,
+        )
+
+    _make_msg("茅台消息", "600519")
+    _make_msg("平安消息", "000001")
+
+    monkeypatch.setattr(cs, "get_current", lambda: None)
+    empty, empty_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes"),
+        path=msg_db,
+    )
+    assert empty_total == 0
+    assert empty == []
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="600519",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-08-27 10:00:00",
+        ),
+    )
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes"),
+        path=msg_db,
+    )
+    assert matched_total == 1
+    assert matched[0].title == "茅台消息"
+
+
 def test_dedup_external_ref(msg_db):
     d = RawMessageDraft(
         draft_key="d1",

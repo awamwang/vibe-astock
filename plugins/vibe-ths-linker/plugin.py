@@ -277,7 +277,6 @@ class ThsLinkerBridge:
         self._instance_title = str(self._instance.get("title") or "").strip()
         if not self._ths_dir:
             raise RuntimeError("ths-linker 实例缺少 ths_dir，无法定位同花顺安装目录")
-        self._apply_stock_from_get(snap)
         self._ready = True
         self._flush_pending_pushes()
         try:
@@ -328,8 +327,6 @@ class ThsLinkerBridge:
                             {"type": "stock_code", "action": "get"},
                             expect_types=("stock_code", "stock_code_result"),
                         )
-                    if snap is not None:
-                        self._apply_stock_from_get(snap)
                     self._ready = True
                     self._flush_pending_pushes()
                 except Exception as re_exc:  # noqa: BLE001
@@ -347,19 +344,6 @@ class ThsLinkerBridge:
         if pid:
             body["pid"] = str(pid)
         return body
-
-    def _apply_stock_from_get(self, msg: dict) -> None:
-        stocks = msg.get("stocks") or {}
-        info = stocks.get(self._ths_dir) or {}
-        code = str(info.get("code") or "").strip()
-        if not code:
-            return
-        self._on_stock_changed(
-            code,
-            source="get",
-            symbol=str(info.get("symbol") or "").strip() or None,
-            market_id=str(info.get("market_id") or "").strip() or None,
-        )
 
     def _on_ws_push(self, msg: dict) -> None:
         if not self._ready:
@@ -381,6 +365,8 @@ class ThsLinkerBridge:
             self._on_trade_push(msg)
 
     def _on_stock_push(self, msg: dict) -> None:
+        if str(msg.get("action") or "") != "push":
+            return
         ths_dir = str(msg.get("ths_dir") or "").strip()
         if ths_dir and ths_dir != self._ths_dir:
             return

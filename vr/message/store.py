@@ -680,6 +680,21 @@ def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
                 if follow_kws:
                     parts.append(f"NOT ({match_sql})")
                     args.extend(match_args)
+    if q.match_current_stock:
+        selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
+        want_yes = "yes" in selected or "1" in selected or "true" in selected
+        if want_yes:
+            from duanxian import current_stock as cs
+
+            rec = cs.get_current()
+            if not rec:
+                parts.append("1=0")
+            else:
+                parts.append(
+                    "EXISTS (SELECT 1 FROM impact_target it "
+                    "WHERE it.analyzed_id = analyzed_message.id AND it.code = ?)"
+                )
+                args.append(rec.code)
     return " AND ".join(parts), args
 
 

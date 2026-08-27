@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ _LEGACY_STATE_FILE = _STATE_DIR / "ths-linker-current.json"
 
 _lock = threading.Lock()
 _current: CurrentStock | None = None
+_listeners: list[queue.Queue[dict[str, Any] | None]] = []
 
 
 @dataclass(frozen=True)
@@ -70,7 +72,45 @@ def report(plugin_id: str, payload: dict) -> CurrentStock | None:
         )
         _current = rec
         _persist_legacy(rec)
+        _notify_listeners(to_dict(rec))
         return rec
+
+
+def subscribe() -> queue.Queue[dict[str, Any] | None]:
+    """订阅当前股票变化；连接后立即收到一次快照（若有）。"""
+    q: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=8)
+    with _lock:
+        _listeners.append(q)
+        snap = to_dict(_current)
+    if snap:
+        try:
+            q.put_nowait(snap)
+        except queue.Full:
+            pass
+    return q
+
+
+def unsubscribe(q: queue.Queue[dict[str, Any] | None]) -> None:
+    with _lock:
+        if q in _listeners:
+            _listeners.remove(q)
+
+
+def _notify_listeners(data: dict[str, Any]) -> None:
+    with _lock:
+        listeners = list(_listeners)
+    for q in listeners:
+        try:
+            q.put_nowait(data)
+        except queue.Full:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                q.put_nowait(data)
+            except queue.Full:
+                pass
 
 
 def get_current() -> CurrentStock | None:

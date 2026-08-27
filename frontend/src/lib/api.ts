@@ -744,6 +744,7 @@ export const api = {
     request<PluginRecord>("/plugins/uninstall", "POST", { plugin }),
   pluginsOpenDir: (plugin: string) =>
     request<{ ok: boolean; path: string }>("/plugins/open-dir", "POST", { plugin }),
+  pluginsCurrentStock: () => get<CurrentStockInfo | null>("/plugins/current-stock"),
   messageSources: () => get<MessageSourceInfo[]>("/messages/sources"),
   messageIngestPreview: (body: {
     format?: string;
@@ -764,6 +765,7 @@ export const api = {
     status?: string | string[];
     favorited?: string | string[];
     followed?: string | string[];
+    match_current_stock?: string | string[];
     sort?: string;
     order?: string;
     limit?: number;
@@ -843,6 +845,18 @@ export interface PluginRecord {
 export interface PluginsListResult {
   plugins: PluginRecord[];
   registry_file: string;
+}
+
+export interface CurrentStockInfo {
+  code: string;
+  plugin_id: string;
+  source: string;
+  prev: string | null;
+  updated_at: string;
+  ths_dir?: string;
+  symbol?: string;
+  market_id?: string;
+  instance_id?: string;
 }
 
 export interface ExperienceTopicMeta {

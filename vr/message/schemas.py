@@ -130,6 +130,8 @@ class ListQuery(BaseModel):
     status: str | None = None
     favorited: str | None = None
     followed: str | None = None
+    match_current_stock: str | None = None
+    stock_code: str | None = None
     sort: Literal[
         "produced_at", "ingested_at", "impact_level", "effect_status", "freshness", "status", "title"
     ] = "produced_at"

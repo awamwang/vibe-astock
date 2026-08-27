@@ -243,6 +243,22 @@ class TestHookRegistryImport:
         data3 = cs.to_dict()
         assert data3["prev"] == "600000"
 
+    def test_current_stock_subscribe_notify(self):
+        import queue
+
+        from duanxian import current_stock as cs
+        from duanxian.hooks import HookRegistry
+
+        cs._current = None  # noqa: SLF001
+        sub = cs.subscribe()
+        reg = HookRegistry()
+        reg.bind_plugin("plug0002")
+        reg.report_current_stock({"code": "600519", "source": "push"})
+        msg = sub.get(timeout=1.0)
+        assert msg is not None
+        assert msg["code"] == "600519"
+        cs.unsubscribe(sub)
+
     def test_report_current_stock_requires_bind(self):
         from duanxian.hooks import HookRegistry
 

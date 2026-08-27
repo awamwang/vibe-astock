@@ -26,6 +26,7 @@ import {
   monthRange, setDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
+import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { Link } from "react-router-dom";
 import { StockLabel } from "@/components/stock/StockLabel";
 import { StockResolveScope, useStockResolve } from "@/components/stock/StockResolveContext";
@@ -420,6 +421,41 @@ function CollapsibleRawSection({
   );
 }
 
+function FollowStockHint({
+  code,
+  status,
+  error,
+}: {
+  code: string | null;
+  status: "idle" | "connecting" | "connected" | "error";
+  error: string | null;
+}) {
+  const resolved = useStockResolve({ code });
+  const name = resolved?.stock?.name?.trim() || "";
+  const text = code
+    ? name
+      ? `${name}（${code}）`
+      : code
+    : status === "connecting"
+      ? "连接中…"
+      : status === "error"
+        ? error || "未连接"
+        : "等待插件…";
+  return (
+    <span className="relative inline-block min-w-[9.5rem] align-middle text-xs font-normal">
+      <span className="invisible whitespace-nowrap" aria-hidden>
+        八八八八八八（000000）
+      </span>
+      <span
+        className="absolute inset-0 truncate text-right tabular-nums"
+        title={text}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 export function MessageAnalysis() {
   const [sources, setSources] = useState<MessageSourceInfo[]>([]);
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
@@ -435,6 +471,9 @@ export function MessageAnalysis() {
   const [effectStatuses, setEffectStatuses] = useState<string[]>([]);
   const [followedFilter, setFollowedFilter] = useState<string[]>([]);
   const [favoritedFilter, setFavoritedFilter] = useState<string[]>([]);
+  const [followStockChange, setFollowStockChange] = useState(false);
+  const { code: currentStockCode, status: currentStockStatus, error: currentStockError } =
+    usePluginCurrentStock(followStockChange);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -479,8 +518,9 @@ export function MessageAnalysis() {
       impactLevels.length > 0 ||
       effectStatuses.length > 0 ||
       followedFilter.length > 0 ||
-      favoritedFilter.length > 0,
-    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter],
+      favoritedFilter.length > 0 ||
+      followStockChange,
+    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange],
   );
 
   const resetFilters = () => {
@@ -491,6 +531,7 @@ export function MessageAnalysis() {
     setEffectStatuses([]);
     setFollowedFilter([]);
     setFavoritedFilter([]);
+    setFollowStockChange(false);
   };
 
   const onDefaultEndDaysChange = (days: number) => {
@@ -508,6 +549,7 @@ export function MessageAnalysis() {
         effect_status: effectStatuses.length ? effectStatuses : undefined,
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        match_current_stock: followStockChange ? "yes" : undefined,
         sort,
         order,
         limit: PAGE_SIZE,
@@ -520,7 +562,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, sort, order, page]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, currentStockCode, sort, order, page]);
 
   const loadCalendar = useCallback(async () => {
     setCalendarLoading(true);
@@ -533,6 +575,7 @@ export function MessageAnalysis() {
         effect_status: effectStatuses.length ? effectStatuses : undefined,
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        match_current_stock: followStockChange ? "yes" : undefined,
         from_dt: range.from_dt,
         to_dt: range.to_dt,
         sort: "produced_at",
@@ -547,7 +590,7 @@ export function MessageAnalysis() {
     } finally {
       setCalendarLoading(false);
     }
-  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter]);
+  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, currentStockCode]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -900,6 +943,7 @@ export function MessageAnalysis() {
 
   const stockQueries = useMemo(() => {
     const out: { code?: string | null; name?: string | null }[] = [];
+    if (currentStockCode) out.push({ code: currentStockCode });
     const pool = [...items, ...calendarItems];
     if (selected) pool.push(selected);
     for (const item of pool) {
@@ -908,7 +952,7 @@ export function MessageAnalysis() {
       }
     }
     return out;
-  }, [items, calendarItems, selected]);
+  }, [items, calendarItems, selected, currentStockCode]);
 
   const blockNames = useMemo(() => {
     const names: string[] = [];
@@ -1068,6 +1112,33 @@ export function MessageAnalysis() {
                 setFavoritedFilter(v);
               }}
             />
+            <label
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",
+                followStockChange
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+              )}
+              title="勾选后仅显示关联标的包含插件上报的同花顺焦点股；需启用 vibe-ths-linker"
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+                checked={followStockChange}
+                onChange={(e) => {
+                  setPage(1);
+                  setFollowStockChange(e.target.checked);
+                }}
+              />
+              <span>跟随股票变化</span>
+              {followStockChange && (
+                <FollowStockHint
+                  code={currentStockCode}
+                  status={currentStockStatus}
+                  error={currentStockError}
+                />
+              )}
+            </label>
             <button
               type="button"
               disabled={!hasActiveFilters}

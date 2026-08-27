@@ -5,7 +5,9 @@ from __future__ import annotations
 import html
 import json
 import os
+import queue
 from contextlib import asynccontextmanager
+import asyncio
 import re
 import sys
 import threading
@@ -15,7 +17,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
@@ -1538,6 +1540,34 @@ def api_plugins_current_stock():
 
     data = cs.to_dict()
     return {"data": data}
+
+
+@app.get("/api/plugins/current-stock/stream")
+async def api_plugins_current_stock_stream():
+    """SSE：插件经 report_current_stock 推送后的当前股票变化。"""
+    from duanxian import current_stock as cs
+
+    sub = cs.subscribe()
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    data = await asyncio.to_thread(sub.get, True, 25.0)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                if data is None:
+                    break
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+        finally:
+            cs.unsubscribe(sub)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/plugins/register")
