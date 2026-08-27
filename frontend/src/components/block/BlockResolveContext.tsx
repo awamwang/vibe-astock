@@ -50,13 +50,17 @@ export function BlockResolveScope({ names, children }: { names: string[]; childr
     };
 
     const needsPoll = (index: Awaited<ReturnType<typeof api.thsBlocksResolve>>["index"]) =>
-      !index?.complete || !index?.ready || !!index?.ensuring;
+      !index?.refreshing && (!index?.complete || !index?.ready || !!index?.ensuring);
 
     const poll = async () => {
       if (cancelled) return;
       try {
         const info = await api.thsBlocksIndexInfo();
         if (cancelled) return;
+        if (info.refreshing) {
+          timer = setTimeout(poll, POLL_MS);
+          return;
+        }
         const ts = info.updated_at ?? null;
         if (ts !== indexAtRef.current || info.complete) {
           const data = await api.thsBlocksResolve(list);

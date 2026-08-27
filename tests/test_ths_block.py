@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ if str(VR) not in sys.path:
 
 from ths_block import cache as block_cache
 from ths_block import persist as block_persist
+from ths_block import processor as block_processor
 from ths_block import service as block_service
 from ths_block import stocks as block_stocks
 from ths_block import tree as block_tree
@@ -391,3 +394,47 @@ def test_refresh_uses_local_tree_with_nested_ini(tmp_path: Path, monkeypatch: py
     assert entry["tree_mode"] == "tree"
     assert entry["root_id"] == "2B"
     assert not any("conception:" in e and "flat 列表" in e for e in snap.get("errors") or [])
+
+
+def test_refresh_and_ensure_no_deadlock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """后台 ensure 与用户 refresh 并发时不应死锁。"""
+    ths = _make_ths_fixture(tmp_path)
+    ths_str = str(ths)
+    block_cache.set_snapshot({})
+    block_processor.invalidate_index()
+
+    def fake_list(kind: str, *, ths_dir: str | None = None):
+        time.sleep(0.05)
+        return {
+            "ok": True,
+            "action": "list",
+            "kind": kind,
+            "kind_label": kind,
+            "count": 1,
+            "blocks": {f"{kind[:1].upper()}001": f"{kind}样例"},
+        }
+
+    monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: ths_str)
+    monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
+    monkeypatch.setattr(
+        "ths_block.linker.fetch_tree",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip")),
+    )
+
+    ensure_done = threading.Event()
+    ensure_error: list[BaseException] = []
+
+    def run_ensure() -> None:
+        try:
+            block_processor.ensure_kinds_cached()
+        except BaseException as exc:  # noqa: BLE001
+            ensure_error.append(exc)
+        finally:
+            ensure_done.set()
+
+    threading.Thread(target=run_ensure, daemon=True).start()
+    time.sleep(0.02)
+    block_service.refresh_kind(kind="conception")
+
+    assert ensure_done.wait(timeout=5), "ensure_kinds_cached 与 refresh_kind 发生死锁"
+    assert not ensure_error

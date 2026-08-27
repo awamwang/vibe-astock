@@ -184,7 +184,9 @@ def ensure_kinds_cached() -> list[str]:
 
     同步补拉，供显式刷新或后台异步线程调用；业务 feed 路径不得直接调用。
     """
-    refreshed: list[str] = []
+    if service.is_refresh_busy():
+        return []
+    to_refresh: list[str] = []
     with _ENSURE_LOCK:
         snap = service.get_snapshot()
         _sync_ensure_state(snap)
@@ -195,22 +197,37 @@ def ensure_kinds_cached() -> list[str]:
             if _kind_has_data(kinds_data.get(kind)):
                 continue
             _ENSURE_TRIED.add(kind)
-            try:
-                service.refresh_kind(kind=kind)
-                refreshed.append(kind)
-                snap = service.get_snapshot()
-                kinds_data = snap.get("kinds") or {}
-            except Exception:  # noqa: BLE001
-                pass
+            to_refresh.append(kind)
+    refreshed: list[str] = []
+    for kind in to_refresh:
+        if service.is_refresh_busy():
+            break
+        try:
+            service.refresh_kind(kind=kind)
+            refreshed.append(kind)
+        except Exception:  # noqa: BLE001
+            pass
     if refreshed:
-        invalidate_index()
+        invalidate_name_index()
     return refreshed
+
+
+def mark_kind_cached(kind: str) -> None:
+    """用户或补拉成功刷新某类型后标记，避免后台重复拉取。"""
+    with _ENSURE_LOCK:
+        _ENSURE_TRIED.add(kind.strip())
+
+
+def mark_all_kinds_cached() -> None:
+    """全量刷新成功后标记全部类型。"""
+    with _ENSURE_LOCK:
+        _ENSURE_TRIED.update(linker.list_kinds())
 
 
 def schedule_ensure_kinds_cached() -> bool:
     """若存在缺失类型则异步补拉；已在队列中则跳过。不阻塞调用方。"""
     global _ENSURE_ASYNC_SCHEDULED
-    if not _kinds_missing():
+    if service.is_refresh_busy() or not _kinds_missing():
         return False
     with _ENSURE_LOCK:
         if _ENSURE_ASYNC_SCHEDULED:
@@ -246,12 +263,18 @@ def _get_name_index(*, ensure: bool = False) -> dict[str, list[dict[str, Any]]]:
         return _NAME_INDEX
 
 
-def invalidate_index() -> None:
-    """板块缓存刷新后调用，使名称索引失效。"""
-    global _NAME_INDEX, _NAME_INDEX_AT, _ENSURE_SNAPSHOT_AT, _ENSURE_TRIED
+def invalidate_name_index() -> None:
+    """仅使名称索引失效，不重置补拉进度。"""
+    global _NAME_INDEX, _NAME_INDEX_AT
     with _LOCK:
         _NAME_INDEX = None
         _NAME_INDEX_AT = None
+
+
+def invalidate_index() -> None:
+    """板块缓存刷新后调用，使名称索引与补拉进度一并失效。"""
+    global _ENSURE_SNAPSHOT_AT, _ENSURE_TRIED
+    invalidate_name_index()
     with _ENSURE_LOCK:
         _ENSURE_SNAPSHOT_AT = None
         _ENSURE_TRIED = set()
@@ -271,7 +294,8 @@ def _partial_matches(mapped: str, index: dict[str, list[dict[str, Any]]]) -> lis
 
 def index_info() -> dict[str, Any]:
     """返回名称索引元信息（供前端判断映射是否可用）。"""
-    schedule_ensure_kinds_cached()
+    if not service.is_refresh_busy():
+        schedule_ensure_kinds_cached()
     try:
         index = _get_name_index(ensure=False)
     except Exception:  # noqa: BLE001
@@ -282,6 +306,7 @@ def index_info() -> dict[str, Any]:
         "ready": bool(index),
         "complete": len(missing) == 0,
         "ensuring": _ENSURE_ASYNC_SCHEDULED,
+        "refreshing": service.is_refresh_busy(),
         "name_count": len(index),
         "ref_count": sum(len(v) for v in index.values()),
         "updated_at": snap.get("updated_at"),
@@ -310,7 +335,8 @@ def resolve_many(names: list[str]) -> list[dict[str, Any]]:
 
 def export_resolve(names: list[str]) -> dict[str, Any]:
     """批量解析并附带按 raw 索引的映射表。"""
-    schedule_ensure_kinds_cached()
+    if not service.is_refresh_busy():
+        schedule_ensure_kinds_cached()
     items = resolve_many(names)
     return {
         "items": items,

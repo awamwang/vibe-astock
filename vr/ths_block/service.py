@@ -14,10 +14,16 @@ from . import cache, linker, persist, stocks, tree as block_tree
 _BEIJING = timezone(timedelta(hours=8))
 _TREE_KINDS = set(linker.tree_kinds())
 _REFRESH_LOCK = threading.Lock()
+_REFRESH_BUSY = 0
 
 
 def _now() -> str:
     return datetime.now(_BEIJING).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def is_refresh_busy() -> bool:
+    """是否有板块刷新正在进行（含 ths-linker 调用）。"""
+    return _REFRESH_BUSY > 0
 
 
 def _resolve_ths_dir(explicit: str | None = None) -> str:
@@ -294,61 +300,73 @@ def _apply_kind_refresh(
 
 def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
     """刷新单个板块类型并合并进全局缓存；失败时保留该类型旧数据。"""
+    global _REFRESH_BUSY
     kind_norm = kind.strip()
     if kind_norm not in linker.list_kinds():
         raise ValueError(f"未知板块类型: {kind_norm}")
 
     with _REFRESH_LOCK:
-        snap = cache.get() or {}
-        snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
-        if not snapshot["kinds"] and snapshot["errors"]:
-            raise RuntimeError("；".join(snapshot["errors"]))
-        snapshot = cache.set_snapshot(snapshot)
+        _REFRESH_BUSY += 1
         try:
-            from .processor import invalidate_index
+            snap = cache.get() or {}
+            snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
+            if not snapshot["kinds"] and snapshot["errors"]:
+                raise RuntimeError("；".join(snapshot["errors"]))
+            snapshot = cache.set_snapshot(snapshot)
+        finally:
+            _REFRESH_BUSY -= 1
+    try:
+        from .processor import invalidate_name_index, mark_kind_cached
 
-            invalidate_index()
-        except Exception:  # noqa: BLE001
-            pass
-        return snapshot
+        invalidate_name_index()
+        mark_kind_cached(kind_norm)
+    except Exception:  # noqa: BLE001
+        pass
+    return snapshot
 
 
 def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
     """从 ths-linker 逐类型拉取板块并写入内存缓存；部分失败不影响其它类型。"""
+    global _REFRESH_BUSY
     with _REFRESH_LOCK:
-        resolved = _resolve_ths_dir(ths_dir)
-        snap = cache.get() or {}
-        kinds_data: dict[str, Any] = dict(snap.get("kinds") or {})
-        errors: list[str] = []
-
-        for kind in linker.list_kinds():
-            try:
-                entry, warnings = _fetch_kind_entry(resolved, kind)
-                kinds_data[kind] = entry
-                _maybe_persist_custom_dynamic(
-                    kind=kind, ths_dir=resolved, entry=entry, warnings=warnings
-                )
-                errors.extend(warnings)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{kind}: {exc}")
-
-        if not kinds_data and errors:
-            raise RuntimeError("；".join(errors))
-
-        snapshot = {
-            "updated_at": _now(),
-            "ths_dir": resolved,
-            "kinds": kinds_data,
-            "errors": errors,
-        }
-        snapshot = cache.set_snapshot(snapshot)
+        _REFRESH_BUSY += 1
         try:
-            from .processor import invalidate_index
+            resolved = _resolve_ths_dir(ths_dir)
+            snap = cache.get() or {}
+            kinds_data: dict[str, Any] = dict(snap.get("kinds") or {})
+            errors: list[str] = []
 
-            invalidate_index()
-        except Exception:  # noqa: BLE001
-            pass
-        return snapshot
+            for kind in linker.list_kinds():
+                try:
+                    entry, warnings = _fetch_kind_entry(resolved, kind)
+                    kinds_data[kind] = entry
+                    _maybe_persist_custom_dynamic(
+                        kind=kind, ths_dir=resolved, entry=entry, warnings=warnings
+                    )
+                    errors.extend(warnings)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{kind}: {exc}")
+
+            if not kinds_data and errors:
+                raise RuntimeError("；".join(errors))
+
+            snapshot = {
+                "updated_at": _now(),
+                "ths_dir": resolved,
+                "kinds": kinds_data,
+                "errors": errors,
+            }
+            snapshot = cache.set_snapshot(snapshot)
+        finally:
+            _REFRESH_BUSY -= 1
+    try:
+        from .processor import invalidate_name_index, mark_all_kinds_cached
+
+        invalidate_name_index()
+        mark_all_kinds_cached()
+    except Exception:  # noqa: BLE001
+        pass
+    return snapshot
 
 
 def get_snapshot() -> dict[str, Any]:
