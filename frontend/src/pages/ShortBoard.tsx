@@ -410,8 +410,11 @@ export function ShortBoard() {
     for (const b of moodBlocks?.blocks ?? []) {
       if (b.name) names.push(b.name);
     }
+    for (const s of turnover?.stocks ?? []) {
+      if (s.industry) names.push(s.industry);
+    }
     return names;
-  }, [emotion?.lianban_stocks, sectors, moodBlocks?.blocks]);
+  }, [emotion?.lianban_stocks, sectors, moodBlocks?.blocks, turnover?.stocks]);
 
   return (
     <BlockResolveScope names={blockNames}>
@@ -749,7 +752,9 @@ export function ShortBoard() {
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono">{yi(s.amount)}</td>
                       <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.mcap)}</td>
-                      <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">
+                        {s.industry ? <BlockLabel name={s.industry} /> : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

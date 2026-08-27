@@ -370,7 +370,12 @@ def market_first_board():
 def market_turnover_top():
     """全市场成交额榜 Top20（客观公开榜单数据，非推荐/非预测/不评分）。全站共享缓存 5 分钟。"""
     try:
-        return {"data": market.get_turnover_top()}
+        data = market.get_turnover_top()
+        try:
+            ths_block_layer.feed_turnover(data)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"成交额榜异常：{e}") from e
 

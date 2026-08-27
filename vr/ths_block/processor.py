@@ -14,6 +14,7 @@ _KIND_PRIORITY = ("conception", "industry", "region", "custom", "daily")
 
 _SOURCE_SORT: dict[str, int] = {
     "emotion_industry": 10,
+    "turnover_industry": 12,
     "sector_flow": 20,
     "mood_block": 30,
     "fund_rotation": 40,
@@ -26,6 +27,7 @@ _SOURCE_SORT: dict[str, int] = {
 
 _SOURCE_LABELS: dict[str, str] = {
     "emotion_industry": "短线情绪·概念",
+    "turnover_industry": "成交额榜·行业",
     "sector_flow": "板块资金·行业",
     "mood_block": "板块人气",
     "fund_rotation": "资金轮动",
@@ -520,6 +522,21 @@ def feed_mood_blocks(payload: dict[str, Any] | None) -> None:
     if not isinstance(payload, dict):
         return
     _feed_payload(_feed_mood_blocks, payload)
+
+
+def _feed_turnover(payload: dict[str, Any]) -> None:
+    industries = [
+        str(s.get("industry") or "")
+        for s in (payload.get("stocks") or [])
+        if isinstance(s, dict) and s.get("industry")
+    ]
+    feed("turnover_industry", industries)
+
+
+def feed_turnover(payload: dict[str, Any] | None) -> None:
+    if not isinstance(payload, dict):
+        return
+    _feed_payload(_feed_turnover, payload)
 
 
 def _feed_message_targets(items: list[Any]) -> None:
