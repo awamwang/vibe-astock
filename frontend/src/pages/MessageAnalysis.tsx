@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
   ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw, Pencil,
+  LayoutList, CalendarDays,
 } from "lucide-react";
 import {
   MessageDetailEdit,
@@ -10,6 +11,7 @@ import {
   patchFromDraft,
   type DetailEditDraft,
 } from "@/components/MessageDetailEdit";
+import { MessageCalendar } from "@/components/MessageCalendar";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
@@ -20,12 +22,15 @@ import {
 } from "@/lib/api";
 import {
   EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
-  formatMarkLabel, keywordHint, targetHint, targetTitle,
+  formatMarkLabel, keywordHint, monthRange, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 
 const PAGE_SIZE = 100;
+const CALENDAR_LIMIT = 1000;
+
+type ViewMode = "calendar" | "list";
 
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
@@ -342,6 +347,13 @@ export function MessageAnalysis() {
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<ViewMode>("calendar");
+  const nowInit = useMemo(() => new Date(), []);
+  const [calendarYear, setCalendarYear] = useState(nowInit.getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(nowInit.getMonth());
+  const [calendarItems, setCalendarItems] = useState<AnalyzedMessage[]>([]);
+  const [calendarTotal, setCalendarTotal] = useState(0);
+  const [calendarLoading, setCalendarLoading] = useState(false);
 
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar">("plain");
@@ -410,6 +422,33 @@ export function MessageAnalysis() {
     }
   }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, sort, order, page]);
 
+  const loadCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    try {
+      const range = monthRange(calendarYear, calendarMonth);
+      const data = await api.messageAnalyzedList({
+        q: q.trim() || undefined,
+        source: sourcesFilter.length ? sourcesFilter : undefined,
+        impact_level: impactLevels.length ? impactLevels : undefined,
+        effect_status: effectStatuses.length ? effectStatuses : undefined,
+        followed: followedFilter.length ? followedFilter : undefined,
+        favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        from_dt: range.from_dt,
+        to_dt: range.to_dt,
+        sort: "produced_at",
+        order: "asc",
+        limit: CALENDAR_LIMIT,
+        offset: 0,
+      });
+      setCalendarItems(data.items || []);
+      setCalendarTotal(data.total || 0);
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "日历加载失败");
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter]);
+
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (total > 0 && page > maxPage) setPage(maxPage);
@@ -428,8 +467,17 @@ export function MessageAnalysis() {
   }, [loadSources]);
 
   useEffect(() => {
-    loadList();
-  }, [loadList]);
+    if (viewMode === "list") loadList();
+  }, [loadList, viewMode]);
+
+  useEffect(() => {
+    if (viewMode === "calendar") loadCalendar();
+  }, [loadCalendar, viewMode]);
+
+  const refreshMessages = useCallback(async () => {
+    if (viewMode === "calendar") await loadCalendar();
+    else await loadList();
+  }, [viewMode, loadCalendar, loadList]);
 
   const loadDetail = useCallback(async (item: AnalyzedMessage) => {
     setSelected(item);
@@ -469,6 +517,7 @@ export function MessageAnalysis() {
     try {
       const updated = await api.messageAnalyzedPatch(selected.id, patchFromDraft(editDraft));
       setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+      setCalendarItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
       setSelected(updated);
       setEditing(false);
       setEditDraft(null);
@@ -530,7 +579,7 @@ export function MessageAnalysis() {
       setIngestText("");
       setIngestOpen(false);
       notify.success(`已入库 ${n} 条`);
-      await loadList();
+      await refreshMessages();
       await loadSources();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "入库失败");
@@ -549,7 +598,7 @@ export function MessageAnalysis() {
       const r = await api.messagePollCls();
       if (r.inserted > 0) {
         notify.success(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
-        await loadList();
+        await refreshMessages();
         await loadSources();
       } else if (!opts?.silent) {
         notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增`);
@@ -560,7 +609,7 @@ export function MessageAnalysis() {
       pollInFlight.current = false;
       setPollingCls(false);
     }
-  }, [loadList, loadSources]);
+  }, [refreshMessages, loadSources]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -576,7 +625,7 @@ export function MessageAnalysis() {
       const r = await api.messagePollXgb();
       const synced = await api.messageXgbResyncTargets();
       notify.success(`拉取 ${r.fetched} 条，入库/更新 ${r.inserted} 条，同步标的 ${synced.synced} 条`);
-      await loadList();
+      await refreshMessages();
       await loadSources();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "轮询失败");
@@ -617,9 +666,12 @@ export function MessageAnalysis() {
       setItems((list) =>
         list.map((x) => (ids.includes(x.id) ? { ...x, favorited } : x)),
       );
+      setCalendarItems((list) =>
+        list.map((x) => (ids.includes(x.id) ? { ...x, favorited } : x)),
+      );
       setSelected((cur) => (cur && ids.includes(cur.id) ? { ...cur, favorited } : cur));
       setSelectedIds(new Set());
-      if (favoritedFilter.length) await loadList();
+      if (favoritedFilter.length) await refreshMessages();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : favorited ? "收藏失败" : "取消收藏失败");
     } finally {
@@ -639,7 +691,8 @@ export function MessageAnalysis() {
         setSelected(null);
         setRawMessages([]);
       }
-      await loadList();
+      setCalendarItems((list) => list.filter((x) => !ids.includes(x.id)));
+      await refreshMessages();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "删除失败");
     } finally {
@@ -664,6 +717,7 @@ export function MessageAnalysis() {
         onProgress: (p) => setAnalyzeProgress(`${p.current} / ${p.total}`),
         onItem: (item) => {
           setItems((list) => list.map((x) => (x.id === item.id ? item : x)));
+          setCalendarItems((list) => list.map((x) => (x.id === item.id ? item : x)));
           setSelected((cur) => {
             if (cur?.id === item.id) void loadDetail(item);
             return cur?.id === item.id ? item : cur;
@@ -675,7 +729,7 @@ export function MessageAnalysis() {
         notify.error(result.errors.map((e) => `${e.id}: ${e.message}`).join("；"));
       }
       setSelectedIds(new Set());
-      await loadList();
+      await refreshMessages();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "AI 分析失败");
     } finally {
@@ -760,12 +814,12 @@ export function MessageAnalysis() {
           </button>
           <button
             type="button"
-            onClick={() => loadList()}
-            disabled={loading}
+            onClick={() => refreshMessages()}
+            disabled={loading || calendarLoading}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {loading ? "加载中…" : "刷新列表"}
+            {(loading || calendarLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {(loading || calendarLoading) ? "加载中…" : "刷新"}
           </button>
         </div>
       </div>
@@ -787,7 +841,7 @@ export function MessageAnalysis() {
                 setPage(1);
                 setQ(e.target.value);
               }}
-              onKeyDown={(e) => e.key === "Enter" && loadList()}
+              onKeyDown={(e) => e.key === "Enter" && refreshMessages()}
             />
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 lg:gap-3">
@@ -893,9 +947,12 @@ export function MessageAnalysis() {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
-              共 <strong className="text-foreground">{total}</strong> 条
-              {total > 0 && (
+              共 <strong className="text-foreground">{viewMode === "calendar" ? calendarTotal : total}</strong> 条
+              {viewMode === "list" && total > 0 && (
                 <> · 当前 {pageFrom}–{pageTo}</>
+              )}
+              {viewMode === "calendar" && calendarTotal > CALENDAR_LIMIT && (
+                <> · 日历仅展示前 {CALENDAR_LIMIT} 条</>
               )}
             </span>
             {analyzeProgress && (
@@ -914,15 +971,64 @@ export function MessageAnalysis() {
       </section>
 
       <section className="w-full min-w-0">
-        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-          <SectionLabel>消息列表 · Messages</SectionLabel>
-          <p className="text-xs text-muted-foreground">
-            橘黄数字 = <code className="text-foreground">keywords</code>（选股宝 SubjIds 主题频道 ID）；
-            详情里 <code className="text-foreground">impact:N</code> = 选股宝 Impact 方向，存于 marks
-          </p>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <SectionLabel>消息 · Messages</SectionLabel>
+            {viewMode === "list" && (
+              <p className="text-xs text-muted-foreground">
+                橘黄数字 = <code className="text-foreground">keywords</code>（选股宝 SubjIds 主题频道 ID）；
+                详情里 <code className="text-foreground">impact:N</code> = 选股宝 Impact 方向，存于 marks
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                viewMode === "calendar"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setViewMode("calendar")}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              日历
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                viewMode === "list"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setViewMode("list")}
+            >
+              <LayoutList className="h-3.5 w-3.5" />
+              列表
+            </button>
+          </div>
         </div>
         <div className="grid w-full min-w-0 gap-4 xl:grid-cols-3">
           <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-2">
+            {viewMode === "calendar" ? (
+              <div className="max-h-[calc(100vh-220px)] overflow-auto p-4">
+                <MessageCalendar
+                  year={calendarYear}
+                  month={calendarMonth}
+                  items={calendarItems}
+                  loading={calendarLoading}
+                  selectedId={selected?.id}
+                  onMonthChange={(y, m) => {
+                    setCalendarYear(y);
+                    setCalendarMonth(m);
+                  }}
+                  onSelect={selectItem}
+                />
+              </div>
+            ) : (
+            <>
             <div className="max-h-[calc(100vh-220px)] overflow-auto">
               {items.length === 0 && !loading && (
                 <p className="p-8 text-center text-sm text-muted-foreground">
@@ -1062,11 +1168,13 @@ export function MessageAnalysis() {
                 </div>
               </div>
             )}
+            </>
+            )}
           </div>
 
           <div className="glass min-w-0 rounded-2xl p-4 xl:col-span-1 max-h-[calc(100vh-220px)] overflow-auto">
             {!selected ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">选择左侧消息查看详情</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">选择消息查看详情</p>
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3 border-b border-border/60 pb-4">

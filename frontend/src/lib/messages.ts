@@ -6,6 +6,58 @@ export const IMPACT_LABEL: Record<string, string> = {
   noise: "噪声",
 };
 
+/** 重要程度从高到低，用于日历日内排序 */
+export const IMPACT_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  noise: 4,
+};
+
+/** 日历事件条背景色（按重要程度） */
+export const IMPACT_EVENT_BG: Record<string, string> = {
+  critical: "bg-danger/90 text-danger-foreground",
+  high: "bg-primary/85 text-primary-foreground",
+  medium: "bg-amber-500/75 text-amber-950 dark:text-amber-50",
+  low: "bg-muted text-muted-foreground",
+  noise: "bg-muted/50 text-muted-foreground/80",
+};
+
+export function impactSortKey(level: string): number {
+  return IMPACT_ORDER[level] ?? IMPACT_ORDER.medium;
+}
+
+/** 回测口径：定时生效取 effective_at，立即生效取 produced_at */
+export function effectiveAt(item: {
+  effective_mode?: string;
+  effective_at?: string | null;
+  produced_at: string;
+}): string {
+  if (item.effective_mode === "scheduled" && item.effective_at) {
+    return item.effective_at;
+  }
+  return item.produced_at;
+}
+
+export function dateKeyFromEffective(item: {
+  effective_mode?: string;
+  effective_at?: string | null;
+  produced_at: string;
+}): string {
+  return effectiveAt(item).slice(0, 10);
+}
+
+export function monthRange(year: number, month: number): { from_dt: string; to_dt: string } {
+  const m = String(month + 1).padStart(2, "0");
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const d = String(lastDay).padStart(2, "0");
+  return {
+    from_dt: `${year}-${m}-01 00:00:00`,
+    to_dt: `${year}-${m}-${d} 23:59:59`,
+  };
+}
+
 export const FRESHNESS_LABEL: Record<string, string> = {
   new: "全新",
   follow_up: "续报",

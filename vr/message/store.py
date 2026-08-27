@@ -611,15 +611,24 @@ def get_analyzed_for_raw(raw_id: str, *, path: Optional[str] = None) -> Analyzed
             )
 
 
+_EFFECTIVE_DT_SQL = """
+(CASE
+  WHEN effective_mode = 'scheduled' AND effective_at IS NOT NULL AND TRIM(effective_at) != ''
+  THEN effective_at
+  ELSE produced_at
+END)
+"""
+
+
 def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
     parts = ["1=1"]
     args: list[Any] = []
     _append_in_filter(parts, args, "source_id", q.source)
     if q.from_dt:
-        parts.append("produced_at >= ?")
+        parts.append(f"{_EFFECTIVE_DT_SQL} >= ?")
         args.append(q.from_dt)
     if q.to_dt:
-        parts.append("produced_at <= ?")
+        parts.append(f"{_EFFECTIVE_DT_SQL} <= ?")
         args.append(q.to_dt)
     _append_in_filter(parts, args, "impact_level", q.impact_level)
     _append_in_filter(parts, args, "effect_status", q.effect_status)
@@ -671,7 +680,8 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     }
     sort_col = sort_map.get(q.sort, "produced_at")
     order = "ASC" if q.order == "asc" else "DESC"
-    limit = max(1, min(q.limit, 200))
+    cap = 1000 if q.from_dt and q.to_dt else 200
+    limit = max(1, min(q.limit, cap))
     offset = max(0, q.offset)
     with _LOCK:
         with closing(_connect(db)) as conn:
