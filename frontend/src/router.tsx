@@ -8,6 +8,7 @@ import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
 import { Watchlist } from "@/pages/Watchlist";
 import { MessageAnalysis } from "@/pages/MessageAnalysis";
+import { ThsBlocks } from "@/pages/ThsBlocks";
 import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
 import { ZtKeywordsSettings } from "@/pages/ZtKeywordsSettings";
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
       { path: "/trade", element: <TradeBudgetPage /> },
       { path: "/watchlist", element: <Watchlist /> },
       { path: "/messages", element: <MessageAnalysis /> },
+      { path: "/blocks", element: <ThsBlocks /> },
       { path: "/experience", element: <ExperienceMemory /> },
       { path: "/settings", element: <Settings /> },
       { path: "/settings/keywords", element: <ZtKeywordsSettings /> },

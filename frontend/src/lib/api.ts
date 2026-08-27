@@ -788,6 +788,11 @@ export const api = {
   messagePollCls: () => request<ClsPollResult>("/messages/poll/cls", "POST"),
   messagePollXgb: () => request<XgbPollResult>("/messages/poll/xgb", "POST"),
   messageXgbResyncTargets: () => request<{ synced: number }>("/messages/xgb/resync-targets", "POST"),
+  thsBlocksSnapshot: () => get<ThsBlocksSnapshot>("/ths-blocks"),
+  thsBlocksRefresh: (ths_dir = "") =>
+    request<ThsBlocksSnapshot>("/ths-blocks/refresh", "POST", ths_dir ? { ths_dir } : {}),
+  thsBlockStocks: (kind: string, blockId: string) =>
+    get<ThsBlockStocksDetail>(`/ths-blocks/stocks?kind=${encodeURIComponent(kind)}&block_id=${encodeURIComponent(blockId)}`),
 };
 
 export interface PluginPickResult {
@@ -833,6 +838,50 @@ export interface MessageFollowKeywordConfig {
   schema: number;
   keywords: string[];
   path: string;
+}
+
+export interface ThsBlockRow {
+  kind: string;
+  kind_label: string;
+  id: string;
+  name: string;
+  node_type: "branch" | "leaf" | "flat";
+  tree_path: string;
+}
+
+export interface ThsBlockKindSnapshot {
+  kind: string;
+  kind_label: string;
+  count: number;
+  blocks: Record<string, string>;
+  root_id?: string;
+  root_name?: string;
+  branch_count?: number;
+  leaf_count?: number;
+  tree?: Record<string, unknown>;
+  rows: ThsBlockRow[];
+}
+
+export interface ThsBlocksSnapshot {
+  updated_at: string | null;
+  ths_dir: string | null;
+  kinds: Record<string, ThsBlockKindSnapshot>;
+  errors?: string[];
+  empty?: boolean;
+}
+
+export interface ThsBlockStockItem {
+  code: string;
+  market: string;
+}
+
+export interface ThsBlockStocksDetail {
+  kind: string;
+  kind_label: string;
+  block_id: string;
+  name: string;
+  count: number;
+  stocks: ThsBlockStockItem[];
 }
 export interface ThemeAliasEntry {
   alias: string;

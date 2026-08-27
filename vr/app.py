@@ -30,6 +30,7 @@ import firstboard
 import watchtower
 import message as msg_layer
 from message import analyze as msg_analyze
+import ths_block as ths_block_layer
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
@@ -978,3 +979,44 @@ def messages_xgb_resync_targets():
         return {"data": {"synced": n}}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"同步关联标的失败：{e}") from e
+
+
+# ── 同花顺板块（ths-linker + 本地成分股）────────────────────────────────────
+
+
+class ThsBlockRefreshIn(BaseModel):
+    ths_dir: str = ""
+
+
+@app.get("/api/ths-blocks")
+def ths_blocks_snapshot():
+    """返回内存中的同花顺板块缓存（未刷新过则 kinds 为空）。"""
+    return {"data": ths_block_layer.get_snapshot()}
+
+
+@app.post("/api/ths-blocks/refresh")
+def ths_blocks_refresh(body: ThsBlockRefreshIn | None = None):
+    """从 ths-linker 重新拉取全部板块类型并更新全局缓存。"""
+    ths_dir = (body.ths_dir if body else "") or None
+    try:
+        return {"data": ths_block_layer.refresh_cache(ths_dir=ths_dir)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"板块刷新失败：{e}") from e
+
+
+@app.get("/api/ths-blocks/stocks")
+def ths_blocks_stocks(
+    kind: str = Query(..., description="板块大类型"),
+    block_id: str = Query(..., alias="block_id", description="板块 ID"),
+):
+    """单板块成分股（需先刷新板块缓存）。"""
+    try:
+        return {"data": ths_block_layer.get_block_stocks(kind=kind, block_id=block_id)}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"读取成分股失败：{e}") from e
