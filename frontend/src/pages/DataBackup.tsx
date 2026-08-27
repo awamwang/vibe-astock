@@ -1,14 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Archive, Database, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
+  Archive, ChevronRight, Database, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
   RefreshCw, ListOrdered,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { cn } from "@/lib/utils";
 import {
   api, downloadBackup, type BackupStatus, type StockUniverseStatus,
 } from "@/lib/api";
+
+type DataSectionId = "stock-universe" | "data-dirs" | "series" | "import-export";
+
+const DATA_SECTIONS: {
+  id: DataSectionId;
+  label: string;
+  icon: typeof ListOrdered;
+  hint: string;
+}[] = [
+  { id: "stock-universe", label: "A 股股票列表", icon: ListOrdered, hint: "本地缓存与网络刷新" },
+  { id: "data-dirs", label: "数据目录", icon: HardDrive, hint: "根目录、缓存与统计" },
+  { id: "series", label: "长序列", icon: Database, hint: "SQLite 增长型序列" },
+  { id: "import-export", label: "导入导出", icon: FolderOutput, hint: "全量备份与恢复" },
+];
 
 const DEST_KEY = "va-backup-dest";
 const SERIES_DEST_KEY = "va-series-export-dest";
@@ -94,6 +109,7 @@ function DirRow({
 }
 
 export function DataBackup() {
+  const [activeSection, setActiveSection] = useState<DataSectionId>("stock-universe");
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [stockUni, setStockUni] = useState<StockUniverseStatus | null>(null);
@@ -260,7 +276,45 @@ export function DataBackup() {
         subtitle="查看本机数据目录，打包导出已落盘的请求缓存与生成结果，也可从压缩包或文件夹导入"
       />
 
-      <GlassCard className="mb-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <nav className="glass shrink-0 rounded-2xl p-2 lg:w-52">
+          <p className="px-3 py-2 text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+            数据项
+          </p>
+          <ul className="space-y-0.5">
+            {DATA_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              const active = activeSection === section.id;
+              return (
+                <li key={section.id}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection(section.id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                      active
+                        ? "bg-primary/15 font-semibold text-primary"
+                        : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 opacity-60", active && "opacity-100")} />
+                  </button>
+                  {active && (
+                    <p className="px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground lg:hidden">
+                      {section.hint}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <div className="min-w-0 flex-1">
+      {activeSection === "stock-universe" && (
+      <GlassCard className="mb-0">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
@@ -337,8 +391,10 @@ export function DataBackup() {
           </div>
         )}
       </GlassCard>
+      )}
 
-      <GlassCard className="mb-4">
+      {activeSection === "data-dirs" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <HardDrive className="h-4 w-4 text-primary" /> 数据目录
         </h3>
@@ -396,8 +452,10 @@ export function DataBackup() {
           </div>
         )}
       </GlassCard>
+      )}
 
-      <GlassCard className="mb-4">
+      {activeSection === "series" && (
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <Database className="h-4 w-4 text-primary" /> 长序列（SQLite）
         </h3>
@@ -441,7 +499,10 @@ export function DataBackup() {
           {exportingSeries ? "正在导出…" : "导出长序列 JSON"}
         </button>
       </GlassCard>
+      )}
 
+      {activeSection === "import-export" && (
+      <>
       <GlassCard className="mb-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <FolderOutput className="h-4 w-4 text-primary" /> 导出全量备份
@@ -477,7 +538,7 @@ export function DataBackup() {
         </div>
       </GlassCard>
 
-      <GlassCard>
+      <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
           <FolderInput className="h-4 w-4 text-primary" /> 导入
         </h3>
@@ -521,6 +582,10 @@ export function DataBackup() {
           />
         </div>
       </GlassCard>
+      </>
+      )}
+        </div>
+      </div>
     </div>
   );
 }
