@@ -12,7 +12,7 @@ from .schemas import AnalyzedMessage, ImpactTarget, RawMessage
 _IMPACT = frozenset({"critical", "high", "medium", "low", "noise"})
 _FRESHNESS = frozenset({"new", "follow_up", "duplicate", "rumor"})
 _EFFECT = frozenset({
-    "not_erupted", "early_hype", "ongoing_hype", "already_hyped", "faded", "invalid",
+    "not_erupted", "pending_verify", "ongoing_hype", "already_hyped", "invalid",
 })
 _TARGET_KIND = frozenset({"market", "sector", "theme", "stock", "other"})
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+")
@@ -24,7 +24,7 @@ JSON_SKELETON = """{
   "targets": [{"kind": "stock|sector|theme|market|other", "code": "6位代码或null", "name": "显示名"}],
   "impact_level": "critical|high|medium|low|noise",
   "freshness": "new|follow_up|duplicate|rumor",
-  "effect_status": "not_erupted|early_hype|ongoing_hype|already_hyped|faded|invalid"
+  "effect_status": "not_erupted|pending_verify|ongoing_hype|already_hyped|invalid"
 }"""
 
 SYSTEM = """你是 A 股资讯整理助手。根据用户给出的单条消息原文，输出结构化 JSON。

@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 ImpactLevel = Literal["critical", "high", "medium", "low", "noise"]
 Freshness = Literal["new", "follow_up", "duplicate", "rumor"]
 EffectStatus = Literal[
-    "not_erupted", "early_hype", "ongoing_hype", "already_hyped", "faded", "invalid"
+    "not_erupted",
+    "pending_verify",
+    "ongoing_hype",
+    "already_hyped",
+    "invalid",
 ]
 TargetKind = Literal["market", "sector", "theme", "stock", "other"]
 EffectiveMode = Literal["immediate", "scheduled"]
@@ -89,7 +93,7 @@ class RawMessageDraft(BaseModel):
 
 class IngestPayload(BaseModel):
     format: IngestFormat = "plain"
-    source_id: str = "paste"
+    source_id: str = "manual"
     text: str | None = None
     items: list[dict[str, Any]] | None = None
     options: dict[str, Any] = Field(default_factory=dict)

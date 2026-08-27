@@ -693,7 +693,7 @@ def industry(top: int = Query(20, ge=5, le=50)):
 
 class IngestIn(BaseModel):
     format: str = "plain"
-    source_id: str = "paste"
+    source_id: str = "manual"
     text: str | None = None
     items: list[dict] | None = None
     options: dict | None = None

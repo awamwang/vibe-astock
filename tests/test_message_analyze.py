@@ -21,7 +21,7 @@ def test_parse_llm_patch(msg_db):
     drafts = [
         RawMessageDraft(
             draft_key="d1",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content="低空经济政策再出利好，多家公司受益",
             title="低空经济",
@@ -57,7 +57,7 @@ def test_parse_llm_patch_preserves_targets(msg_db):
     drafts = [
         RawMessageDraft(
             draft_key="d1b",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content="测试",
             title="测试",
@@ -85,7 +85,7 @@ def test_extract_url_from_content(msg_db):
     drafts = [
         RawMessageDraft(
             draft_key="d1c",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content="详见 https://example.com/news/1 报道",
             title="链接测试",
@@ -101,7 +101,7 @@ def test_analyze_one_mock(msg_db, monkeypatch):
     drafts = [
         RawMessageDraft(
             draft_key="d2",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content="测试消息内容",
             title="测试",

@@ -32,8 +32,7 @@ _LOCK = threading.Lock()
 _INITED = False
 
 DEFAULT_SOURCES = [
-    ("paste", "粘贴录入", "manual", 1, None),
-    ("structured", "结构化 JSON", "manual", 1, None),
+    ("manual", "手动录入", "manual", 1, None),
     ("calendar", "财经大事日历", "manual", 1, None),
     ("cls_telegraph", "财联社电报", "poll", 1, 5),
     ("xgb_msgs", "选股宝快讯", "poll", 0, None),
@@ -183,6 +182,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         UPDATE message_source SET enabled = 0, poll_interval_s = NULL WHERE id = 'xgb_msgs'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE raw_message SET source_id = 'manual'
+        WHERE source_id IN ('paste', 'structured')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE analyzed_message SET source_id = 'manual'
+        WHERE source_id IN ('paste', 'structured')
         """
     )
     cols = {r[1] for r in conn.execute("PRAGMA table_info(analyzed_message)").fetchall()}

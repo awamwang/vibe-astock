@@ -217,7 +217,7 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
     fmt = payload.format
     opts = payload.options or {}
     split_mode = str(opts.get("split_mode", "auto"))
-    sid = payload.source_id or "paste"
+    sid = payload.source_id or "manual"
     label = source_label or _default_label(sid)
 
     if fmt == "plain":
@@ -379,8 +379,7 @@ def resplit_draft(draft: RawMessageDraft, mode: str = "blank") -> list[RawMessag
 
 def _default_label(source_id: str) -> str:
     return {
-        "paste": "粘贴录入",
-        "structured": "结构化 JSON",
+        "manual": "手动录入",
         "calendar": "财经大事日历",
         "xgb_msgs": "选股宝快讯",
         "cls_telegraph": "财联社电报",

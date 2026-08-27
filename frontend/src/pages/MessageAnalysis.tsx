@@ -21,16 +21,35 @@ import {
   type AnalyzedMessage, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
 } from "@/lib/api";
 import {
-  EFFECT_LABEL, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
-  formatMarkLabel, keywordHint, monthRange, targetHint, targetTitle,
+  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
+  effectiveAt, formatMarkLabel, keywordHint, monthRange, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
+const HIDDEN_SOURCE_IDS = new Set(["paste", "structured"]);
 
 type ViewMode = "calendar" | "list";
+
+function nowStorageDatetime(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function toDatetimeLocal(value: string): string {
+  if (!value) return "";
+  const m = value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+  return m ? `${m[1]}T${m[2]}` : "";
+}
+
+function fromDatetimeLocal(value: string): string {
+  if (!value) return "";
+  const normalized = value.replace("T", " ");
+  return normalized.length === 16 ? `${normalized}:00` : normalized;
+}
 
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
@@ -222,13 +241,21 @@ function MessageKeywords({ item }: { item: AnalyzedMessage }) {
   if (item.source_id === "xgb_msgs" || !item.keywords.length) {
     return <span className="text-muted-foreground">—</span>;
   }
+  const shown = item.keywords.slice(0, 2);
+  const rest = item.keywords.length - shown.length;
+  const allHint = item.keywords.join("、");
   return (
-    <div className="flex flex-wrap gap-1" title={keywordHint(item.source_id)}>
-      {item.keywords.slice(0, 6).map((k) => (
+    <div className="flex flex-wrap gap-1" title={`${keywordHint(item.source_id)}：${allHint}`}>
+      {shown.map((k) => (
         <Badge key={k} className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200">
           {k}
         </Badge>
       ))}
+      {rest > 0 && (
+        <Badge className="border-border bg-muted/40 text-muted-foreground" title={allHint}>
+          其他{rest}个
+        </Badge>
+      )}
     </div>
   );
 }
@@ -347,7 +374,7 @@ export function MessageAnalysis() {
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
-  const [viewMode, setViewMode] = useState<ViewMode>("calendar");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const nowInit = useMemo(() => new Date(), []);
   const [calendarYear, setCalendarYear] = useState(nowInit.getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(nowInit.getMonth());
@@ -361,6 +388,9 @@ export function MessageAnalysis() {
   const [drafts, setDrafts] = useState<RawMessageDraft[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [commitLoading, setCommitLoading] = useState(false);
+  const [ingestMetaOpen, setIngestMetaOpen] = useState(false);
+  const [ingestMetaSourceLabel, setIngestMetaSourceLabel] = useState("手动录入");
+  const [ingestMetaProducedAt, setIngestMetaProducedAt] = useState(() => nowStorageDatetime());
 
   const [selected, setSelected] = useState<AnalyzedMessage | null>(null);
   const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
@@ -532,6 +562,12 @@ export function MessageAnalysis() {
 
   const clsSource = useMemo(() => sources.find((s) => s.id === "cls_telegraph"), [sources]);
   const xgbSource = useMemo(() => sources.find((s) => s.id === "xgb_msgs"), [sources]);
+  const sourceFilterOptions = useMemo(
+    () => sources
+      .filter((s) => !HIDDEN_SOURCE_IDS.has(s.id))
+      .map((s) => ({ value: s.id, label: s.label })),
+    [sources],
+  );
 
   const toggleSort = (col: string) => {
     if (!SORTABLE_COLS.has(col)) return;
@@ -553,7 +589,7 @@ export function MessageAnalysis() {
       }
       const rows = await api.messageIngestPreview({
         format: ingestFormat,
-        source_id: ingestFormat === "calendar" ? "calendar" : ingestFormat === "structured" ? "structured" : "paste",
+        source_id: ingestFormat === "calendar" ? "calendar" : "manual",
         text: ingestFormat !== "structured" ? ingestText : undefined,
         items: parsedItems,
         options: { split_mode: "auto" },
@@ -567,16 +603,39 @@ export function MessageAnalysis() {
     }
   };
 
-  const closeIngest = () => setIngestOpen(false);
+  const closeIngest = () => {
+    setIngestOpen(false);
+    setIngestMetaOpen(false);
+  };
 
-  const runCommit = async () => {
-    if (!drafts.length) return;
+  const openIngest = () => {
+    setIngestMetaSourceLabel("手动录入");
+    setIngestMetaProducedAt(nowStorageDatetime());
+    setIngestMetaOpen(false);
+    setIngestOpen(true);
+  };
+
+  const applyIngestMeta = (rows: RawMessageDraft[]): RawMessageDraft[] => {
+    const label = ingestMetaSourceLabel.trim() || "手动录入";
+    const produced = fromDatetimeLocal(toDatetimeLocal(ingestMetaProducedAt)) || ingestMetaProducedAt.trim() || nowStorageDatetime();
+    return rows.map((d) => ({
+      ...d,
+      source_id: "manual",
+      source_label: label,
+      produced_at: produced,
+    }));
+  };
+
+  const runCommit = async (rows?: RawMessageDraft[]) => {
+    const toCommit = rows ?? drafts;
+    if (!toCommit.length) return;
     setCommitLoading(true);
     try {
-      const n = drafts.length;
-      await api.messageIngestCommit(drafts);
+      const n = toCommit.length;
+      await api.messageIngestCommit(toCommit);
       setDrafts([]);
       setIngestText("");
+      setIngestMetaOpen(false);
       setIngestOpen(false);
       notify.success(`已入库 ${n} 条`);
       await refreshMessages();
@@ -586,6 +645,21 @@ export function MessageAnalysis() {
     } finally {
       setCommitLoading(false);
     }
+  };
+
+  const requestCommit = () => {
+    if (!drafts.length) return;
+    if (ingestFormat === "plain" || ingestFormat === "structured") {
+      setIngestMetaSourceLabel((v) => v.trim() || "手动录入");
+      setIngestMetaProducedAt((v) => v.trim() || nowStorageDatetime());
+      setIngestMetaOpen(true);
+      return;
+    }
+    void runCommit();
+  };
+
+  const confirmCommitWithMeta = () => {
+    void runCommit(applyIngestMeta(drafts));
   };
 
   const removeDraft = (key: string) => setDrafts((d) => d.filter((x) => x.draft_key !== key));
@@ -806,7 +880,7 @@ export function MessageAnalysis() {
           </button>
           <button
             type="button"
-            onClick={() => setIngestOpen(true)}
+            onClick={openIngest}
             className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
           >
             <Plus className="h-4 w-4 text-primary" />
@@ -847,7 +921,7 @@ export function MessageAnalysis() {
           <div className="mt-3 flex flex-wrap items-center gap-2 lg:gap-3">
             <FilterMultiSelect
               placeholder="全部来源"
-              options={sources.map((s) => ({ value: s.id, label: s.label }))}
+              options={sourceFilterOptions}
               selected={sourcesFilter}
               onChange={(v) => {
                 setPage(1);
@@ -865,7 +939,7 @@ export function MessageAnalysis() {
             />
             <FilterMultiSelect
               placeholder="全部生效"
-              options={Object.entries(EFFECT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+              options={EFFECT_STATUS_OPTIONS.map((k) => ({ value: k, label: EFFECT_LABEL[k] }))}
               selected={effectStatuses}
               onChange={(v) => {
                 setPage(1);
@@ -1057,14 +1131,17 @@ export function MessageAnalysis() {
                           aria-label="全选当前页"
                         />
                       </th>
-                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[220px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="produced_at" label="产生时间" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("produced_at")} className="w-32 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <th className="w-32 px-3 py-2.5 text-left align-middle">
+                        <span className={sortThLabelCls}>生效时间</span>
+                      </th>
+                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[120px] max-w-[180px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="impact_level" label="级别" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
-                      <SortTh col="effect_status" label="生效" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("effect_status")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="effect_status" label="生效情况" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("effect_status")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="followed" label="关注" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("followed")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
-                      <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("keywords")} className="w-28 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("keywords")} className="min-w-[140px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="targets" label="关联标的" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("targets")} className="min-w-[160px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
-                      <SortTh col="produced_at" label="产生时间" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("produced_at")} className="w-36 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                     </tr>
                   </thead>
                   <tbody>
@@ -1085,22 +1162,25 @@ export function MessageAnalysis() {
                             onChange={() => toggleSelect(item.id)}
                           />
                         </td>
-                        <td className="px-3 py-3 align-top">
-                          <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {item.favorited && (
-                                <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500" aria-label="已收藏" />
-                              )}
-                              {item.marks.includes("highlight") && (
-                                <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
-                              )}
-                              <span className="font-semibold leading-snug text-foreground line-clamp-2">
-                                {item.title || item.summary || "—"}
-                              </span>
-                            </div>
-                            <p className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
-                              {item.summary || item.detail}
-                            </p>
+                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {item.produced_at}
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {item.effective_mode === "scheduled" && item.effective_at
+                            ? item.effective_at
+                            : effectiveAt(item)}
+                        </td>
+                        <td className="px-3 py-3 align-top max-w-[180px]">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {item.favorited && (
+                              <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500" aria-label="已收藏" />
+                            )}
+                            {item.marks.includes("highlight") && (
+                              <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
+                            )}
+                            <span className="font-semibold leading-snug text-foreground line-clamp-2">
+                              {item.title || "—"}
+                            </span>
                           </div>
                         </td>
                         <td className="px-3 py-3 align-top text-xs text-muted-foreground">
@@ -1133,9 +1213,6 @@ export function MessageAnalysis() {
                         </td>
                         <td className="px-3 py-3 align-top">
                           <MessageTargets item={item} max={3} />
-                        </td>
-                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                          {item.produced_at}
                         </td>
                       </tr>
                     ))}
@@ -1492,12 +1569,79 @@ export function MessageAnalysis() {
                   type="button"
                   disabled={commitLoading}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
-                  onClick={runCommit}
+                  onClick={requestCommit}
                 >
                   {commitLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
                   确认入库 ({drafts.length})
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ingestMetaOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4"
+          onClick={() => setIngestMetaOpen(false)}
+        >
+          <div
+            className="glass w-full max-w-md p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold text-foreground">批次元数据</h2>
+              <button
+                type="button"
+                disabled={commitLoading}
+                onClick={() => setIngestMetaOpen(false)}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              为本次入库的 {drafts.length} 条消息统一设置来源与产生时间（选填）。
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-muted-foreground">数据来源</label>
+                <input
+                  className={inputCls}
+                  placeholder="手动录入"
+                  value={ingestMetaSourceLabel}
+                  onChange={(e) => setIngestMetaSourceLabel(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-muted-foreground">产生时间</label>
+                <input
+                  type="datetime-local"
+                  className={inputCls}
+                  value={toDatetimeLocal(ingestMetaProducedAt)}
+                  onChange={(e) => setIngestMetaProducedAt(fromDatetimeLocal(e.target.value))}
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={commitLoading}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 disabled:opacity-40"
+                onClick={() => setIngestMetaOpen(false)}
+              >
+                返回
+              </button>
+              <button
+                type="button"
+                disabled={commitLoading}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+                onClick={confirmCommitWithMeta}
+              >
+                {commitLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
+                确认入库 ({drafts.length})
+              </button>
             </div>
           </div>
         </div>

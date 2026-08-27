@@ -67,12 +67,23 @@ export const FRESHNESS_LABEL: Record<string, string> = {
 
 export const EFFECT_LABEL: Record<string, string> = {
   not_erupted: "未爆发",
-  early_hype: "刚开始炒",
+  pending_verify: "待验证",
   ongoing_hype: "持续炒作",
   already_hyped: "已炒过",
-  faded: "退潮",
   invalid: "证伪/过期",
+  // 历史数据兼容
+  early_hype: "刚开始炒",
+  faded: "退潮",
 };
+
+/** 筛选与编辑可选的生效情况 */
+export const EFFECT_STATUS_OPTIONS = [
+  "not_erupted",
+  "pending_verify",
+  "ongoing_hype",
+  "already_hyped",
+  "invalid",
+] as const;
 
 export const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",

@@ -226,7 +226,7 @@ export interface RadarData {
 export type ImpactLevel = "critical" | "high" | "medium" | "low" | "noise";
 export type Freshness = "new" | "follow_up" | "duplicate" | "rumor";
 export type EffectStatus =
-  | "not_erupted" | "early_hype" | "ongoing_hype" | "already_hyped" | "faded" | "invalid";
+  | "not_erupted" | "pending_verify" | "ongoing_hype" | "already_hyped" | "invalid";
 export type TargetKind = "market" | "sector" | "theme" | "stock" | "other";
 
 export interface ImpactTarget {

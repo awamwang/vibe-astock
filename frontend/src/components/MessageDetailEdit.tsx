@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import {
   EFFECT_LABEL,
+  EFFECT_STATUS_OPTIONS,
   FRESHNESS_LABEL,
   IMPACT_LABEL,
   STATUS_LABEL,
@@ -26,9 +27,7 @@ const labelCls = "mb-1 block text-xs font-semibold text-muted-foreground";
 
 const IMPACT_LEVELS: ImpactLevel[] = ["critical", "high", "medium", "low", "noise"];
 const FRESHNESS_VALUES: Freshness[] = ["new", "follow_up", "duplicate", "rumor"];
-const EFFECT_STATUSES: EffectStatus[] = [
-  "not_erupted", "early_hype", "ongoing_hype", "already_hyped", "faded", "invalid",
-];
+const EFFECT_STATUSES: EffectStatus[] = [...EFFECT_STATUS_OPTIONS];
 const STATUS_VALUES: Array<AnalyzedMessage["status"]> = ["draft", "confirmed", "archived"];
 const TARGET_KINDS: TargetKind[] = ["stock", "sector", "theme", "market", "other"];
 

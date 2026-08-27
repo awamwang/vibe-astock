@@ -19,7 +19,7 @@ def msg_db(tmp_path):
 
 
 def test_split_plain_blank(msg_db):
-    payload = IngestPayload(format="plain", source_id="paste", text="第一条\n\n第二条")
+    payload = IngestPayload(format="plain", source_id="manual", text="第一条\n\n第二条")
     drafts = parser.parse_ingest(payload)
     assert len(drafts) == 2
     assert "第一条" in drafts[0].content
@@ -36,7 +36,7 @@ def test_structured_ingest(msg_db):
             "marks": ["highlight"],
         }
     ]
-    payload = IngestPayload(format="structured", source_id="structured", items=items)
+    payload = IngestPayload(format="structured", source_id="manual", items=items)
     drafts = parser.parse_ingest(payload)
     assert len(drafts) == 1
     assert drafts[0].title == "测试标题"
@@ -156,7 +156,7 @@ def test_importance_to_impact(level, impact):
 
 def test_get_raws_for_analyzed(msg_db):
     items = [{"title": "原始标题", "content": "原始正文内容"}]
-    payload = IngestPayload(format="structured", source_id="paste", items=items)
+    payload = IngestPayload(format="structured", source_id="manual", items=items)
     drafts = parser.parse_ingest(payload)
     inserted = store.insert_raw_batch(drafts, path=msg_db)
     an = store.upsert_analyzed_from_raw(inserted[0], path=msg_db)
@@ -235,7 +235,7 @@ def test_dedup_external_ref(msg_db):
 def test_search_analyzed(msg_db):
     d = RawMessageDraft(
         draft_key="d2",
-        source_id="paste",
+        source_id="manual",
         source_label="粘贴",
         content="低空经济政策出台",
         title="低空经济",
@@ -270,8 +270,8 @@ def test_multi_filter_analyzed(msg_db):
             path=msg_db,
         )
 
-    _insert("高影响A", "paste", "high", "not_erupted")
-    _insert("中影响B", "paste", "medium", "early_hype")
+    _insert("高影响A", "manual", "high", "not_erupted")
+    _insert("中影响B", "manual", "medium", "pending_verify")
     _insert("选股宝C", "xgb_msgs", "high", "ongoing_hype")
 
     rows, total = store.list_analyzed(
@@ -290,7 +290,7 @@ def test_multi_filter_analyzed(msg_db):
     assert rows[0].title == "中影响B"
 
     rows2, total2 = store.list_analyzed(
-        store.ListQuery(source="paste,xgb_msgs", effect_status="not_erupted,ongoing_hype"),
+        store.ListQuery(source="manual,xgb_msgs", effect_status="not_erupted,ongoing_hype"),
         path=msg_db,
     )
     assert total2 == 2
@@ -300,8 +300,8 @@ def test_multi_filter_analyzed(msg_db):
 
 def test_merge_drafts():
     drafts = [
-        RawMessageDraft(draft_key="a", source_id="paste", content="段1", title="段1"),
-        RawMessageDraft(draft_key="b", source_id="paste", content="段2", title="段2"),
+        RawMessageDraft(draft_key="a", source_id="manual", content="段1", title="段1"),
+        RawMessageDraft(draft_key="b", source_id="manual", content="段2", title="段2"),
     ]
     merged = parser.merge_drafts(drafts, [0, 1])
     assert "段1" in merged.content and "段2" in merged.content
@@ -318,7 +318,7 @@ def test_follow_keywords_match_and_filter(msg_db, tmp_path, monkeypatch):
     def _insert(title: str, summary: str = ""):
         d = RawMessageDraft(
             draft_key=f"d-{title}",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content=title,
             title=title,
@@ -447,7 +447,7 @@ def test_list_analyzed_pagination_and_sort(msg_db):
     def _insert(title: str, impact: str, effect: str):
         d = RawMessageDraft(
             draft_key=f"pg-{title}",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content=title,
             title=title,
@@ -460,7 +460,7 @@ def test_list_analyzed_pagination_and_sort(msg_db):
         )
 
     for i in range(5):
-        _insert(f"消息{i}", "medium", "not_erupted" if i % 2 == 0 else "early_hype")
+        _insert(f"消息{i}", "medium", "not_erupted" if i % 2 == 0 else "pending_verify")
 
     page1, total = store.list_analyzed(
         store.ListQuery(limit=2, offset=0, sort="title", order="asc"),
@@ -486,7 +486,7 @@ def test_list_analyzed_pagination_and_sort(msg_db):
 def test_favorited_batch_and_filter(msg_db):
     d = RawMessageDraft(
         draft_key="fav1",
-        source_id="paste",
+        source_id="manual",
         source_label="粘贴",
         content="收藏测试",
         title="收藏测试",
@@ -521,7 +521,7 @@ def test_delete_analyzed_batch(msg_db):
     for i in range(2):
         d = RawMessageDraft(
             draft_key=f"del{i}",
-            source_id="paste",
+            source_id="manual",
             source_label="粘贴",
             content=f"删除测试{i}",
             title=f"删除测试{i}",
