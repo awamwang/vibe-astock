@@ -305,6 +305,8 @@ export interface AnalyzedMessage {
   favorited?: boolean;
   followed?: boolean;
   matched_follow_keywords?: string[];
+  /** 跟随股票变化时，成分股命中当前股票的板块目标名称 */
+  matched_current_stock_blocks?: string[];
 }
 
 export interface AnalyzedMessageDetail extends AnalyzedMessage {

@@ -268,6 +268,53 @@ def test_list_analyzed_match_current_stock(msg_db, monkeypatch):
     assert matched[0].title == "茅台消息"
 
 
+def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
+    from duanxian import current_stock as cs
+
+    d = RawMessageDraft(
+        draft_key="blk-hw",
+        source_id="manual",
+        source_label="手动",
+        content="华为产业链利好",
+        title="华为产业链利好",
+        targets=[{"kind": "sector", "name": "华为概念"}],
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    an = store.upsert_analyzed_from_raw(
+        raw,
+        patch={"targets": [t.model_dump() for t in d.targets]},
+        path=msg_db,
+    )
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="600519",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-08-27 10:00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        lambda conn, code: {an.id} if code == "600519" else set(),
+    )
+    monkeypatch.setattr(
+        "vr.ths_block.match.target_name_contains_stock",
+        lambda name, code: name == "华为概念" and code == "600519",
+    )
+
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes"),
+        path=msg_db,
+    )
+    assert matched_total == 1
+    assert matched[0].title == "华为产业链利好"
+    assert matched[0].matched_current_stock_blocks == ["华为概念"]
+
+
 def test_dedup_external_ref(msg_db):
     d = RawMessageDraft(
         draft_key="d1",

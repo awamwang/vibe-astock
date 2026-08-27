@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from duanxian.message_follow_keywords import build_follow_sql, load_keywords
 
+from .current_stock_match import enrich_current_stock
 from .follow import enrich_follow
 from .schemas import (
     AnalyzedMessage,
@@ -638,7 +639,28 @@ END)
 """
 
 
-def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
+def _collect_stock_match_ids(conn: sqlite3.Connection, stock_code: str) -> set[str]:
+    """直接股票标的或板块成分股包含该代码的分析消息 id。"""
+    from ..ths_block import match as block_match
+
+    code = (stock_code or "").strip().zfill(6)
+    if not code.isdigit() or len(code) != 6:
+        return set()
+    ids: set[str] = set()
+    for row in conn.execute(
+        "SELECT DISTINCT analyzed_id FROM impact_target WHERE code = ?",
+        (code,),
+    ):
+        ids.add(str(row["analyzed_id"]))
+    ids.update(block_match.analyzed_ids_with_stock_in_block_targets(conn, code))
+    return ids
+
+
+def _build_analyzed_where(
+    q: ListQuery,
+    *,
+    stock_match_ids: set[str] | None = None,
+) -> tuple[str, list[Any]]:
     parts = ["1=1"]
     args: list[Any] = []
     _append_in_filter(parts, args, "source_id", q.source)
@@ -684,17 +706,14 @@ def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
         selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
         want_yes = "yes" in selected or "1" in selected or "true" in selected
         if want_yes:
-            from duanxian import current_stock as cs
-
-            rec = cs.get_current()
-            if not rec:
+            if stock_match_ids is None:
+                parts.append("1=0")
+            elif not stock_match_ids:
                 parts.append("1=0")
             else:
-                parts.append(
-                    "EXISTS (SELECT 1 FROM impact_target it "
-                    "WHERE it.analyzed_id = analyzed_message.id AND it.code = ?)"
-                )
-                args.append(rec.code)
+                placeholders = ",".join("?" * len(stock_match_ids))
+                parts.append(f"analyzed_message.id IN ({placeholders})")
+                args.extend(sorted(stock_match_ids))
     return " AND ".join(parts), args
 
 
@@ -704,7 +723,22 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     msg_archive.archive_immediate_expired(main_path=path)
     init_db(path)
     db = path or DB_PATH
-    where, args = _build_analyzed_where(q)
+    current_stock_code: str | None = None
+    stock_match_ids: set[str] | None = None
+    if q.match_current_stock:
+        selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
+        want_yes = "yes" in selected or "1" in selected or "true" in selected
+        if want_yes:
+            from duanxian import current_stock as cs
+
+            rec = cs.get_current()
+            if rec and rec.code:
+                current_stock_code = rec.code
+                with closing(_connect(db)) as conn:
+                    stock_match_ids = _collect_stock_match_ids(conn, rec.code)
+            else:
+                stock_match_ids = set()
+    where, args = _build_analyzed_where(q, stock_match_ids=stock_match_ids)
     sort_map = {
         "produced_at": "produced_at",
         "ingested_at": "analyzed_at",
@@ -737,7 +771,10 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
                 aids = r["id"]
                 targets = _load_targets(conn, aids)
                 raw_ids = _load_raw_ids(conn, aids)
-                out.append(enrich_follow(_row_analyzed(r, targets, raw_ids), follow_kws))
+                msg = enrich_follow(_row_analyzed(r, targets, raw_ids), follow_kws)
+                if current_stock_code:
+                    msg = enrich_current_stock(msg, current_stock_code)
+                out.append(msg)
     return out, int(total)
 
 

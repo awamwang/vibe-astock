@@ -18,7 +18,8 @@ import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type AnalyzedMessage, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
+  type AnalyzedMessage, type BlockResolveItem, type ImpactTarget, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
+  type StockResolveItem,
 } from "@/lib/api";
 import {
   EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, TARGET_KIND_LABEL,
@@ -29,10 +30,11 @@ import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { Link } from "react-router-dom";
 import { StockLabel } from "@/components/stock/StockLabel";
-import { StockResolveScope, useStockResolve } from "@/components/stock/StockResolveContext";
+import { StockResolveScope, useStockResolve, useStockResolveOptional } from "@/components/stock/StockResolveContext";
 import { BlockLabel } from "@/components/block/BlockLabel";
-import { BlockResolveScope } from "@/components/block/BlockResolveContext";
+import { BlockResolveScope, useBlockResolveOptional } from "@/components/block/BlockResolveContext";
 import { isStockMatched } from "@/lib/stocks";
+import { isBlockMatched } from "@/lib/thsBlocks";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
@@ -267,16 +269,55 @@ function MessageKeywords({ item }: { item: AnalyzedMessage }) {
   );
 }
 
-function sortMessageTargets(targets: AnalyzedMessage["targets"]) {
-  return [...targets].sort((a, b) => {
-    const rank = (t: (typeof targets)[number]) => (t.kind === "stock" ? 0 : 1);
-    return rank(a) - rank(b);
-  });
+/** 展示排序：已解析板块 → 已解析个股 → 未解析 */
+function messageTargetSortTier(
+  t: ImpactTarget,
+  stockGet: (q: { code?: string | null; name?: string }) => StockResolveItem | undefined,
+  blockGet: (name: string) => BlockResolveItem | undefined,
+): number {
+  if (isStockMatched(stockGet({ code: t.code, name: t.name }))) return 1;
+  if (t.kind === "market") return 2;
+  const showsAsBlock = t.kind === "sector" || t.kind === "theme" || !!t.name;
+  if (showsAsBlock && isBlockMatched(blockGet(t.name))) return 0;
+  return 2;
 }
 
-function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
+function sortMessageTargets(
+  targets: AnalyzedMessage["targets"],
+  stockGet?: (q: { code?: string | null; name?: string }) => StockResolveItem | undefined,
+  blockGet?: (name: string) => BlockResolveItem | undefined,
+) {
+  const getStock = stockGet ?? (() => undefined);
+  const getBlock = blockGet ?? (() => undefined);
+  return [...targets].sort((a, b) => messageTargetSortTier(a, getStock, getBlock) - messageTargetSortTier(b, getStock, getBlock));
+}
+
+function useSortMessageTargets() {
+  const stockCtx = useStockResolveOptional();
+  const blockCtx = useBlockResolveOptional();
+  return useCallback(
+    (targets: AnalyzedMessage["targets"]) => sortMessageTargets(
+      targets,
+      stockCtx ? (q) => stockCtx.get(q) : undefined,
+      blockCtx ? (n) => blockCtx.get(n) : undefined,
+    ),
+    [stockCtx, blockCtx],
+  );
+}
+
+function MessageTargetBadge({
+  t,
+  stockHitBlockNames,
+}: {
+  t: AnalyzedMessage["targets"][number];
+  stockHitBlockNames?: string[];
+}) {
   const stockResolved = useStockResolve({ code: t.code, name: t.name });
   const stockMatched = isStockMatched(stockResolved);
+  const blockName = (t.name || "").replace(/\s+/g, "").trim();
+  const isStockHitBlock = (t.kind === "sector" || t.kind === "theme")
+    && !!blockName
+    && (stockHitBlockNames?.some((n) => (n || "").replace(/\s+/g, "").trim() === blockName) ?? false);
 
   if (stockMatched) {
     const stock = stockResolved!.stock!;
@@ -306,8 +347,11 @@ function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
   if (t.kind === "sector" || t.kind === "theme" || t.name) {
     return (
       <Badge
-        className="border-amber-500/30 bg-amber-500/10 p-0 text-foreground"
-        title={targetHint(t)}
+        className={cn(
+          "border-amber-500/30 bg-amber-500/10 p-0 text-foreground",
+          isStockHitBlock && "ring-2 ring-danger/70 border-danger/60",
+        )}
+        title={isStockHitBlock ? `${targetHint(t)} · 成分股含当前股票` : targetHint(t)}
       >
         <BlockLabel name={targetTitle(t)} variant="tag" className="border-0 bg-transparent" />
       </Badge>
@@ -337,13 +381,39 @@ function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
   );
 }
 
-function MessageTargets({ item, max = 4 }: { item: AnalyzedMessage; max?: number }) {
+function MessageTargets({
+  item,
+  max = 4,
+  stockHitBlockNames,
+}: {
+  item: AnalyzedMessage;
+  max?: number;
+  stockHitBlockNames?: string[];
+}) {
+  const sortTargets = useSortMessageTargets();
   if (!item.targets.length) return <span className="text-muted-foreground">—</span>;
-  const targets = sortMessageTargets(item.targets);
+  const targets = sortTargets(item.targets);
   return (
     <div className="flex flex-wrap gap-1">
       {targets.slice(0, max).map((t, i) => (
-        <MessageTargetBadge key={`${t.name}-${i}`} t={t} />
+        <MessageTargetBadge key={`${t.name}-${i}`} t={t} stockHitBlockNames={stockHitBlockNames} />
+      ))}
+    </div>
+  );
+}
+
+function MessageDetailTargets({
+  targets,
+  stockHitBlockNames,
+}: {
+  targets: AnalyzedMessage["targets"];
+  stockHitBlockNames?: string[];
+}) {
+  const sortTargets = useSortMessageTargets();
+  return (
+    <div className="flex flex-wrap gap-2">
+      {sortTargets(targets).map((t, i) => (
+        <MessageTargetBadge key={i} t={t} stockHitBlockNames={stockHitBlockNames} />
       ))}
     </div>
   );
@@ -614,6 +684,12 @@ export function MessageAnalysis() {
   useEffect(() => {
     if (viewMode === "list") loadList();
   }, [loadList, viewMode]);
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    const updated = items.find((x) => x.id === selected.id);
+    if (updated) setSelected(updated);
+  }, [items, selected?.id]);
 
   useEffect(() => {
     if (viewMode === "calendar") loadCalendar();
@@ -1415,7 +1491,13 @@ export function MessageAnalysis() {
                           <MessageKeywords item={item} />
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <MessageTargets item={item} max={3} />
+                          <MessageTargets
+                            item={item}
+                            max={3}
+                            stockHitBlockNames={
+                              followStockChange ? item.matched_current_stock_blocks : undefined
+                            }
+                          />
                         </td>
                       </tr>
                     ))}
@@ -1635,11 +1717,12 @@ export function MessageAnalysis() {
 
                 {selected.targets.length > 0 && (
                   <DetailSection label="影响标的">
-                    <div className="flex flex-wrap gap-2">
-                      {sortMessageTargets(selected.targets).map((t, i) => (
-                        <MessageTargetBadge key={i} t={t} />
-                      ))}
-                    </div>
+                    <MessageDetailTargets
+                      targets={selected.targets}
+                      stockHitBlockNames={
+                        followStockChange ? selected.matched_current_stock_blocks : undefined
+                      }
+                    />
                   </DetailSection>
                 )}
 

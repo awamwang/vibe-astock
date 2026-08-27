@@ -72,6 +72,7 @@ class AnalyzedMessage(BaseModel):
     favorited: bool = False
     followed: bool = False
     matched_follow_keywords: list[str] = Field(default_factory=list)
+    matched_current_stock_blocks: list[str] = Field(default_factory=list)
 
 
 class RawMessageDraft(BaseModel):
