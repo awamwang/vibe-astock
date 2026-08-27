@@ -437,7 +437,7 @@ export function ThsBlocks() {
             rel="noreferrer"
             className="text-xs font-medium text-primary underline-offset-2 hover:underline"
           >
-            板块别名
+            板块别名 →
           </Link>
         </div>
 

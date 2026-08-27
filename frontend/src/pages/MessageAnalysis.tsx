@@ -1653,7 +1653,7 @@ export function MessageAnalysis() {
                       rel="noreferrer"
                       className="text-xs font-medium text-primary underline-offset-2 hover:underline"
                     >
-                      消息关注词
+                      消息关注词 →
                     </Link>
                   )}
                 >

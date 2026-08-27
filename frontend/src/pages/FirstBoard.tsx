@@ -431,7 +431,7 @@ export function FirstBoard() {
             rel="noreferrer"
             className="text-xs font-medium text-primary underline-offset-2 hover:underline"
           >
-            上涨关键词
+            上涨关键词 →
           </Link>
         </div>
         <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold">
