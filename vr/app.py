@@ -35,7 +35,7 @@ import stock_universe
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
-stock_universe.startup_load()
+stock_universe.schedule_startup_load()
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
@@ -740,6 +740,7 @@ class AnalyzedPatchIn(BaseModel):
     detail: str | None = None
     effective_mode: str | None = None
     effective_at: str | None = None
+    end_at: str | None = None
     produced_at: str | None = None
     impact_level: str | None = None
     freshness: str | None = None
@@ -946,7 +947,11 @@ def messages_analyzed_detail(analyzed_id: str):
 
 @app.patch("/api/messages/analyzed/{analyzed_id}")
 def messages_analyzed_patch(analyzed_id: str, body: AnalyzedPatchIn):
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    patch = {
+        k: v
+        for k, v in body.model_dump().items()
+        if v is not None or k in ("effective_at", "end_at")
+    }
     patch["analyzed_by"] = "human"
     row = msg_layer.store.update_analyzed(analyzed_id, patch)
     if not row:

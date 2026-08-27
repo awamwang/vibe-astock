@@ -28,6 +28,48 @@ export function impactSortKey(level: string): number {
   return IMPACT_ORDER[level] ?? IMPACT_ORDER.medium;
 }
 
+export const DEFAULT_END_DAYS = 5;
+const DEFAULT_END_DAYS_KEY = "va-message-default-end-days";
+
+/** 消息默认有效期（天），仅用于未设 end_at 时的计算，不写入消息记录 */
+export function getDefaultEndDays(): number {
+  try {
+    const raw = localStorage.getItem(DEFAULT_END_DAYS_KEY);
+    if (raw == null) return DEFAULT_END_DAYS;
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 15) return n;
+  } catch {
+    /* 隐私模式等场景 localStorage 不可用 */
+  }
+  return DEFAULT_END_DAYS;
+}
+
+export function setDefaultEndDays(days: number): void {
+  const n = Math.min(15, Math.max(1, Math.round(days)));
+  try {
+    localStorage.setItem(DEFAULT_END_DAYS_KEY, String(n));
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 将存储时间字符串加上指定天数 */
+export function addDaysToStorageDatetime(dt: string, days: number): string {
+  const m = dt.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return dt;
+  const d = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6] ?? "0"),
+  );
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 回测口径：定时生效取 effective_at，立即生效取 produced_at */
 export function effectiveAt(item: {
   effective_mode?: string;
@@ -38,6 +80,25 @@ export function effectiveAt(item: {
     return item.effective_at;
   }
   return item.produced_at;
+}
+
+/** 结束时间：有 end_at 取 end_at，否则生效时间 + defaultDays */
+export function endAt(
+  item: {
+    effective_mode?: string;
+    effective_at?: string | null;
+    produced_at: string;
+    end_at?: string | null;
+  },
+  defaultDays?: number,
+): string {
+  if (item.end_at?.trim()) return item.end_at.trim();
+  const days = defaultDays ?? getDefaultEndDays();
+  return addDaysToStorageDatetime(effectiveAt(item), days);
+}
+
+export function hasExplicitEndAt(item: { end_at?: string | null }): boolean {
+  return Boolean(item.end_at?.trim());
 }
 
 export function dateKeyFromEffective(item: {

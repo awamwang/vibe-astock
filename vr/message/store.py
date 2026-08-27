@@ -201,6 +201,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE analyzed_message ADD COLUMN favorited INTEGER NOT NULL DEFAULT 0"
         )
+    if "end_at" not in cols:
+        conn.execute("ALTER TABLE analyzed_message ADD COLUMN end_at TEXT")
 
 
 def init_db(path: Optional[str] = None) -> str:
@@ -248,6 +250,7 @@ def _row_analyzed(r: sqlite3.Row, targets: list[ImpactTarget], raw_ids: list[str
         detail=r["detail"] or "",
         effective_mode=r["effective_mode"] or "immediate",
         effective_at=r["effective_at"],
+        end_at=r["end_at"] if "end_at" in r.keys() else None,
         produced_at=r["produced_at"],
         targets=targets,
         impact_level=r["impact_level"] or "medium",
@@ -844,6 +847,7 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                 "detail": "detail",
                 "effective_mode": "effective_mode",
                 "effective_at": "effective_at",
+                "end_at": "end_at",
                 "produced_at": "produced_at",
                 "impact_level": "impact_level",
                 "freshness": "freshness",

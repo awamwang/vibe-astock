@@ -59,6 +59,7 @@ class AnalyzedMessage(BaseModel):
     detail: str = ""
     effective_mode: EffectiveMode = "immediate"
     effective_at: str | None = None
+    end_at: str | None = None
     produced_at: str
     targets: list[ImpactTarget] = Field(default_factory=list)
     impact_level: ImpactLevel = "medium"

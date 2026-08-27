@@ -615,3 +615,50 @@ def test_delete_analyzed_batch(msg_db):
     assert total == 1
     assert rows[0].id == ids[1]
 
+
+def test_end_at_update_and_clear(msg_db):
+    from vr.message.dates import effective_end_at, has_explicit_end_at
+    from vr.message.schemas import AnalyzedMessage
+
+    d = RawMessageDraft(
+        draft_key="end1",
+        source_id="manual",
+        source_label="手动",
+        content="结束时间测试",
+        title="结束时间测试",
+        produced_at="2026-08-01 10:00:00",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    an = store.upsert_analyzed_from_raw(raw, path=msg_db)
+    assert an.end_at is None
+    assert effective_end_at(an, default_days=5) == "2026-08-06 10:00:00"
+
+    updated = store.update_analyzed(
+        an.id,
+        {"end_at": "2026-08-20 18:00:00"},
+        path=msg_db,
+    )
+    assert updated is not None
+    assert updated.end_at == "2026-08-20 18:00:00"
+    assert has_explicit_end_at(updated)
+
+    cleared = store.update_analyzed(an.id, {"end_at": None}, path=msg_db)
+    assert cleared is not None
+    assert cleared.end_at is None
+    assert effective_end_at(cleared, default_days=3) == "2026-08-04 10:00:00"
+
+
+def test_effective_end_at_scheduled(msg_db):
+    from vr.message.dates import effective_at_dt, effective_end_at
+    from vr.message.schemas import AnalyzedMessage
+
+    msg = AnalyzedMessage(
+        id="x",
+        source_id="manual",
+        produced_at="2026-08-01 10:00:00",
+        effective_mode="scheduled",
+        effective_at="2026-08-05 09:00:00",
+    )
+    assert effective_at_dt(msg) == "2026-08-05 09:00:00"
+    assert effective_end_at(msg, default_days=5) == "2026-08-10 09:00:00"
+

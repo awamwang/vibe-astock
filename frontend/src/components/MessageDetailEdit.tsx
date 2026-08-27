@@ -41,6 +41,7 @@ export interface DetailEditDraft {
   produced_at: string;
   effective_mode: "immediate" | "scheduled";
   effective_at: string;
+  end_at: string;
   impact_level: ImpactLevel;
   freshness: Freshness;
   effect_status: EffectStatus;
@@ -81,6 +82,7 @@ export function draftFromMessage(item: AnalyzedMessage): DetailEditDraft {
     produced_at: item.produced_at || "",
     effective_mode: item.effective_mode || "immediate",
     effective_at: item.effective_at || "",
+    end_at: item.end_at || "",
     impact_level: item.impact_level,
     freshness: item.freshness,
     effect_status: item.effect_status,
@@ -103,6 +105,7 @@ export function patchFromDraft(draft: DetailEditDraft): Partial<AnalyzedMessage>
       draft.effective_mode === "scheduled" && draft.effective_at.trim()
         ? draft.effective_at.trim()
         : null,
+    end_at: draft.end_at.trim() ? draft.end_at.trim() : null,
     impact_level: draft.impact_level,
     freshness: draft.freshness,
     effect_status: draft.effect_status,
@@ -300,6 +303,15 @@ export function MessageDetailEdit({
             </Field>
           )}
         </div>
+
+        <Field label="结束时间" hint="留空则按页面默认有效期计算，不写入消息">
+          <input
+            type="datetime-local"
+            className={inputCls}
+            value={toDatetimeLocal(draft.end_at)}
+            onChange={(e) => set("end_at", fromDatetimeLocal(e.target.value))}
+          />
+        </Field>
 
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="级别">

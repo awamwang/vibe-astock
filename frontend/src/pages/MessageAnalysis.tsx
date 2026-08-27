@@ -22,7 +22,8 @@ import {
 } from "@/lib/api";
 import {
   EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL,
-  effectiveAt, formatMarkLabel, keywordHint, monthRange, targetHint, targetTitle,
+  effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
+  monthRange, setDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
@@ -428,6 +429,7 @@ export function MessageAnalysis() {
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState<DetailEditDraft | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -452,6 +454,11 @@ export function MessageAnalysis() {
     setEffectStatuses([]);
     setFollowedFilter([]);
     setFavoritedFilter([]);
+  };
+
+  const onDefaultEndDaysChange = (days: number) => {
+    setDefaultEndDays(days);
+    setDefaultEndDaysState(days);
   };
 
   const loadList = useCallback(async () => {
@@ -1018,6 +1025,26 @@ export function MessageAnalysis() {
               <RotateCcw className="h-3.5 w-3.5" />
               重置筛选
             </button>
+            <div className="ml-auto flex min-w-[220px] max-w-full flex-1 items-center gap-3 sm:flex-none">
+              <label
+                htmlFor="default-end-days"
+                className="shrink-0 text-xs font-semibold text-muted-foreground"
+                title="未设结束时间的消息，在展示与后续计算中按生效时间加 N 天"
+              >
+                默认有效期
+              </label>
+              <input
+                id="default-end-days"
+                type="range"
+                min={1}
+                max={15}
+                step={1}
+                value={defaultEndDays}
+                onChange={(e) => onDefaultEndDaysChange(Number(e.target.value))}
+                className="h-1.5 w-28 min-w-[6rem] flex-1 cursor-pointer accent-[hsl(var(--primary))]"
+              />
+              <span className="w-10 shrink-0 text-xs tabular-nums text-foreground">{defaultEndDays} 天</span>
+            </div>
             {selectedIds.size > 0 && (
               <>
                 <button
@@ -1174,6 +1201,9 @@ export function MessageAnalysis() {
                       <th className="w-32 px-3 py-2.5 text-left align-middle">
                         <span className={sortThLabelCls}>生效时间</span>
                       </th>
+                      <th className="w-32 px-3 py-2.5 text-left align-middle">
+                        <span className={sortThLabelCls}>结束时间</span>
+                      </th>
                       <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[240px] max-w-[360px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="impact_level" label="级别" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
@@ -1208,6 +1238,15 @@ export function MessageAnalysis() {
                           {item.effective_mode === "scheduled" && item.effective_at
                             ? item.effective_at
                             : effectiveAt(item)}
+                        </td>
+                        <td
+                          className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap"
+                          title={hasExplicitEndAt(item) ? undefined : `默认 ${defaultEndDays} 天`}
+                        >
+                          {endAt(item, defaultEndDays)}
+                          {!hasExplicitEndAt(item) && (
+                            <span className="ml-0.5 text-[10px] text-muted-foreground/70">*</span>
+                          )}
                         </td>
                         <td className="px-3 py-3 align-top max-w-[360px]">
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -1453,6 +1492,12 @@ export function MessageAnalysis() {
                       {selected.effective_mode === "scheduled" && selected.effective_at
                         ? selected.effective_at
                         : "立即（回测按产生时间）"}
+                    </dd>
+                    <dt className="text-muted-foreground">结束</dt>
+                    <dd className="font-medium tabular-nums text-foreground">
+                      {hasExplicitEndAt(selected)
+                        ? selected.end_at
+                        : `${endAt(selected, defaultEndDays)}（默认 ${defaultEndDays} 天）`}
                     </dd>
                     <dt className="text-muted-foreground">级别</dt>
                     <dd className="text-foreground">{IMPACT_LABEL[selected.impact_level]}</dd>

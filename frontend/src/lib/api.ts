@@ -292,6 +292,7 @@ export interface AnalyzedMessage {
   detail: string;
   effective_mode: "immediate" | "scheduled";
   effective_at?: string | null;
+  end_at?: string | null;
   produced_at: string;
   targets: ImpactTarget[];
   impact_level: ImpactLevel;
