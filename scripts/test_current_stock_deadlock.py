@@ -1,5 +1,16 @@
-"""验证 current_stock.report 不会死锁。"""
+"""验证 current_stock.report 不会死锁。
+
+推荐：`pytest tests/test_lock_safety.py -q`
+本脚本为同等场景的手动快捷入口。
+"""
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import threading
 
@@ -22,4 +33,6 @@ print("alive", t.is_alive(), "done", done)
 if not t.is_alive():
     print("msg", sub.get(timeout=1.0))
 cs.unsubscribe(sub)
+if t.is_alive():
+    raise SystemExit(1)
 print("OK")

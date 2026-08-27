@@ -20,6 +20,7 @@
 | 文档 | 说明 |
 |------|------|
 | [architecture.md](./development/architecture.md) | 代码分区、数据流、数据落盘、**并发加锁** |
+| [lock-safety.md](./development/lock-safety.md) | **锁安全**：持锁重入、IO 线程、回归测试与静态扫描 |
 | [plugin-development.md](./development/plugin-development.md) | 插件 `HookPack` 写法与 `HookRegistry` API |
 | [hook-lifecycle.md](./development/hook-lifecycle.md) | 钩子加载顺序与事件派发链路 |
 

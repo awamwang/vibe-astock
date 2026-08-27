@@ -1,0 +1,48 @@
+---
+description: 多线程 Lock 安全 — 防持锁重入与 IO 读线程死锁
+globs: "{duanxian,plugins,vr}/**/*.py,server.py"
+alwaysApply: false
+---
+
+# 锁安全（threading.Lock）
+
+本项目用 **非可重入** `threading.Lock`。完整说明见 [doc/development/lock-safety.md](../../doc/development/lock-safety.md)。
+
+## 必须遵守
+
+1. **锁内最小化**：`with _lock:` 内只读写内存；网络、磁盘、钩子、通知 listener 放锁外。
+2. **禁止持锁重入**：在 `with _lock:` 块内 **不要** 调用同模块内也会 `with _lock:` 的函数（如 `get_current`、`to_dict()` 无参、`subscribe` 等）。
+3. **None 语义**：可选参数若 `None` 既是合法值又表示「未传参」，用 sentinel（`_MISSING = object()`），勿用 `None` 作默认。
+4. **IO 读线程只入队**：WebSocket/SSE 读循环里不要同步 `report_*`、`request()`、重 I/O；用 `queue` + worker 线程。
+5. **改锁必补测**：并发路径加 `tests/test_lock_safety.py` 或同类用例（`join(timeout=…)` / `Event.wait(timeout=…)`）。
+
+## 反例 → 正例
+
+```python
+# ❌ _current 为 None 时 to_dict(None) 会 get_current() 再抢锁
+with _lock:
+    snap = to_dict(_current)
+
+# ✅ 锁内只取引用，锁外序列化
+with _lock:
+    rec = _current
+snap = to_dict(rec) if rec is not None else None
+```
+
+```python
+# ❌ WS 读线程里同步处理 push（可能阻塞 recv / request 配对）
+def _reader_loop(self):
+    ...
+    self._dispatch_push(msg)
+
+# ✅ 读线程入队，worker 处理
+def _on_ws_push(self, msg):
+    self._push_queue.put_nowait(msg)
+```
+
+## 提交前检查
+
+```bash
+pytest tests/test_lock_safety.py -q
+python scripts/check_lock_holds.py
+```

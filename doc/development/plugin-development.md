@@ -4,6 +4,8 @@
 
 生命周期与触发顺序见 [hook-lifecycle.md](./hook-lifecycle.md)。
 
+**多线程 / WebSocket 插件**：读线程里不要同步调用 `report_current_stock` 或 `_client.request()`；push 先入队再由 worker 处理。见 [lock-safety.md](./lock-safety.md)。
+
 ---
 
 ## 索引
@@ -30,6 +32,7 @@
 | `override_budget_phase` | [附录 B.3](#b3-override_budget_phase) |
 | `import_watchlist` | [附录 B.4](#b4-import_watchlist) |
 | `report_status` | [附录 B.5](#b5-report_status) |
+| `report_current_stock` | [附录 B.6](#b6-report_current_stock) |
 
 ### 扩展指标
 
@@ -609,6 +612,21 @@ def on_register(reg: HookRegistry) -> None:
 ```
 
 引擎在 **加载失败**、**on_register 失败**、**钩子回调失败** 时也会自动写入状态，无需插件重复上报。
+
+---
+
+### B.6 `report_current_stock` {#b6-report_current_stock}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 上报插件侧 **当前看盘股票**（如同花顺焦点股），供 SSE 推送与消息分析「跟随当前股」等能力读取。 |
+| **调用方式** | `reg.report_current_stock(payload) -> ImportResult`（须在 `on_enable` 内或已 `bind_plugin`） |
+| **对应页面** | 消息分析「跟随当前股」、插件当前股 SSE |
+| **对应 API** | `GET /api/plugins/current-stock`、`GET /api/plugins/current-stock/stream` |
+
+**`payload` 常用字段**：`code`（6 位，必填）、`source`、`prev`、`ths_dir`、`symbol`、`market_id`、`instance_id`。代码未变时返回 `detail="unchanged"`。
+
+**并发注意**：实现位于 `duanxian/current_stock.py`（进程内锁 + SSE 订阅列表）。**不要在 WebSocket 读线程里同步调用**；应入队后由 worker 线程上报。详见 [lock-safety.md](./lock-safety.md)。
 
 ---
 

@@ -139,7 +139,8 @@ hooks.RUNNER.emit_after_review（插件推送）
 1. **锁粒度尽量 module 内私有**，不导出全局锁对象。  
 2. **短临界区**：锁内不做网络 I/O（缓存类 module 在锁外抓取、锁内仅更新 dict）。  
 3. **单飞 / 防丢更新**：长时间刷新用 `acquire(blocking=False)` 或独立 `_BG_LOCK` 避免并发覆盖。  
-4. **SQLite**：`message/store` 使用 WAL + `timeout=30`，应用层再用 `RLock` 串行化复合操作。
+4. **SQLite**：`message/store` 使用 WAL + `timeout=30`，应用层再用 `RLock` 串行化复合操作。  
+5. **持锁重入与 IO 线程**：非可重入 `Lock` 禁止在 `with lock:` 内再调同模块带锁函数；WebSocket 读线程只入队。详见 [lock-safety.md](./lock-safety.md)。
 
 ### 6.1 锁一览
 
@@ -217,6 +218,7 @@ with lock: 写入缓存
 | 文档 | 说明 |
 |------|------|
 | [plugin-development.md](./plugin-development.md) | 插件 API |
+| [lock-safety.md](./lock-safety.md) | 锁安全、死锁回归测试、静态扫描 |
 | [hook-lifecycle.md](./hook-lifecycle.md) | 钩子加载与派发顺序 |
 | [todo/架构加深-后续.md](./todo/架构加深-后续.md) | 架构演进 backlog |
 | [research/](./research/) | AI / 情绪判定等调研 |
