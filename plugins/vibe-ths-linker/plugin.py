@@ -256,8 +256,10 @@ class ThsLinkerBridge:
         self._last_risk_sig: str | None = None
         self._ready = False
         self._pending_pushes: list[dict] = []
+        self._push_queue: queue.Queue[dict | None] = queue.Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._push_thread: threading.Thread | None = None
 
     def start(self) -> None:
         self._client.connect()
@@ -285,6 +287,8 @@ class ThsLinkerBridge:
             print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
         self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
         self._thread.start()
+        self._push_thread = threading.Thread(target=self._push_worker, name="ths-linker-push", daemon=True)
+        self._push_thread.start()
         detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
         print(f"[vibe-ths-linker] 已绑定实例 {detail}")
         self._reg.report_status("ok", "已连接 ths-linker", detail)
@@ -292,7 +296,14 @@ class ThsLinkerBridge:
     def stop(self) -> None:
         self._stop.set()
         self._ready = False
+        try:
+            self._push_queue.put_nowait(None)
+        except queue.Full:
+            pass
         self._client.close()
+        if self._push_thread is not None and self._push_thread.is_alive():
+            self._push_thread.join(timeout=3.0)
+        self._push_thread = None
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=3.0)
         self._thread = None
@@ -349,13 +360,34 @@ class ThsLinkerBridge:
         if not self._ready:
             self._pending_pushes.append(msg)
             return
-        self._dispatch_push(msg)
+        try:
+            self._push_queue.put_nowait(msg)
+        except queue.Full:
+            print("⚠️ [vibe-ths-linker] 推送队列已满，丢弃一条 stock/trade push")
+
+    def _push_worker(self) -> None:
+        while not self._stop.is_set():
+            try:
+                msg = self._push_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if msg is None:
+                break
+            try:
+                self._dispatch_push(msg)
+            except Exception as exc:  # noqa: BLE001
+                err = f"{type(exc).__name__}: {exc}"
+                print(f"⚠️ [vibe-ths-linker] 推送处理失败：{err}")
+                traceback.print_exc()
 
     def _flush_pending_pushes(self) -> None:
         pending = self._pending_pushes
         self._pending_pushes = []
         for msg in pending:
-            self._dispatch_push(msg)
+            try:
+                self._push_queue.put_nowait(msg)
+            except queue.Full:
+                print("⚠️ [vibe-ths-linker] 推送队列已满，丢弃一条待处理 push")
 
     def _dispatch_push(self, msg: dict) -> None:
         mtype = msg.get("type")

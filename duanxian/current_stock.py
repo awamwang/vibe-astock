@@ -17,6 +17,7 @@ _LEGACY_STATE_FILE = _STATE_DIR / "ths-linker-current.json"
 _lock = threading.Lock()
 _current: CurrentStock | None = None
 _listeners: list[queue.Queue[dict[str, Any] | None]] = []
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,8 @@ def subscribe() -> queue.Queue[dict[str, Any] | None]:
     q: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=8)
     with _lock:
         _listeners.append(q)
-        snap = to_dict(_current)
+        rec = _current
+    snap = to_dict(rec) if rec is not None else None
     if snap:
         try:
             q.put_nowait(snap)
@@ -118,8 +120,8 @@ def get_current() -> CurrentStock | None:
         return _current
 
 
-def to_dict(st: CurrentStock | None = None) -> dict[str, Any] | None:
-    rec = st if st is not None else get_current()
+def to_dict(st: CurrentStock | None = _MISSING) -> dict[str, Any] | None:  # type: ignore[assignment]
+    rec = get_current() if st is _MISSING else st
     if rec is None:
         return None
     out: dict[str, Any] = {
