@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -154,6 +154,8 @@ export function ZtKeywordsSettings() {
   const [aliasLoading, setAliasLoading] = useState(true);
   const [aliasDraft, setAliasDraft] = useState({ alias: "", canonical: "" });
   const [aliasSaving, setAliasSaving] = useState(false);
+  const [aliasEditingKey, setAliasEditingKey] = useState<string | null>(null);
+  const [aliasEditDraft, setAliasEditDraft] = useState({ alias: "", canonical: "", type: "" });
 
   const [pendingItems, setPendingItems] = useState<BlockPendingItem[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
@@ -560,7 +562,56 @@ export function ZtKeywordsSettings() {
   };
 
   const removeAlias = async (alias: string) => {
+    if (aliasEditingKey === alias) {
+      setAliasEditingKey(null);
+      setAliasEditDraft({ alias: "", canonical: "", type: "" });
+    }
     const next = aliasEntries.filter((e) => e.alias !== alias);
+    await persistAliases(next);
+  };
+
+  const startEditAlias = (row: ThemeAliasEntry) => {
+    setAliasEditingKey(row.alias);
+    setAliasEditDraft({
+      alias: row.alias,
+      canonical: row.canonical,
+      type: row.type.trim(),
+    });
+  };
+
+  const cancelEditAlias = () => {
+    setAliasEditingKey(null);
+    setAliasEditDraft({ alias: "", canonical: "", type: "" });
+  };
+
+  const saveEditAlias = async () => {
+    if (!aliasEditingKey) return;
+    const alias = aliasEditDraft.alias.replace(/\s+/g, "").trim();
+    const canonical = aliasEditDraft.canonical.replace(/\s+/g, "").trim();
+    const type = aliasEditDraft.type.replace(/\s+/g, "").trim();
+    if (!alias || !canonical) {
+      toast.error("请填写别名与标准板块");
+      return;
+    }
+    if (alias.length > 20 || canonical.length > 20) {
+      toast.error("板块名不超过 20 个字");
+      return;
+    }
+    if (alias === canonical) {
+      toast.error("别名与标准板块不能相同");
+      return;
+    }
+    if (aliasEntries.some((e) => e.alias === alias && e.alias !== aliasEditingKey)) {
+      toast.error("该别名已存在");
+      return;
+    }
+    const next = sortAliasEntries(
+      aliasEntries.map((e) =>
+        e.alias === aliasEditingKey ? { alias, canonical, type } : e,
+      ),
+    );
+    setAliasEditingKey(null);
+    setAliasEditDraft({ alias: "", canonical: "", type: "" });
     await persistAliases(next);
   };
 
@@ -859,32 +910,104 @@ export function ZtKeywordsSettings() {
           <p className="mb-3 text-xs text-muted-foreground">暂无别名，可在下方添加。</p>
         ) : (
           <div className="mb-4 space-y-1.5">
-            {aliasEntries.map((row) => (
-              <div
-                key={row.alias}
-                className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-2 py-1.5 text-xs font-medium"
-              >
-                <span className="text-foreground">{row.alias}</span>
-                <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span className="text-primary">{row.canonical}</span>
-                <span className="text-muted-foreground">类型</span>
-                <span
-                  className="inline-block min-w-[2rem] rounded border border-dashed border-border/60 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
-                  title="类型标记"
+            {aliasEntries.map((row) => {
+              const editing = aliasEditingKey === row.alias;
+              return (
+                <div
+                  key={row.alias}
+                  className={cn(
+                    "flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-xs font-medium",
+                    editing
+                      ? "border-primary/50 bg-black/20"
+                      : "border-primary/30 bg-primary/10",
+                  )}
                 >
-                  {row.type.trim() || "—"}
-                </span>
-                <button
-                  type="button"
-                  disabled={aliasSaving}
-                  onClick={() => void removeAlias(row.alias)}
-                  className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
-                  title={`删除「${row.alias}」`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                  {editing ? (
+                    <>
+                      <input
+                        value={aliasEditDraft.alias}
+                        onChange={(e) => setAliasEditDraft((d) => ({ ...d, alias: e.target.value }))}
+                        maxLength={20}
+                        disabled={aliasSaving}
+                        placeholder="别名"
+                        className="min-w-[5rem] flex-1 rounded border border-border bg-black/30 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
+                      />
+                      <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <input
+                        value={aliasEditDraft.canonical}
+                        onChange={(e) => setAliasEditDraft((d) => ({ ...d, canonical: e.target.value }))}
+                        maxLength={20}
+                        disabled={aliasSaving}
+                        placeholder="标准板块"
+                        className="min-w-[5rem] flex-1 rounded border border-border bg-black/30 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
+                      />
+                      <span className="text-muted-foreground">类型</span>
+                      <input
+                        value={aliasEditDraft.type}
+                        onChange={(e) => setAliasEditDraft((d) => ({ ...d, type: e.target.value }))}
+                        maxLength={10}
+                        disabled={aliasSaving}
+                        placeholder="可选"
+                        className="w-16 rounded border border-border bg-black/30 px-2 py-1 text-[10px] font-normal outline-none focus:border-primary/50 disabled:opacity-50"
+                      />
+                      <div className="ml-auto flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={aliasSaving}
+                          onClick={() => void saveEditAlias()}
+                          className="rounded p-0.5 text-primary hover:bg-primary/20 disabled:opacity-50"
+                          title="保存修改"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={aliasSaving}
+                          onClick={cancelEditAlias}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
+                          title="取消编辑"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-foreground">{row.alias}</span>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <span className="text-primary">{row.canonical}</span>
+                      <span className="text-muted-foreground">类型</span>
+                      <span
+                        className="inline-block min-w-[2rem] rounded border border-dashed border-border/60 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
+                        title="类型标记"
+                      >
+                        {row.type.trim() || "—"}
+                      </span>
+                      <div className="ml-auto flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={aliasSaving || aliasEditingKey != null}
+                          onClick={() => startEditAlias(row)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-primary disabled:opacity-50"
+                          title={`编辑「${row.alias}」`}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={aliasSaving || aliasEditingKey != null}
+                          onClick={() => void removeAlias(row.alias)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
+                          title={`删除「${row.alias}」`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -902,7 +1025,7 @@ export function ZtKeywordsSettings() {
               }}
               maxLength={20}
               placeholder="如：中报预增"
-              disabled={aliasSaving}
+              disabled={aliasSaving || aliasEditingKey != null}
               className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
             />
           </div>
@@ -919,14 +1042,14 @@ export function ZtKeywordsSettings() {
               }}
               maxLength={20}
               placeholder="如：中报增长"
-              disabled={aliasSaving}
+              disabled={aliasSaving || aliasEditingKey != null}
               className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
             />
           </div>
           <button
             type="button"
             onClick={() => void addAlias()}
-            disabled={aliasSaving}
+            disabled={aliasSaving || aliasEditingKey != null}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
           >
             <Plus className="h-4 w-4" /> 添加
