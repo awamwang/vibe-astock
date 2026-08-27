@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import threading
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -662,6 +663,8 @@ def apply_plugin_enable(plugin_id: str) -> LoadedPlugin | None:
     from . import plugin_status as ps
     from . import plugin_store as pstore
 
+    _plugins_init_done.wait(timeout=120.0)
+
     if _find_loaded_plugin(PLUGINS, plugin_id) is not None:
         return _find_loaded_plugin(PLUGINS, plugin_id)
 
@@ -703,4 +706,23 @@ def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
     return plugins, registry, runner
 
 
-PLUGINS, REGISTRY, RUNNER = _init()
+PLUGINS: list[LoadedPlugin] = []
+REGISTRY = HookRegistry()
+RUNNER = HookRunner(PLUGINS, REGISTRY)
+_plugins_init_done = threading.Event()
+
+
+def _init_plugins_background() -> None:
+    global REGISTRY, RUNNER
+    try:
+        plugins, registry, runner = _init()
+        PLUGINS[:] = plugins
+        REGISTRY = registry
+        RUNNER = runner
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    finally:
+        _plugins_init_done.set()
+
+
+threading.Thread(target=_init_plugins_background, name="hook-plugins-init", daemon=True).start()

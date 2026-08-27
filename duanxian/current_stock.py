@@ -71,9 +71,9 @@ def report(plugin_id: str, payload: dict) -> CurrentStock | None:
             instance_id=str(inst).strip() if inst is not None and str(inst).strip() else None,
         )
         _current = rec
-        _persist_legacy(rec)
-        _notify_listeners(to_dict(rec))
-        return rec
+    _persist_legacy(rec)
+    _notify_listeners(to_dict(rec))
+    return rec
 
 
 def subscribe() -> queue.Queue[dict[str, Any] | None]:

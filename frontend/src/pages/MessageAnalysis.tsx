@@ -438,9 +438,11 @@ function FollowStockHint({
       : code
     : status === "connecting"
       ? "连接中…"
-      : status === "error"
-        ? error || "未连接"
-        : "等待插件…";
+      : status === "connected"
+        ? "等待焦点股…"
+        : status === "error"
+          ? error || "未连接"
+          : "等待插件…";
   return (
     <span className="relative inline-block min-w-[9.5rem] align-middle text-xs font-normal">
       <span className="invisible whitespace-nowrap" aria-hidden>

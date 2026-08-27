@@ -1551,6 +1551,11 @@ async def api_plugins_current_stock_stream():
 
     async def gen():
         try:
+            snap = cs.to_dict()
+            if snap:
+                yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+            else:
+                yield ": ready\n\n"
             while True:
                 try:
                     data = await asyncio.to_thread(sub.get, True, 25.0)

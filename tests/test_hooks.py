@@ -244,7 +244,7 @@ class TestHookRegistryImport:
         assert data3["prev"] == "600000"
 
     def test_current_stock_subscribe_notify(self):
-        import queue
+        import threading
 
         from duanxian import current_stock as cs
         from duanxian.hooks import HookRegistry
@@ -253,7 +253,19 @@ class TestHookRegistryImport:
         sub = cs.subscribe()
         reg = HookRegistry()
         reg.bind_plugin("plug0002")
-        reg.report_current_stock({"code": "600519", "source": "push"})
+        err: list[Exception] = []
+
+        def _report() -> None:
+            try:
+                reg.report_current_stock({"code": "600519", "source": "push"})
+            except Exception as exc:  # noqa: BLE001
+                err.append(exc)
+
+        t = threading.Thread(target=_report)
+        t.start()
+        t.join(timeout=2.0)
+        assert not t.is_alive(), "report_current_stock 死锁"
+        assert not err
         msg = sub.get(timeout=1.0)
         assert msg is not None
         assert msg["code"] == "600519"
