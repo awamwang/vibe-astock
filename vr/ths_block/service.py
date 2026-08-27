@@ -303,7 +303,14 @@ def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
         snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
         if not snapshot["kinds"] and snapshot["errors"]:
             raise RuntimeError("；".join(snapshot["errors"]))
-        return cache.set_snapshot(snapshot)
+        snapshot = cache.set_snapshot(snapshot)
+        try:
+            from .processor import invalidate_index
+
+            invalidate_index()
+        except Exception:  # noqa: BLE001
+            pass
+        return snapshot
 
 
 def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
@@ -334,7 +341,14 @@ def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
             "kinds": kinds_data,
             "errors": errors,
         }
-        return cache.set_snapshot(snapshot)
+        snapshot = cache.set_snapshot(snapshot)
+        try:
+            from .processor import invalidate_index
+
+            invalidate_index()
+        except Exception:  # noqa: BLE001
+            pass
+        return snapshot
 
 
 def get_snapshot() -> dict[str, Any]:

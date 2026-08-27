@@ -674,10 +674,17 @@ export const api = {
   backupImportZip: (contentB64: string) =>
     request<BackupImportResult>("/backup/import", "POST", { content_b64: contentB64 }),
   themeAliases: () => get<ThemeAliasConfig>("/config/theme-aliases"),
-  saveThemeAliases: (aliases: Record<string, string>) =>
-    request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases", "POST", { aliases }),
+  saveThemeAliases: (entries: ThemeAliasEntry[]) =>
+    request<ThemeAliasSaveResult>("/config/theme-aliases", "POST", { entries }),
   resetThemeAliases: () =>
-    request<{ aliases: Record<string, string>; count: number }>("/config/theme-aliases/reset", "POST", {}),
+    request<ThemeAliasSaveResult>("/config/theme-aliases/reset", "POST", {}),
+  blockPending: () => get<BlockPendingConfig>("/config/block-pending"),
+  saveBlockPendingAlias: (alias: string, canonical: string) =>
+    request<ThemeAliasSaveResult>(
+      "/config/block-pending/save-alias",
+      "POST",
+      { alias, canonical },
+    ),
   ztKeywords: () => get<ZtKeywordConfig>("/config/zt-keywords"),
   saveZtKeywords: (keywords: string[]) =>
     request<{ keywords: string[]; count: number }>("/config/zt-keywords", "POST", { keywords }),
@@ -905,13 +912,44 @@ export interface ThsBlockStocksDetail {
 export interface ThemeAliasEntry {
   alias: string;
   canonical: string;
+  type: string;
 }
 export interface ThemeAliasConfig {
   schema: number;
   aliases: Record<string, string>;
+  types?: Record<string, string>;
   entries: ThemeAliasEntry[];
   path: string;
   defaults: Record<string, string>;
+}
+export interface ThemeAliasSaveResult {
+  aliases: Record<string, string>;
+  types: Record<string, string>;
+  entries: ThemeAliasEntry[];
+  count: number;
+}
+export interface BlockPendingCandidate {
+  kind: string;
+  kind_label: string;
+  id: string;
+  name: string;
+}
+export interface BlockPendingItem {
+  raw: string;
+  mapped: string;
+  status: "partial" | "unmatched";
+  candidates: BlockPendingCandidate[];
+  sources: string[];
+  source_labels: string[];
+  sort_rank: number;
+  hit_count: number;
+  updated_at: string;
+}
+export interface BlockPendingConfig {
+  count: number;
+  items: BlockPendingItem[];
+  source_labels: Record<string, string>;
+  updated_at: string;
 }
 export interface TradePhaseConfigRow {
   phase: string;

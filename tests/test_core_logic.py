@@ -4500,8 +4500,22 @@ class TestThemeNormalize:
         cfg = tmp_path / "theme_aliases.json"
         monkeypatch.setattr("duanxian.theme_normalize._CONFIG_PATH", str(cfg))
         monkeypatch.setattr("duanxian.theme_normalize._ALIASES", None)
+        monkeypatch.setattr("duanxian.theme_normalize._ALIAS_TYPES", None)
         with pytest.raises(ThemeAliasError, match="环"):
             save_aliases({"A": "B", "B": "A"})
+
+    def test_alias_type_persisted(self, tmp_path, monkeypatch):
+        from duanxian import theme_normalize as tn
+
+        cfg = tmp_path / "theme_aliases.json"
+        monkeypatch.setattr(tn, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(tn, "_ALIASES", None)
+        monkeypatch.setattr(tn, "_ALIAS_TYPES", None)
+        tn.save_aliases({"旧名": "新名"}, {"旧名": "概念"})
+        exported = tn.export_config()
+        assert exported["entries"] == [{"alias": "旧名", "canonical": "新名", "type": "概念"}]
+        assert tn.load_alias_types()["旧名"] == "概念"
+        assert tn.canonicalize_tag("旧名") == "新名"
 
     def test_config_api_wired(self):
         from pathlib import Path
@@ -4516,7 +4530,9 @@ class TestThemeNormalize:
         assert "/api/config/zt-keywords" in be
         assert "/config/trade-phases" in fe
         assert "/api/config/trade-phases" in be
-        assert "题材别名" in page
+        assert "板块别名" in page
+        assert "type: string" in fe
+        assert "row.type" in page
         assert "上涨关键词" in page
         assert "仓位预算档位" in page
         assert "整体仓位" in page

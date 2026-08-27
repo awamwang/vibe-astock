@@ -308,7 +308,9 @@ def radar_refresh():
 def market_overview():
     """市场情绪 + 板块资金流（板块/大盘级，全站共享缓存 5 分钟）。"""
     try:
-        return {"data": market.get_overview()}
+        data = market.get_overview()
+        ths_block_layer.feed_overview(data)
+        return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"市场总览异常：{e}") from e
 
@@ -321,7 +323,9 @@ def market_emotion():
     只呈现事实，不附推荐/评分/预测/买卖时机。全站共享缓存 5 分钟。
     """
     try:
-        return {"data": market.get_short_term_emotion()}
+        data = market.get_short_term_emotion()
+        ths_block_layer.feed_emotion(data)
+        return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"短线情绪异常：{e}") from e
 
@@ -346,7 +350,9 @@ def market_first_board():
     客观公开榜单数据（东财涨停池同款），只呈现事实，不附推荐/评分/预测/买卖时机。缓存 10 分钟。
     """
     try:
-        return {"data": firstboard.get_limit_up()}
+        data = firstboard.get_limit_up()
+        ths_block_layer.feed_firstboard(data)
+        return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"首板数据异常：{e}") from e
 
@@ -877,7 +883,9 @@ def messages_analyzed_list(
         offset=offset,
     )
     rows, total = msg_layer.store.list_analyzed(query)
-    return {"data": {"items": [r.model_dump() for r in rows], "total": total}}
+    items = [r.model_dump() for r in rows]
+    ths_block_layer.feed_message_targets(items)
+    return {"data": {"items": items, "total": total}}
 
 
 @app.get("/api/messages/analyzed/{analyzed_id}")

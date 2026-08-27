@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -13,7 +13,7 @@ import {
   removeMessageFollowKeyword,
   setMessageFollowKeywordsCache,
 } from "@/lib/message-follow-keywords";
-import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig } from "@/lib/api";
+import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem } from "@/lib/api";
 
 type ConfigSectionId =
   | "zt-keywords"
@@ -31,7 +31,7 @@ const CONFIG_SECTIONS: {
 }[] = [
   { id: "zt-keywords", label: "上涨关键词", icon: Tags, hint: "首板深入分析闭集标签" },
   { id: "message-follow", label: "消息关注词", icon: Eye, hint: "消息分析命中筛选" },
-  { id: "theme-aliases", label: "题材别名", icon: GitMerge, hint: "统计时别名合并" },
+  { id: "theme-aliases", label: "板块别名", icon: GitMerge, hint: "统计时别名合并" },
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
   { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
   { id: "trade-phases", label: "仓位预算档位", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
@@ -45,9 +45,27 @@ function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   });
 }
 
-function entriesFromAliases(aliases: Record<string, string>): ThemeAliasEntry[] {
+function normalizeAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
   return sortAliasEntries(
-    Object.entries(aliases).map(([alias, canonical]) => ({ alias, canonical })),
+    entries.map((e) => ({
+      alias: e.alias,
+      canonical: e.canonical,
+      type: (e.type ?? "").trim(),
+    })),
+  );
+}
+
+function entriesFromConfig(cfg: { entries?: ThemeAliasEntry[]; aliases?: Record<string, string>; types?: Record<string, string> }): ThemeAliasEntry[] {
+  if (cfg.entries?.length) {
+    return normalizeAliasEntries(cfg.entries);
+  }
+  const types = cfg.types || {};
+  return normalizeAliasEntries(
+    Object.entries(cfg.aliases || {}).map(([alias, canonical]) => ({
+      alias,
+      canonical,
+      type: types[alias] ?? "",
+    })),
   );
 }
 
@@ -137,6 +155,11 @@ export function ZtKeywordsSettings() {
   const [aliasDraft, setAliasDraft] = useState({ alias: "", canonical: "" });
   const [aliasSaving, setAliasSaving] = useState(false);
 
+  const [pendingItems, setPendingItems] = useState<BlockPendingItem[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pendingDrafts, setPendingDrafts] = useState<Record<string, string>>({});
+  const [pendingSavingKey, setPendingSavingKey] = useState("");
+
   const [phaseDrafts, setPhaseDrafts] = useState<PhaseDraft[]>([]);
   const [phaseLoading, setPhaseLoading] = useState(true);
   const [phaseSaving, setPhaseSaving] = useState(false);
@@ -197,13 +220,39 @@ export function ZtKeywordsSettings() {
     (async () => {
       try {
         const cfg = await api.themeAliases();
-        if (!cancelled) setAliasEntries(entriesFromAliases(cfg.aliases || {}));
+        if (!cancelled) setAliasEntries(entriesFromConfig(cfg));
       } catch (e) {
         if (!cancelled) {
-          toast.error(e instanceof Error ? e.message : "读取题材别名失败");
+          toast.error(e instanceof Error ? e.message : "读取板块别名失败");
         }
       } finally {
         if (!cancelled) setAliasLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.blockPending();
+        if (!cancelled) {
+          const items = cfg.items || [];
+          setPendingItems(items);
+          const drafts: Record<string, string> = {};
+          for (const row of items) {
+            const key = row.mapped || row.raw;
+            drafts[key] = row.candidates[0]?.name || row.mapped || "";
+          }
+          setPendingDrafts(drafts);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取待匹配板块失败");
+        }
+      } finally {
+        if (!cancelled) setPendingLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -386,12 +435,11 @@ export function ZtKeywordsSettings() {
   };
 
   const persistAliases = async (next: ThemeAliasEntry[]) => {
-    const aliases = Object.fromEntries(next.map((e) => [e.alias, e.canonical]));
     setAliasSaving(true);
     try {
-      const r = await api.saveThemeAliases(aliases);
-      setAliasEntries(entriesFromAliases(r.aliases));
-      toast.success("题材别名已保存");
+      const r = await api.saveThemeAliases(next);
+      setAliasEntries(entriesFromConfig(r));
+      toast.success("板块别名已保存");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -488,22 +536,22 @@ export function ZtKeywordsSettings() {
     const alias = aliasDraft.alias.replace(/\s+/g, "").trim();
     const canonical = aliasDraft.canonical.replace(/\s+/g, "").trim();
     if (!alias || !canonical) {
-      toast.error("请填写别名与标准题材");
+      toast.error("请填写别名与标准板块");
       return;
     }
     if (alias.length > 20 || canonical.length > 20) {
-      toast.error("题材名不超过 20 个字");
+      toast.error("板块名不超过 20 个字");
       return;
     }
     if (alias === canonical) {
-      toast.error("别名与标准题材不能相同");
+      toast.error("别名与标准板块不能相同");
       return;
     }
     if (aliasEntries.some((e) => e.alias === alias)) {
       toast.error("该别名已存在");
       return;
     }
-    const next = sortAliasEntries([...aliasEntries, { alias, canonical }]);
+    const next = sortAliasEntries([...aliasEntries, { alias, canonical, type: "" }]);
     setAliasDraft({ alias: "", canonical: "" });
     await persistAliases(next);
   };
@@ -559,8 +607,8 @@ export function ZtKeywordsSettings() {
     setAliasSaving(true);
     try {
       const r = await api.resetThemeAliases();
-      setAliasEntries(entriesFromAliases(r.aliases));
-      toast.success("已恢复默认题材别名");
+      setAliasEntries(entriesFromConfig(r));
+      toast.success("已恢复默认板块别名");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "恢复失败");
     } finally {
@@ -568,11 +616,40 @@ export function ZtKeywordsSettings() {
     }
   };
 
+  const savePendingRow = async (row: BlockPendingItem) => {
+    const key = row.mapped || row.raw;
+    const alias = row.raw.replace(/\s+/g, "").trim();
+    const canonical = (pendingDrafts[key] || "").replace(/\s+/g, "").trim();
+    if (!alias || !canonical) {
+      toast.error("请填写标准板块");
+      return;
+    }
+    if (alias.length > 20 || canonical.length > 20) {
+      toast.error("板块名不超过 20 个字");
+      return;
+    }
+    if (alias === canonical) {
+      toast.error("别名与标准板块不能相同");
+      return;
+    }
+    setPendingSavingKey(key);
+    try {
+      const r = await api.saveBlockPendingAlias(alias, canonical);
+      setAliasEntries(entriesFromConfig(r));
+      setPendingItems((items) => items.filter((it) => (it.mapped || it.raw) !== key));
+      toast.success(`已保存「${alias} → ${canonical}」`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setPendingSavingKey("");
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、消息关注词、题材别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
+        subtitle="上涨关键词、消息关注词、板块别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -765,37 +842,44 @@ export function ZtKeywordsSettings() {
           {activeSection === "theme-aliases" && (
       <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <GitMerge className="h-4 w-4 text-primary" /> 题材别名
+          <GitMerge className="h-4 w-4 text-primary" /> 板块别名
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          存于本机后端数据目录。统计题材涨停数（题材事件树、多日情绪矩阵等）时，
-          把左侧别名合并到右侧标准题材；只走显式映射，不做模糊或语义归类。
+          存于本机后端数据目录。统计板块涨停数（题材事件树、多日情绪矩阵等）时，
+          把左侧别名合并到右侧标准板块；只走显式映射，不做模糊或语义归类。
         </p>
 
         {aliasLoading ? (
-          <p className="text-xs text-muted-foreground">正在读取题材别名…</p>
+          <p className="text-xs text-muted-foreground">正在读取板块别名…</p>
         ) : aliasEntries.length === 0 ? (
           <p className="mb-3 text-xs text-muted-foreground">暂无别名，可在下方添加。</p>
         ) : (
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 space-y-1.5">
             {aliasEntries.map((row) => (
-              <span
+              <div
                 key={row.alias}
-                className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium"
+                className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-2 py-1.5 text-xs font-medium"
               >
                 <span className="text-foreground">{row.alias}</span>
                 <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
                 <span className="text-primary">{row.canonical}</span>
+                <span className="text-muted-foreground">类型</span>
+                <span
+                  className="inline-block min-w-[2rem] rounded border border-dashed border-border/60 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
+                  title="类型标记"
+                >
+                  {row.type.trim() || "—"}
+                </span>
                 <button
                   type="button"
                   disabled={aliasSaving}
                   onClick={() => void removeAlias(row.alias)}
-                  className="rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
+                  className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
                   title={`删除「${row.alias}」`}
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
-              </span>
+              </div>
             ))}
           </div>
         )}
@@ -819,7 +903,7 @@ export function ZtKeywordsSettings() {
             />
           </div>
           <div className="min-w-[8rem] flex-1">
-            <label className="mb-1 block text-[11px] text-muted-foreground">标准题材</label>
+            <label className="mb-1 block text-[11px] text-muted-foreground">标准板块</label>
             <input
               value={aliasDraft.canonical}
               onChange={(e) => setAliasDraft((d) => ({ ...d, canonical: e.target.value }))}
@@ -851,6 +935,97 @@ export function ZtKeywordsSettings() {
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认
           </button>
+        </div>
+
+        <div className="mt-6 border-t border-border/60 pt-4">
+          <h4 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+            <AlertCircle className="h-4 w-4 text-amber-500" /> 待匹配板块
+          </h4>
+          <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+            各业务页加载时自动收集未能完全匹配同花顺板块的名称。可部分匹配的会列出候选板块；
+            保存后将写入上方板块别名表。
+          </p>
+
+          {pendingLoading ? (
+            <p className="text-xs text-muted-foreground">正在读取待匹配列表…</p>
+          ) : pendingItems.length === 0 ? (
+            <p className="text-xs text-muted-foreground">暂无待匹配项（请先访问短线盘面、涨停分析等页面以收集）。</p>
+          ) : (
+            <div className="space-y-2">
+              {pendingItems.map((row) => {
+                const key = row.mapped || row.raw;
+                const saving = pendingSavingKey === key;
+                return (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-border/50 bg-black/10 px-3 py-2.5"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs font-medium">
+                        <span className="text-foreground">{row.raw}</span>
+                        {row.mapped !== row.raw && (
+                          <>
+                            <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            <span className="text-muted-foreground">{row.mapped}</span>
+                          </>
+                        )}
+                      </span>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <input
+                        value={pendingDrafts[key] ?? ""}
+                        onChange={(e) =>
+                          setPendingDrafts((d) => ({ ...d, [key]: e.target.value }))
+                        }
+                        maxLength={20}
+                        disabled={saving}
+                        placeholder="标准板块"
+                        className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void savePendingRow(row)}
+                        disabled={saving || aliasSaving}
+                        className="inline-flex items-center gap-1 rounded-lg bg-primary/15 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+                      >
+                        <Save className="h-3 w-3" /> 保存
+                      </button>
+                      <span className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        row.status === "partial"
+                          ? "bg-amber-500/15 text-amber-600"
+                          : "bg-muted/40 text-muted-foreground",
+                      )}>
+                        {row.status === "partial" ? "部分匹配" : "未匹配"}
+                      </span>
+                    </div>
+                    {row.candidates.length > 0 && (
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        候选：
+                        {row.candidates.map((c, i) => (
+                          <button
+                            key={`${c.kind}-${c.id}`}
+                            type="button"
+                            className="ml-1 text-primary hover:underline"
+                            onClick={() =>
+                              setPendingDrafts((d) => ({ ...d, [key]: c.name }))
+                            }
+                          >
+                            {c.name}
+                            <span className="text-muted-foreground">({c.kind_label})</span>
+                            {i < row.candidates.length - 1 ? "、" : ""}
+                          </button>
+                        ))}
+                      </p>
+                    )}
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      来源：{(row.source_labels || []).join("、") || "—"}
+                      {row.hit_count > 1 ? ` · 命中 ${row.hit_count} 次` : ""}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </GlassCard>
           )}

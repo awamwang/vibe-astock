@@ -88,6 +88,26 @@ app = FastAPI(title="短线每日复盘", lifespan=_lifespan)
 
 from duanxian import vr_host as _vr_host
 
+
+def _feed_mood_blocks(payload: dict | None) -> None:
+    try:
+        _vr_host._add_vr_to_path()
+        from ths_block.processor import feed_mood_blocks
+
+        feed_mood_blocks(payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _feed_review_blocks(market_facts: dict | None) -> None:
+    try:
+        _vr_host._add_vr_to_path()
+        from ths_block.processor import feed_review
+
+        feed_review(market_facts)
+    except Exception:  # noqa: BLE001
+        pass
+
 _alert = _vr_host._alert
 _merge_vr_routes = _vr_host._merge_vr_routes
 _guard_vr_userdata = _vr_host._guard_vr_userdata
@@ -371,7 +391,9 @@ def api_market_mood_blocks():
 
     对齐 awam-stock MoodBlockItem：人气 / 涨跌幅 / 主力净额 / 涨速；涨停家数合并 PlateAnalysis。
     """
-    return mood_block.snapshot()
+    data = mood_block.snapshot()
+    _feed_mood_blocks(data)
+    return data
 
 
 @app.get("/api/market/overseas")
@@ -420,6 +442,7 @@ def api_latest(date: Optional[str] = None):
         payload["scoreboard"] = reflection.scoreboard()
     except Exception as exc:  # noqa: BLE001  战绩算不出来不该让整个复盘打不开
         print(f"⚠️ 战绩统计失败：{type(exc).__name__}: {exc}")
+    _feed_review_blocks(payload.get("market_facts"))
     return JSONResponse(payload)
 
 
@@ -1049,6 +1072,21 @@ def _backup_guard(request: Request):
     return None
 
 
+def _theme_alias_payload(saved: dict[str, str]) -> dict:
+    from duanxian.theme_normalize import load_alias_types
+
+    types = load_alias_types()
+    return {
+        "aliases": saved,
+        "types": types,
+        "entries": [
+            {"alias": a, "canonical": c, "type": types.get(a, "")}
+            for a, c in sorted(saved.items())
+        ],
+        "count": len(saved),
+    }
+
+
 @app.get("/api/config/theme-aliases")
 def api_theme_aliases_get():
     """读取题材别名配置（涨停统计归一用）。"""
@@ -1062,16 +1100,34 @@ def api_theme_aliases_save(body: dict = Body(...)):
     """保存题材别名表。"""
     from duanxian.theme_normalize import ThemeAliasError, save_aliases
 
-    raw = (body or {}).get("aliases")
-    if not isinstance(raw, dict):
-        return JSONResponse({"error": "aliases 须为对象", "detail": "aliases 须为对象"}, status_code=400)
+    body = body or {}
+    raw_entries = body.get("entries")
+    raw_aliases = body.get("aliases")
+    aliases: dict[str, str] = {}
+    types: dict[str, str] = {}
+    if isinstance(raw_entries, list):
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                continue
+            alias = str(item.get("alias") or "").replace(" ", "").strip()
+            canonical = str(item.get("canonical") or "").replace(" ", "").strip()
+            if alias and canonical:
+                aliases[alias] = canonical
+                types[alias] = str(item.get("type") or "").strip()
+    elif isinstance(raw_aliases, dict):
+        aliases = {str(k): str(v) for k, v in raw_aliases.items()}
+        raw_types = body.get("types")
+        if isinstance(raw_types, dict):
+            types = {str(k): str(v) for k, v in raw_types.items()}
+    else:
+        return JSONResponse({"error": "entries 或 aliases 须为合法对象", "detail": "entries 或 aliases 须为合法对象"}, status_code=400)
     try:
-        saved = save_aliases({str(k): str(v) for k, v in raw.items()})
+        saved = save_aliases(aliases, types or None)
     except ThemeAliasError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
-    return {"data": {"aliases": saved, "count": len(saved)}}
+    return {"data": _theme_alias_payload(saved)}
 
 
 @app.post("/api/config/theme-aliases/reset")
@@ -1083,7 +1139,44 @@ def api_theme_aliases_reset():
         saved = tn.reset_aliases()
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
-    return {"data": {"aliases": saved, "count": len(saved)}}
+    return {"data": _theme_alias_payload(saved)}
+
+
+@app.get("/api/config/block-pending")
+def api_block_pending_get():
+    """读取板块待匹配列表（内存累积，随各业务端点喂入更新）。"""
+    try:
+        _vr_host._add_vr_to_path()
+        from ths_block.processor import export_pending
+
+        return {"data": export_pending()}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
+@app.post("/api/config/block-pending/save-alias")
+def api_block_pending_save_alias(body: dict = Body(...)):
+    """将待匹配项保存为题材别名，并从待匹配列表移除。"""
+    from duanxian.theme_normalize import ThemeAliasError, load_aliases, load_alias_types, save_aliases
+
+    alias = str((body or {}).get("alias") or "").replace(" ", "").strip()
+    canonical = str((body or {}).get("canonical") or "").replace(" ", "").strip()
+    if not alias or not canonical:
+        return JSONResponse({"error": "别名与标准题材均不能为空", "detail": "别名与标准题材均不能为空"}, status_code=400)
+    try:
+        merged = dict(load_aliases())
+        types = dict(load_alias_types())
+        merged[alias] = canonical
+        saved = save_aliases(merged, types)
+        _vr_host._add_vr_to_path()
+        from ths_block.processor import remove_pending
+
+        remove_pending(raw=alias, mapped=alias)
+    except ThemeAliasError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": _theme_alias_payload(saved)}
 
 
 @app.get("/api/config/zt-keywords")

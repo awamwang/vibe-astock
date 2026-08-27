@@ -15,7 +15,7 @@ from .util import atomic_write_json
 
 _CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
 _CONFIG_PATH = os.path.join(_CONFIG_DIR, "theme_aliases.json")
-_SCHEMA = 1
+_SCHEMA = 2
 _MAX_LEN = 20
 _LOCK = threading.Lock()
 
@@ -28,6 +28,7 @@ _DEFAULT_ALIASES: dict[str, str] = {
 }
 
 _ALIASES: dict[str, str] | None = None
+_ALIAS_TYPES: dict[str, str] | None = None
 
 
 class ThemeAliasError(ValueError):
@@ -42,25 +43,35 @@ def default_aliases() -> dict[str, str]:
     return dict(_DEFAULT_ALIASES)
 
 
-def _read_disk() -> dict[str, str]:
+def _read_disk() -> tuple[dict[str, str], dict[str, str]]:
     if not os.path.isfile(_CONFIG_PATH):
-        return default_aliases()
+        return default_aliases(), {}
     try:
         with open(_CONFIG_PATH, encoding="utf-8") as fh:
             env = json.load(fh)
         if not isinstance(env, dict):
-            return default_aliases()
+            return default_aliases(), {}
         raw = env.get("aliases")
         if not isinstance(raw, dict):
-            return default_aliases()
+            return default_aliases(), {}
         out: dict[str, str] = {}
         for alias, canonical in raw.items():
             a, c = _norm_tag(alias), _norm_tag(canonical)
             if a and c and a != c:
                 out[a] = c
-        return out or default_aliases()
+        aliases = out or default_aliases()
+        types: dict[str, str] = {}
+        raw_types = env.get("types")
+        if isinstance(raw_types, dict):
+            for alias, typ in raw_types.items():
+                a = _norm_tag(alias)
+                if a in aliases:
+                    types[a] = str(typ or "").strip()
+        for a in aliases:
+            types.setdefault(a, "")
+        return aliases, types
     except Exception:  # noqa: BLE001
-        return default_aliases()
+        return default_aliases(), {}
 
 
 def _assert_no_cycles(aliases: dict[str, str]) -> None:
@@ -91,33 +102,53 @@ def _sanitize_aliases(aliases: dict[str, str]) -> dict[str, str]:
 
 def load_aliases() -> dict[str, str]:
     """读取当前别名表（带进程内缓存）。"""
-    global _ALIASES
+    global _ALIASES, _ALIAS_TYPES
     if _ALIASES is not None:
         return dict(_ALIASES)
     with _LOCK:
         if _ALIASES is None:
-            _ALIASES = _read_disk()
+            _ALIASES, _ALIAS_TYPES = _read_disk()
         return dict(_ALIASES)
+
+
+def load_alias_types() -> dict[str, str]:
+    """读取别名类型标记（带进程内缓存）。"""
+    global _ALIAS_TYPES
+    load_aliases()
+    with _LOCK:
+        return dict(_ALIAS_TYPES or {})
 
 
 def reload_aliases() -> dict[str, str]:
     """丢弃缓存并重新读盘。"""
-    global _ALIASES
+    global _ALIASES, _ALIAS_TYPES
     with _LOCK:
-        _ALIASES = _read_disk()
+        _ALIASES, _ALIAS_TYPES = _read_disk()
         return dict(_ALIASES)
 
 
-def save_aliases(aliases: dict[str, str]) -> dict[str, str]:
+def save_aliases(
+    aliases: dict[str, str],
+    types: dict[str, str] | None = None,
+) -> dict[str, str]:
     """校验并写入别名表，返回清洗后的副本。"""
     cleaned = _sanitize_aliases(aliases)
+    cleaned_types: dict[str, str] = {}
+    if types:
+        for alias, typ in types.items():
+            a = _norm_tag(alias)
+            if a in cleaned:
+                cleaned_types[a] = str(typ or "").strip()
+    for a in cleaned:
+        cleaned_types.setdefault(a, "")
     os.makedirs(_CONFIG_DIR, exist_ok=True)
-    payload = {"schema": _SCHEMA, "aliases": cleaned}
+    payload = {"schema": _SCHEMA, "aliases": cleaned, "types": cleaned_types}
     if not atomic_write_json(_CONFIG_PATH, payload):
         raise OSError(f"写入题材别名配置失败：{_CONFIG_PATH}")
-    global _ALIASES
+    global _ALIASES, _ALIAS_TYPES
     with _LOCK:
         _ALIASES = dict(cleaned)
+        _ALIAS_TYPES = dict(cleaned_types)
     return dict(cleaned)
 
 
@@ -129,10 +160,15 @@ def reset_aliases() -> dict[str, str]:
 def export_config() -> dict:
     """供 API / 设置页读取。"""
     aliases = load_aliases()
+    types = load_alias_types()
     return {
         "schema": _SCHEMA,
         "aliases": aliases,
-        "entries": [{"alias": a, "canonical": c} for a, c in sorted(aliases.items())],
+        "types": types,
+        "entries": [
+            {"alias": a, "canonical": c, "type": types.get(a, "")}
+            for a, c in sorted(aliases.items())
+        ],
         "path": _CONFIG_PATH,
         "defaults": default_aliases(),
     }
