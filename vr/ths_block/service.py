@@ -15,6 +15,16 @@ _BEIJING = timezone(timedelta(hours=8))
 _TREE_KINDS = set(linker.tree_kinds())
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_BUSY = 0
+_LINKER_MSG = "依赖于第三方工具，目前无法请求"
+_LINKER_ERROR_MARKERS = (
+    "ths-linker",
+    "未找到",
+    "超时",
+    "退出码",
+    "未返回 json",
+    "无法定位同花顺",
+    "返回失败",
+)
 
 
 def _now() -> str:
@@ -24,6 +34,73 @@ def _now() -> str:
 def is_refresh_busy() -> bool:
     """是否有板块刷新正在进行（含 ths-linker 调用）。"""
     return _REFRESH_BUSY > 0
+
+
+def linker_unavailable() -> bool:
+    """第三方 ths-linker 不可用且当前无可用板块缓存。"""
+    snap = cache.get()
+    if not snap:
+        return False
+    return bool(snap.get("linker_unavailable"))
+
+
+def _kind_has_data(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    blocks = entry.get("blocks")
+    if isinstance(blocks, dict) and blocks:
+        return True
+    rows = entry.get("rows")
+    return isinstance(rows, list) and bool(rows)
+
+
+def _has_any_kind_data(kinds: dict[str, Any]) -> bool:
+    for kind in linker.list_kinds():
+        if _kind_has_data(kinds.get(kind)):
+            return True
+    return False
+
+
+def _is_linker_error_text(text: str) -> bool:
+    t = str(text or "").lower()
+    return any(m in t for m in _LINKER_ERROR_MARKERS)
+
+
+def _apply_linker_status(snapshot: dict[str, Any]) -> dict[str, Any]:
+    kinds = snapshot.get("kinds") or {}
+    if _has_any_kind_data(kinds):
+        snapshot["linker_unavailable"] = False
+        snapshot.pop("linker_message", None)
+        return snapshot
+    errors = snapshot.get("errors") or []
+    if errors and all(_is_linker_error_text(e) for e in errors):
+        snapshot["linker_unavailable"] = True
+        snapshot["linker_message"] = _LINKER_MSG
+    elif snapshot.get("linker_unavailable"):
+        snapshot["linker_message"] = snapshot.get("linker_message") or _LINKER_MSG
+    else:
+        snapshot["linker_unavailable"] = False
+        snapshot.pop("linker_message", None)
+    return snapshot
+
+
+def ensure_linker_cli_or_mark_unavailable() -> bool:
+    """若 ths-linker 不在 PATH 且尚无板块数据，标记为不可用。"""
+    if linker.is_cli_available():
+        return True
+    snap = cache.get() or {}
+    if _has_any_kind_data(snap.get("kinds") or {}):
+        return True
+    snapshot = _apply_linker_status(
+        {
+            "updated_at": _now(),
+            "ths_dir": snap.get("ths_dir"),
+            "kinds": dict(snap.get("kinds") or {}),
+            "errors": ["linker: 未找到 ths-linker 命令，请先安装并加入 PATH"],
+        }
+    )
+    cache.set_snapshot(snapshot)
+    return False
 
 
 def _resolve_ths_dir(explicit: str | None = None) -> str:
@@ -309,8 +386,7 @@ def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
         try:
             snap = cache.get() or {}
             snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
-            if not snapshot["kinds"] and snapshot["errors"]:
-                raise RuntimeError("；".join(snapshot["errors"]))
+            snapshot = _apply_linker_status(snapshot)
             snapshot = cache.set_snapshot(snapshot)
         finally:
             _REFRESH_BUSY -= 1
@@ -346,15 +422,14 @@ def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"{kind}: {exc}")
 
-            if not kinds_data and errors:
-                raise RuntimeError("；".join(errors))
-
-            snapshot = {
-                "updated_at": _now(),
-                "ths_dir": resolved,
-                "kinds": kinds_data,
-                "errors": errors,
-            }
+            snapshot = _apply_linker_status(
+                {
+                    "updated_at": _now(),
+                    "ths_dir": resolved,
+                    "kinds": kinds_data,
+                    "errors": errors,
+                }
+            )
             snapshot = cache.set_snapshot(snapshot)
         finally:
             _REFRESH_BUSY -= 1
@@ -378,6 +453,7 @@ def get_snapshot() -> dict[str, Any]:
         "kinds": {},
         "errors": [],
         "empty": True,
+        "linker_unavailable": False,
     }
 
 

@@ -196,7 +196,9 @@ export function ThsBlocks() {
     setQuotes({});
 
     const loaded = latest?.kinds ? Object.keys(latest.kinds).length : 0;
-    if (failed.length) {
+    if (latest?.linker_unavailable) {
+      notify.error(latest.linker_message || "依赖于第三方工具，目前无法请求");
+    } else if (failed.length) {
       notify.error(`部分类型刷新失败（${loaded}/${THS_BLOCK_KINDS.length} 成功）：${failed.join("；")}`);
     } else {
       notify.success(`板块已刷新 · ${latest?.updated_at || ""}`);
@@ -357,6 +359,8 @@ export function ThsBlocks() {
   };
 
   const emptyCache = !snapshot?.updated_at;
+  const linkerDown = snapshot?.linker_unavailable;
+  const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
   const visibleCount = filteredRows.length;
 
@@ -383,6 +387,12 @@ export function ThsBlocks() {
             {refreshingKind ? `刷新 ${thsBlockKindLabel(refreshingKind)}…` : "刷新板块"}
           </button>
         </div>
+
+        {linkerDown && (
+          <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+            {linkerMessage}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {THS_BLOCK_KINDS.map((k) => {
@@ -419,7 +429,9 @@ export function ThsBlocks() {
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {emptyCache ? (
+          {linkerDown ? (
+            <span className="text-amber-700 dark:text-amber-300">{linkerMessage}</span>
+          ) : emptyCache ? (
             <span className="text-amber-700 dark:text-amber-300">尚未刷新 — 请点击「刷新板块」从 ths-linker 拉取</span>
           ) : (
             <>
@@ -527,6 +539,10 @@ export function ThsBlocks() {
               {loading ? (
                 <div className="flex items-center justify-center gap-2 p-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" /> 加载中…
+                </div>
+              ) : linkerDown ? (
+                <div className="p-12 text-center text-sm text-amber-700 dark:text-amber-300">
+                  {linkerMessage}
                 </div>
               ) : emptyCache ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">

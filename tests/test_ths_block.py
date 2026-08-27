@@ -438,3 +438,19 @@ def test_refresh_and_ensure_no_deadlock(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert ensure_done.wait(timeout=5), "ensure_kinds_cached 与 refresh_kind 发生死锁"
     assert not ensure_error
+
+
+def test_refresh_cache_marks_linker_unavailable(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+
+    def fake_list(kind: str, *, ths_dir: str | None = None):
+        raise RuntimeError("未找到 ths-linker 命令，请先安装并加入 PATH")
+
+    monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: "/tmp/ths")
+    monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
+
+    snap = block_service.refresh_cache()
+    assert snap.get("linker_unavailable") is True
+    assert snap.get("linker_message") == "依赖于第三方工具，目前无法请求"
+    assert not snap.get("kinds")
+

@@ -908,6 +908,8 @@ export interface ThsBlocksSnapshot {
   kinds: Record<string, ThsBlockKindSnapshot>;
   errors?: string[];
   empty?: boolean;
+  linker_unavailable?: boolean;
+  linker_message?: string;
 }
 
 export interface ThsBlockStockItem {
@@ -935,6 +937,8 @@ export interface BlockIndexInfo {
   complete?: boolean;
   ensuring?: boolean;
   refreshing?: boolean;
+  linker_unavailable?: boolean;
+  linker_message?: string;
   name_count: number;
   ref_count: number;
   updated_at?: string | null;

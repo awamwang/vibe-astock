@@ -184,7 +184,11 @@ def ensure_kinds_cached() -> list[str]:
 
     同步补拉，供显式刷新或后台异步线程调用；业务 feed 路径不得直接调用。
     """
-    if service.is_refresh_busy():
+    if service.is_refresh_busy() or service.linker_unavailable():
+        return []
+    if not service.ensure_linker_cli_or_mark_unavailable():
+        with _ENSURE_LOCK:
+            _ENSURE_TRIED.update(linker.list_kinds())
         return []
     to_refresh: list[str] = []
     with _ENSURE_LOCK:
@@ -200,13 +204,16 @@ def ensure_kinds_cached() -> list[str]:
             to_refresh.append(kind)
     refreshed: list[str] = []
     for kind in to_refresh:
-        if service.is_refresh_busy():
+        if service.is_refresh_busy() or service.linker_unavailable():
             break
         try:
             service.refresh_kind(kind=kind)
             refreshed.append(kind)
         except Exception:  # noqa: BLE001
             pass
+    if service.linker_unavailable():
+        with _ENSURE_LOCK:
+            _ENSURE_TRIED.update(linker.list_kinds())
     if refreshed:
         invalidate_name_index()
     return refreshed
@@ -227,7 +234,11 @@ def mark_all_kinds_cached() -> None:
 def schedule_ensure_kinds_cached() -> bool:
     """若存在缺失类型则异步补拉；已在队列中则跳过。不阻塞调用方。"""
     global _ENSURE_ASYNC_SCHEDULED
-    if service.is_refresh_busy() or not _kinds_missing():
+    if service.is_refresh_busy() or service.linker_unavailable():
+        return False
+    if not service.ensure_linker_cli_or_mark_unavailable():
+        return False
+    if not _kinds_missing():
         return False
     with _ENSURE_LOCK:
         if _ENSURE_ASYNC_SCHEDULED:
@@ -294,7 +305,8 @@ def _partial_matches(mapped: str, index: dict[str, list[dict[str, Any]]]) -> lis
 
 def index_info() -> dict[str, Any]:
     """返回名称索引元信息（供前端判断映射是否可用）。"""
-    if not service.is_refresh_busy():
+    snap = service.get_snapshot()
+    if not service.is_refresh_busy() and not snap.get("linker_unavailable"):
         schedule_ensure_kinds_cached()
     try:
         index = _get_name_index(ensure=False)
@@ -307,6 +319,8 @@ def index_info() -> dict[str, Any]:
         "complete": len(missing) == 0,
         "ensuring": _ENSURE_ASYNC_SCHEDULED,
         "refreshing": service.is_refresh_busy(),
+        "linker_unavailable": bool(snap.get("linker_unavailable")),
+        "linker_message": snap.get("linker_message"),
         "name_count": len(index),
         "ref_count": sum(len(v) for v in index.values()),
         "updated_at": snap.get("updated_at"),
@@ -335,7 +349,8 @@ def resolve_many(names: list[str]) -> list[dict[str, Any]]:
 
 def export_resolve(names: list[str]) -> dict[str, Any]:
     """批量解析并附带按 raw 索引的映射表。"""
-    if not service.is_refresh_busy():
+    snap = service.get_snapshot()
+    if not service.is_refresh_busy() and not snap.get("linker_unavailable"):
         schedule_ensure_kinds_cached()
     items = resolve_many(names)
     return {

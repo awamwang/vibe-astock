@@ -71,6 +71,11 @@ def fetch_tree(kind: str, *, ths_dir: str | None = None) -> dict[str, Any]:
     return _run("tree", kind, ths_dir=ths_dir)
 
 
+def is_cli_available() -> bool:
+    """ths-linker 是否已在 PATH 中。"""
+    return shutil.which("ths-linker") is not None
+
+
 def list_kinds() -> tuple[str, ...]:
     return _LIST_KINDS
 

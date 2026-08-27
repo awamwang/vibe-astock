@@ -50,7 +50,9 @@ export function BlockResolveScope({ names, children }: { names: string[]; childr
     };
 
     const needsPoll = (index: Awaited<ReturnType<typeof api.thsBlocksResolve>>["index"]) =>
-      !index?.refreshing && (!index?.complete || !index?.ready || !!index?.ensuring);
+      !index?.linker_unavailable
+      && !index?.refreshing
+      && (!index?.complete || !index?.ready || !!index?.ensuring);
 
     const poll = async () => {
       if (cancelled) return;

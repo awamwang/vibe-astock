@@ -3,7 +3,7 @@
 from .processor import export_pending, export_resolve, feed, feed_emotion, feed_firstboard, feed_message_targets
 from .processor import feed_mood_blocks, feed_overview, feed_review, feed_turnover, get_pending, index_info, remove_pending
 from .processor import ensure_kinds_cached, invalidate_index, resolve_many, resolve_one, schedule_ensure_kinds_cached
-from .service import get_block_stocks, get_snapshot, refresh_cache, refresh_kind
+from .service import get_block_stocks, get_snapshot, linker_unavailable, refresh_cache, refresh_kind
 
 __all__ = [
     "ensure_kinds_cached",
@@ -23,6 +23,7 @@ __all__ = [
     "get_snapshot",
     "index_info",
     "invalidate_index",
+    "linker_unavailable",
     "resolve_many",
     "resolve_one",
     "refresh_cache",

@@ -244,3 +244,41 @@ def test_export_resolve_schedules_ensure(monkeypatch: pytest.MonkeyPatch):
     bp.export_resolve(["半导体"])
     assert scheduled
 
+
+def test_linker_unavailable_skips_ensure_and_feed(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot(
+        {
+            "updated_at": "2026-08-27 15:00:00",
+            "ths_dir": None,
+            "kinds": {},
+            "errors": ["linker: 未找到 ths-linker 命令"],
+            "linker_unavailable": True,
+            "linker_message": "依赖于第三方工具，目前无法请求",
+        }
+    )
+    bp.invalidate_index()
+    called: list[str] = []
+
+    def fake_refresh(*, kind: str, ths_dir=None):
+        called.append(kind)
+        return block_cache.get() or {}
+
+    monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
+    assert bp.ensure_kinds_cached() == []
+    assert called == []
+    assert bp.schedule_ensure_kinds_cached() is False
+    assert bp.feed("sector_flow", ["半导体"]) == []
+    info = bp.index_info()
+    assert info["linker_unavailable"] is True
+    assert info["ready"] is False
+
+
+def test_ensure_marks_unavailable_when_cli_missing(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    bp.invalidate_index()
+    monkeypatch.setattr("ths_block.linker.is_cli_available", lambda: False)
+    assert bp.ensure_kinds_cached() == []
+    snap = block_cache.get() or {}
+    assert snap.get("linker_unavailable") is True
+    assert snap.get("linker_message") == "依赖于第三方工具，目前无法请求"
+
