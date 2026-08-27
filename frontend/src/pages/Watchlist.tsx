@@ -1,15 +1,26 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, X, RefreshCw, Star, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Plus, X, RefreshCw, Star, Loader2, Sparkles, Trash2, TrendingUp } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { AskAiButton } from "@/components/ui/AskAiButton";
-import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
+import {
+  useDeepDive,
+  RunAllButton,
+  WatchlistAnalyzePanel,
+  type DiveItem,
+  type WatchlistAnalyzeTab,
+} from "@/components/ui/DeepDive";
+import {
+  buildWatchlistDeepPrompt,
+  buildWatchlistShortPrompt,
+  watchlistDeepContext,
+  watchlistShortContext,
+} from "@/lib/watchlistAnalyze";
 import { loadWatchItems, saveWatchItems, addCodes, removeCodes, hydrateFromServer, pullServerWatch, pushServerWatch, type WatchItem } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { pctColor } from "@/lib/colors";
 import { cn } from "@/lib/utils";
-import type { Quote } from "@/lib/api";
 import { api } from "@/lib/api";
 import { StockLabel } from "@/components/stock/StockLabel";
 
@@ -100,7 +111,10 @@ export function Watchlist() {
   }, []);
 
   const { quotes, loading, updatedAt, polling, error, refresh } = useLiveQuotes(codes, live);
-  const dd = useDeepDive("watchlist", beijingDateKey());
+  const ddDeep = useDeepDive("watchlist", beijingDateKey());
+  const ddShort = useDeepDive("watchlist-short", beijingDateKey());
+  const [openCode, setOpenCode] = useState<string | null>(null);
+  const [analyzeTab, setAnalyzeTab] = useState<WatchlistAnalyzeTab>("deep");
 
   const toggleLive = () => {
     setLive((on) => {
@@ -171,26 +185,39 @@ export function Watchlist() {
     setHint(`已清空 ${n} 只`);
   };
 
-  const buildPrompt = (code: string, q: Quote | undefined) =>
-    `今天 A 股自选股「${q?.name || code}（${code}）」的客观数据：\n` +
-    `现价 ${q?.price ?? "—"} 元，涨跌 ${q?.change_pct != null ? pct(q.change_pct) : "—"}，` +
-    `PE(TTM) ${q?.pe_ttm ?? "—"}，PB ${q?.pb ?? "—"}，换手率 ${q?.turnover_pct ?? "—"}%，` +
-    `流通市值 ${q?.mcap_yi != null ? `${q.mcap_yi} 亿` : "—"}。\n\n` +
-    "请深入分析这只股票：\n" +
-    "1. 先调用工具查询这只股票的近期新闻、研报与估值数据，结合上面的行情数据，说清当前关注点的驱动因素（消息面 / 基本面 / 资金面）；\n" +
-    "2. 就**这个题材板块整体**说清它的强度与所处阶段（情绪性炒作 / 有产业逻辑或业绩支撑），" +
-    "并给出依据 —— 只讲题材板块层面，不要由此推断这只个股接下来会怎样；\n" +
-    "3. 客观列出值得注意的点（估值水平、换手活跃度、近期催化与风险）。\n" +
-    "个股层面只陈述已经发生的客观数据与事实，方向与强弱判断做到题材板块层面为止：" +
-    "不预测个股涨跌、不给个股参与倾向、不推荐任何标的、不构成投资建议。" +
-    "输出用纯 Markdown（不要在表格或正文里使用 <br> 等 HTML 标签）。";
-
-  const ctx = (code: string, q: Quote | undefined) => `自选股 ${q?.name || code}(${code}) 深入分析`;
-  const diveItem = (code: string): DiveItem => ({
+  const deepItem = (code: string): DiveItem => ({
     key: code,
-    prompt: buildPrompt(code, quotes[code]),
-    context: ctx(code, quotes[code]),
+    prompt: buildWatchlistDeepPrompt(code, quotes[code]),
+    context: watchlistDeepContext(code, quotes[code]),
   });
+
+  const shortItem = (code: string): DiveItem => ({
+    key: code,
+    prompt: buildWatchlistShortPrompt(code, quotes[code]),
+    context: watchlistShortContext(code, quotes[code]),
+  });
+
+  const ensureAnalyze = (code: string, tab: WatchlistAnalyzeTab) => {
+    setOpenCode(code);
+    setAnalyzeTab(tab);
+    const dd = tab === "deep" ? ddDeep : ddShort;
+    const item = tab === "deep" ? deepItem(code) : shortItem(code);
+    if (!dd.analysis[code] && dd.running !== code) void dd.rerun(item);
+  };
+
+  const closeAnalyze = () => {
+    ddDeep.stopAll();
+    ddShort.stopAll();
+    setOpenCode(null);
+  };
+
+  const switchTab = (tab: WatchlistAnalyzeTab) => {
+    if (!openCode) return;
+    setAnalyzeTab(tab);
+    const dd = tab === "deep" ? ddDeep : ddShort;
+    const item = tab === "deep" ? deepItem(openCode) : shortItem(openCode);
+    if (!dd.analysis[openCode] && dd.running !== openCode) void dd.rerun(item);
+  };
 
   const nameByCode = useMemo(
     () => Object.fromEntries(codes.map((c) => [c, quotes[c]?.name || c])),
@@ -198,7 +225,7 @@ export function Watchlist() {
   );
 
   const batchDiveItems = useMemo(
-    () => (someSelected ? codes.filter((c) => selected.has(c)) : codes).map(diveItem),
+    () => (someSelected ? codes.filter((c) => selected.has(c)) : codes).map(deepItem),
     [codes, quotes, someSelected, selected],
   );
 
@@ -333,7 +360,7 @@ export function Watchlist() {
                   一键清空
                 </button>
                 <RunAllButton
-                  dd={dd}
+                  dd={ddDeep}
                   items={batchDiveItems}
                   selectedOnly={someSelected}
                   nameOf={(k) => nameByCode[k] || k}
@@ -387,7 +414,7 @@ export function Watchlist() {
                       aria-label="全选"
                     />
                   </th>
-                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", ""].map((h, i) => (
+                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", "分析"].map((h, i) => (
                     <th key={h || `a${i}`} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -428,22 +455,63 @@ export function Watchlist() {
                           </button>
                         </td>
                         <td className="whitespace-nowrap px-2 py-2.5 text-right">
-                          <button
-                            onClick={() => dd.toggle(diveItem(c))}
-                            className="inline-flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-                          >
-                            {dd.running === c ? <Loader2 className="h-3 w-3 animate-spin" /> : dd.open === c ? <X className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-                            {dd.open === c ? "收起" : dd.analysis[c] ? "展开" : "深入分析"}
-                          </button>
+                          <div className="inline-flex flex-wrap items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (openCode === c && analyzeTab === "deep") closeAnalyze();
+                                else ensureAnalyze(c, "deep");
+                              }}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
+                                openCode === c && analyzeTab === "deep"
+                                  ? "border-primary bg-primary/15 text-primary"
+                                  : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+                              )}
+                            >
+                              {ddDeep.running === c && analyzeTab === "deep" ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-3 w-3" />
+                              )}
+                              {openCode === c && analyzeTab === "deep" ? "收起" : ddDeep.analysis[c] ? "深度" : "深度分析"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (openCode === c && analyzeTab === "short") closeAnalyze();
+                                else ensureAnalyze(c, "short");
+                              }}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
+                                openCode === c && analyzeTab === "short"
+                                  ? "border-secondary bg-secondary/15 text-secondary"
+                                  : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
+                              )}
+                            >
+                              {ddShort.running === c && analyzeTab === "short" ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <TrendingUp className="h-3 w-3" />
+                              )}
+                              {openCode === c && analyzeTab === "short" ? "收起" : ddShort.analysis[c] ? "短线" : "短线分析"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                      {dd.open === c && (
-                        <DeepDivePanel
-                          dd={dd}
+                      {openCode === c && (
+                        <WatchlistAnalyzePanel
+                          openCode={openCode}
+                          tab={analyzeTab}
+                          onTab={switchTab}
+                          onClose={closeAnalyze}
+                          ddDeep={ddDeep}
+                          ddShort={ddShort}
                           stockKey={c}
                           colSpan={10}
-                          noteTitle={`自选深析 · ${q?.name || c}`}
-                          onRerun={() => dd.rerun(diveItem(c))}
+                          stockName={q?.name || c}
+                          onRerunDeep={() => void ddDeep.rerun(deepItem(c))}
+                          onRerunShort={() => void ddShort.rerun(shortItem(c))}
                         />
                       )}
                     </Fragment>

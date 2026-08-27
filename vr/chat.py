@@ -17,12 +17,19 @@ from urllib.parse import urlparse
 
 import requests
 
-import astock
 import cli_runtime
-import gstock
+from . import tools as tool_layer
 
 MAX_ROUNDS = 6  # 工具调用最大轮数，防死循环
 _TOOL_RESULT_CAP = 6000  # 单次工具结果注入上限（控 token）
+
+# /api/chat 暴露的 A 股单票工具（完整定义与实现见 tools.py）
+_CHAT_TOOL_NAMES = frozenset({
+    "query_quote", "query_valuation", "query_reports", "query_news",
+    "query_kline", "query_fund_flow", "query_concepts", "query_dragon_tiger",
+    "query_global_stock",
+})
+TOOLS = [t for t in tool_layer.TOOLS if t["function"]["name"] in _CHAT_TOOL_NAMES]
 
 # 投研分析框架：用户要「分析个股 / 给判断 / 下结论」时，AI 一律按这五维组织，
 # 让弱模型也能输出结构化、覆盖全、不漏项的专业解读。焊进 SYSTEM_PROMPT，不做成 UI 选项——
@@ -44,7 +51,8 @@ ANALYSIS_FRAMEWORK = """【投研分析框架】当用户要你分析个股、�
 
 # 用 f-string 先把框架焊进去，只留 {{context}} 给运行时 .format() 填——4 处调用点无需改。
 SYSTEM_PROMPT = f"""你是 Vibe-Research 里的投研助理。你可以调用工具获取客观数据来支撑回答：
-A 股用 query_quote / query_valuation / query_reports / query_news（传 6 位代码）；
+A 股用 query_quote / query_valuation / query_reports / query_news / query_kline /
+query_fund_flow / query_concepts / query_dragon_tiger（传 6 位代码）；
 美股 / 港股 / 韩股用 query_global_stock（美股用字母代码如 AAPL / NVDA，港股用数字如 00700，韩股用 6 位数字加 .KS 如三星 005930.KS）。
 
 硬性规则（务必遵守）：
@@ -58,93 +66,10 @@ A 股用 query_quote / query_valuation / query_reports / query_news（传 6 位�
 当前页面上下文：
 {{context}}"""
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "query_quote",
-            "description": "查 A 股实时行情：现价/涨跌/PE/PB/市值/换手/涨跌停。可批量。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "codes": {"type": "array", "items": {"type": "string"}, "description": "6 位股票代码列表，如 ['600519','000858']"},
-                },
-                "required": ["codes"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_valuation",
-            "description": "查单只个股的完整估值：行情 + 机构一致预期 EPS + 前向PE/PEG/PE消化年数。",
-            "parameters": {
-                "type": "object",
-                "properties": {"code": {"type": "string", "description": "6 位股票代码"}},
-                "required": ["code"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_reports",
-            "description": "查个股近期研报列表（标题/机构/评级/日期）。",
-            "parameters": {
-                "type": "object",
-                "properties": {"code": {"type": "string", "description": "6 位股票代码"}},
-                "required": ["code"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_news",
-            "description": "查个股近期新闻（标题/时间/来源）。",
-            "parameters": {
-                "type": "object",
-                "properties": {"code": {"type": "string", "description": "6 位股票代码"}},
-                "required": ["code"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_global_stock",
-            "description": "查美股 / 港股 / 韩股个股：行情（现价/涨跌/市值/成交额）+ 关键财务指标（韩股仅行情、无财务）。美股用字母代码(如 AAPL/NVDA)，港股用数字(如 00700)，韩股用 6 位数字加 .KS 后缀(如三星 005930.KS、SK海力士 000660.KS)。",
-            "parameters": {
-                "type": "object",
-                "properties": {"symbol": {"type": "string", "description": "美股字母代码 / 港股代码 / 韩股 XXXXXX.KS"}},
-                "required": ["symbol"],
-            },
-        },
-    },
-]
-
 
 def _exec_tool(name: str, args: dict):
     """执行工具，返回可序列化结果（失败返回 error 字段，不抛）。"""
-    try:
-        if name == "query_quote":
-            return astock.tencent_quote([str(c) for c in args.get("codes", [])])
-        if name == "query_valuation":
-            return astock.full_valuation(str(args["code"]))
-        if name == "query_reports":
-            rows = astock.eastmoney_reports(str(args["code"]), max_pages=1)[:15]
-            return [{k: r.get(k) for k in ("title", "publishDate", "orgSName", "emRatingName")} for r in rows]
-        if name == "query_news":
-            rows = astock.stock_news(str(args["code"]), limit=15)
-            return [{k: r.get(k) for k in ("新闻标题", "发布时间", "文章来源")} for r in rows]
-        if name == "query_global_stock":
-            data = gstock.us_hk_stock(str(args.get("symbol", "")))
-            return data or {"error": "未找到该美股/港股/韩股代码"}
-        return {"error": f"未知工具 {name}"}
-    except astock.DependencyMissing as e:
-        return {"error": str(e)}
-    except Exception as e:  # noqa: BLE001 — 工具错误回喂给模型，不中断循环
-        return {"error": f"{name} 执行失败：{e}"}
+    return tool_layer.exec_tool(name, args)
 
 
 # —— 防 SSRF：用户可自带 OpenAI 兼容端点，但后端替其发请求前要挡住指向云元数据/内网的地址 ——

@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { resolveZtKeyword } from "@/lib/zt-keywords";
+import { cn } from "@/lib/utils";
 
 const TOOL_LABEL: Record<string, string> = {
   query_quote: "查行情",
@@ -17,6 +18,10 @@ const TOOL_LABEL: Record<string, string> = {
   query_reports: "查研报",
   query_news: "查新闻",
   query_global_stock: "查外盘",
+  query_kline: "查K线",
+  query_fund_flow: "查资金流",
+  query_concepts: "查概念",
+  query_dragon_tiger: "查龙虎榜",
 };
 
 /** 题材新旧闭集标签：该题材近期是否已在市场被炒作过 */
@@ -76,6 +81,62 @@ export function parseDiveMeta(text: string, allowedKeywords?: string[]): DiveMet
     kept.push(raw);
   }
   return { keyword, duration, themeFreshness, body: kept.join("\n").replace(/^\n+/, "") };
+}
+
+/** 短线观察摘要标签 */
+export const SHORT_ROLE_TAGS = ["龙头", "中军", "跟风", "独立", "不明"] as const;
+export const SHORT_VOLUME_TAGS = ["放量", "缩量", "平量", "不明"] as const;
+export const SHORT_TECH_TAGS = ["上升", "震荡", "回调", "不明"] as const;
+export type ShortRole = (typeof SHORT_ROLE_TAGS)[number];
+export type ShortVolume = (typeof SHORT_VOLUME_TAGS)[number];
+export type ShortTech = (typeof SHORT_TECH_TAGS)[number];
+
+export interface ShortDiveMeta {
+  role: ShortRole | null;
+  volume: ShortVolume | null;
+  tech: ShortTech | null;
+  body: string;
+}
+
+function _pickClosedTag<T extends string>(raw: string, allowed: readonly T[]): T | null {
+  const v = raw.replace(/\s+/g, "").trim();
+  if (!v) return null;
+  if ((allowed as readonly string[]).includes(v)) return v as T;
+  for (const tag of allowed) {
+    if (v.includes(tag)) return tag;
+  }
+  return allowed.includes("不明" as T) ? ("不明" as T) : null;
+}
+
+/** 从短线观察正文顶部抽出三行摘要 */
+export function parseShortDiveMeta(text: string): ShortDiveMeta {
+  let role: ShortRole | null = null;
+  let volume: ShortVolume | null = null;
+  let tech: ShortTech | null = null;
+  const kept: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const roleM = line.match(/^(?:[-*]\s*)?(?:\*\*)?题材角色(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【题材角色】\s*(.+)$/);
+    if (roleM) {
+      role = _pickClosedTag(roleM[1], SHORT_ROLE_TAGS);
+      continue;
+    }
+    const volM = line.match(/^(?:[-*]\s*)?(?:\*\*)?量能状态(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【量能状态】\s*(.+)$/);
+    if (volM) {
+      volume = _pickClosedTag(volM[1], SHORT_VOLUME_TAGS);
+      continue;
+    }
+    const techM = line.match(/^(?:[-*]\s*)?(?:\*\*)?技术结构(?:\*\*)?[：:]\s*(.+)$/)
+      || line.match(/^【技术结构】\s*(.+)$/);
+    if (techM) {
+      tech = _pickClosedTag(techM[1], SHORT_TECH_TAGS);
+      continue;
+    }
+    kept.push(raw);
+  }
+  return { role, volume, tech, body: kept.join("\n").replace(/^\n+/, "") };
 }
 
 // ---------- 本地存档 ----------
@@ -359,6 +420,206 @@ interface RunAllProps {
   nameOf?: (key: string) => string; // 进度里显示名称（默认显示 key）
   /** 为 true 时按钮文案指向「所选」而非「全部」（items 应由调用方过滤） */
   selectedOnly?: boolean;
+}
+
+export type WatchlistAnalyzeTab = "deep" | "short";
+
+/** 自选股：深度 / 短线双标签分析面板 */
+interface WatchlistAnalyzePanelProps {
+  openCode: string;
+  tab: WatchlistAnalyzeTab;
+  onTab: (tab: WatchlistAnalyzeTab) => void;
+  onClose: () => void;
+  ddDeep: DeepDiveState;
+  ddShort: DeepDiveState;
+  stockKey: string;
+  colSpan: number;
+  stockName: string;
+  onRerunDeep: () => void;
+  onRerunShort: () => void;
+}
+
+function DivePanelBody({
+  dd,
+  stockKey,
+  isRunning,
+  noteTitle,
+  onRerun,
+  metaMode,
+}: {
+  dd: DeepDiveState;
+  stockKey: string;
+  isRunning: boolean;
+  noteTitle: string;
+  onRerun: () => void;
+  metaMode: "zt" | "short" | "none";
+}) {
+  const text = dd.analysis[stockKey] || "";
+  const ztMeta = metaMode === "zt" ? parseDiveMeta(text) : null;
+  const shortMeta = metaMode === "short" ? parseShortDiveMeta(text) : null;
+  const body = metaMode === "zt" ? ztMeta!.body : metaMode === "short" ? shortMeta!.body : text;
+
+  return (
+    <>
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        {(dd.tools[stockKey] || []).map((t) => (
+          <span key={t} className="rounded-full border border-secondary/40 bg-secondary/10 px-2 py-0.5">{t}</span>
+        ))}
+        {isRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+        {!isRunning && text && (
+          <>
+            <button
+              onClick={onRerun}
+              className="inline-flex items-center gap-1 rounded border border-border/60 px-1.5 py-0.5 hover:text-foreground"
+            >
+              <RefreshCw className="h-3 w-3" /> 重新分析
+            </button>
+            <SaveNoteButton kind="问AI" title={noteTitle} content={text} />
+          </>
+        )}
+      </div>
+      {ztMeta && (ztMeta.keyword || ztMeta.duration || ztMeta.themeFreshness) && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+          {ztMeta.keyword && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary">
+              <span className="text-[10px] font-normal text-muted-foreground">涨停关键字</span>
+              {ztMeta.keyword}
+            </span>
+          )}
+          {ztMeta.duration && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+              <span className="text-[10px] font-normal text-muted-foreground">持续性</span>
+              {ztMeta.duration}
+            </span>
+          )}
+          {ztMeta.themeFreshness && (
+            <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-medium ${
+              ztMeta.themeFreshness === "新题材"
+                ? "border-success/40 bg-success/10 text-success"
+                : ztMeta.themeFreshness === "旧题材"
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "border-border/60 bg-muted/40 text-muted-foreground"
+            }`}>
+              <span className="text-[10px] font-normal text-muted-foreground">题材新旧</span>
+              {ztMeta.themeFreshness}
+            </span>
+          )}
+        </div>
+      )}
+      {shortMeta && (shortMeta.role || shortMeta.volume || shortMeta.tech) && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+          {shortMeta.role && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary">
+              <span className="text-[10px] font-normal text-muted-foreground">题材角色</span>
+              {shortMeta.role}
+            </span>
+          )}
+          {shortMeta.volume && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+              <span className="text-[10px] font-normal text-muted-foreground">量能状态</span>
+              {shortMeta.volume}
+            </span>
+          )}
+          {shortMeta.tech && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-secondary/40 bg-secondary/10 px-2 py-0.5 font-medium text-secondary">
+              <span className="text-[10px] font-normal text-muted-foreground">技术结构</span>
+              {shortMeta.tech}
+            </span>
+          )}
+        </div>
+      )}
+      <div className="prose prose-sm prose-invert max-w-none text-foreground">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {body || (isRunning ? "正在调工具、组织分析…" : "")}
+        </ReactMarkdown>
+      </div>
+    </>
+  );
+}
+
+export function WatchlistAnalyzePanel({
+  openCode,
+  tab,
+  onTab,
+  onClose,
+  ddDeep,
+  ddShort,
+  stockKey,
+  colSpan,
+  stockName,
+  onRerunDeep,
+  onRerunShort,
+}: WatchlistAnalyzePanelProps) {
+  const dd = tab === "deep" ? ddDeep : ddShort;
+  const isRunning = dd.running === stockKey;
+  const needConfig = ddDeep.needConfig || ddShort.needConfig;
+  const err = tab === "deep" ? ddDeep.aiErr : ddShort.aiErr;
+
+  const tabBtn = (id: WatchlistAnalyzeTab, label: string, has: boolean) => (
+    <button
+      type="button"
+      onClick={() => onTab(id)}
+      className={cn(
+        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+        tab === id
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+      {has && tab !== id && <span className="ml-1 text-[10px] text-primary/70">●</span>}
+    </button>
+  );
+
+  return (
+    <tr className="border-b border-border/30 bg-primary/[0.03]">
+      <td colSpan={colSpan} className="px-3 py-3">
+        {needConfig ? (
+          <p className="text-sm text-muted-foreground">
+            还没接入 AI —— 先去 <Link to="/settings" className="text-primary underline">接入 AI</Link> 页配置一次（订阅 CLI 或 API key），回来即可分析。
+          </p>
+        ) : (
+          <div>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs text-muted-foreground">AI 分析（非本产品观点，不构成投资建议）</span>
+              <div className="inline-flex rounded-lg border border-border/60 p-0.5">
+                {tabBtn("deep", "深度分析", Boolean(ddDeep.analysis[stockKey]))}
+                {tabBtn("short", "短线分析", Boolean(ddShort.analysis[stockKey]))}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+              >
+                收起
+              </button>
+            </div>
+            {err && openCode === stockKey && <p className="mb-1 text-xs text-danger">{err}</p>}
+            {tab === "deep" ? (
+              <DivePanelBody
+                dd={ddDeep}
+                stockKey={stockKey}
+                isRunning={isRunning}
+                noteTitle={`自选深析 · ${stockName}`}
+                onRerun={onRerunDeep}
+                metaMode="none"
+              />
+            ) : (
+              <DivePanelBody
+                dd={ddShort}
+                stockKey={stockKey}
+                isRunning={isRunning}
+                noteTitle={`自选短线 · ${stockName}`}
+                onRerun={onRerunShort}
+                metaMode="short"
+              />
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
 }
 
 export function RunAllButton({ dd, items, nameOf, selectedOnly }: RunAllProps) {

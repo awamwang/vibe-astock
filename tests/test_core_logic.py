@@ -3616,7 +3616,7 @@ class TestPerStockPromptsStayAtSectorLevel:
     所以：强弱/阶段判断必须显式限定在**题材板块**层面，并显式禁止外推到个股。
     """
 
-    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/ShortBoard.tsx", "pages/Watchlist.tsx")
+    PROMPT_FILES = ("pages/FirstBoard.tsx", "pages/ShortBoard.tsx", "lib/watchlistAnalyze.ts")
 
     def _src(self, rel):
         import pathlib
@@ -3649,6 +3649,15 @@ class TestPerStockPromptsStayAtSectorLevel:
         assert "无原因" in s and "其他" in s
         assert "新题材" in s and "旧题材" in s
         assert "有没有被炒作过" in s
+
+    def test_watchlist_short_prompt_asks_summary_tags(self):
+        """自选股短线分析须先抽题材角色、量能状态与技术结构。"""
+        s = self._src("lib/watchlistAnalyze.ts")
+        assert "【题材角色】" in s
+        assert "【量能状态】" in s
+        assert "【技术结构】" in s
+        assert "query_kline" in s
+        assert "精确选一个" in s
 
 
 class TestUpDownColorIsOneSource:
