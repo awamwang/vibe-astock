@@ -173,3 +173,19 @@ def test_ensure_kinds_cached_skips_when_complete(monkeypatch: pytest.MonkeyPatch
     bp.ensure_kinds_cached()
     assert called == []
 
+
+def test_feed_skips_without_cache(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    bp.invalidate_index()
+    called: list[str] = []
+
+    def fake_refresh(*, kind: str, ths_dir=None):
+        called.append(kind)
+        return block_cache.get() or {}
+
+    monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
+    bp.feed("sector_flow", ["半导体"])
+    assert called == []
+    assert bp.get_pending() == []
+    assert bp.feed_overview({"sectors": [{"name": "半导体"}]}) is None
+

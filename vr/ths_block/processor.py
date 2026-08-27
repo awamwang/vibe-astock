@@ -157,8 +157,20 @@ def _sync_ensure_state(snap: dict[str, Any]) -> None:
         _ENSURE_TRIED = set()
 
 
+def _snapshot_indexable(snap: dict[str, Any]) -> bool:
+    """缓存里是否已有可用于匹配的板块名称。"""
+    for entry in (snap.get("kinds") or {}).values():
+        if _kind_has_data(entry):
+            return True
+    return False
+
+
 def ensure_kinds_cached() -> list[str]:
-    """确保各板块类型均有缓存；缺失的类型各触发一次 refresh_kind。"""
+    """确保各板块类型均有缓存；缺失的类型各触发一次 refresh_kind。
+
+    仅由用户显式刷新（/api/ths-blocks/refresh*）或管理入口调用；
+    feed 路径不得触发，避免 ths-linker 不可用时拖死业务接口。
+    """
     refreshed: list[str] = []
     with _ENSURE_LOCK:
         snap = service.get_snapshot()
@@ -182,10 +194,14 @@ def ensure_kinds_cached() -> list[str]:
     return refreshed
 
 
-def _get_name_index() -> dict[str, list[dict[str, Any]]]:
+def _get_name_index(*, ensure: bool = False) -> dict[str, list[dict[str, Any]]]:
+    """从内存缓存构建名称索引；ensure=True 时才会补拉缺失类型。"""
     global _NAME_INDEX, _NAME_INDEX_AT
-    ensure_kinds_cached()
+    if ensure:
+        ensure_kinds_cached()
     snap = service.get_snapshot()
+    if not _snapshot_indexable(snap):
+        return {}
     updated_at = snap.get("updated_at")
     with _LOCK:
         if _NAME_INDEX is not None and _NAME_INDEX_AT == updated_at:
@@ -230,7 +246,15 @@ def resolve_one(raw: str, *, index: dict[str, list[dict[str, Any]]] | None = Non
             "candidates": [],
         }
     mapped = _canonicalize(raw_norm)
-    idx = index if index is not None else _get_name_index()
+    idx = index if index is not None else _get_name_index(ensure=False)
+    if not idx:
+        return {
+            "raw": raw_norm,
+            "mapped": mapped,
+            "status": "unmatched",
+            "block": None,
+            "candidates": [],
+        }
 
     exact_refs = idx.get(mapped) or []
     if exact_refs:
@@ -289,11 +313,19 @@ def _merge_pending(key: str, item: dict[str, Any], source: str) -> None:
 
 
 def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
-    """批量喂入字符串并更新待匹配列表，返回每条解析结果。"""
+    """批量喂入字符串并更新待匹配列表，返回每条解析结果。
+
+    仅使用已有板块缓存做匹配；缓存为空或 ths-linker 未就绪时静默跳过。
+    """
     cleaned = [_norm(s) for s in (strings or []) if _norm(s)]
     if not cleaned:
         return []
-    index = _get_name_index()
+    try:
+        index = _get_name_index(ensure=False)
+    except Exception:  # noqa: BLE001
+        return []
+    if not index:
+        return []
     results: list[dict[str, Any]] = []
     with _LOCK:
         for raw in cleaned:
@@ -319,10 +351,15 @@ def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
     return results
 
 
-def feed_review(market_facts: dict[str, Any] | None) -> None:
-    """从复盘 market_facts 提取题材/行业字符串。"""
-    if not isinstance(market_facts, dict):
-        return
+def _feed_payload(fn, payload) -> None:
+    """业务侧喂入包装：匹配失败不影响主流程。"""
+    try:
+        fn(payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _feed_review(market_facts: dict[str, Any]) -> None:
     tree = market_facts.get("theme_tree") or {}
     if isinstance(tree, dict) and tree.get("available"):
         tags = [str(t.get("tag") or "") for t in (tree.get("themes") or []) if isinstance(t, dict)]
@@ -337,9 +374,14 @@ def feed_review(market_facts: dict[str, Any] | None) -> None:
         feed("review_theme_structure", sectors)
 
 
-def feed_firstboard(payload: dict[str, Any] | None) -> None:
-    if not isinstance(payload, dict):
+def feed_review(market_facts: dict[str, Any] | None) -> None:
+    """从复盘 market_facts 提取题材/行业字符串。"""
+    if not isinstance(market_facts, dict):
         return
+    _feed_payload(_feed_review, market_facts)
+
+
+def _feed_firstboard(payload: dict[str, Any]) -> None:
     themes = [str(o.get("tag") or "") for o in (payload.get("theme_options") or []) if isinstance(o, dict)]
     feed("firstboard_theme", themes)
     industries = [
@@ -350,9 +392,13 @@ def feed_firstboard(payload: dict[str, Any] | None) -> None:
     feed("firstboard_industry", industries)
 
 
-def feed_emotion(payload: dict[str, Any] | None) -> None:
+def feed_firstboard(payload: dict[str, Any] | None) -> None:
     if not isinstance(payload, dict):
         return
+    _feed_payload(_feed_firstboard, payload)
+
+
+def _feed_emotion(payload: dict[str, Any]) -> None:
     industries = [
         str(s.get("industry") or "")
         for s in (payload.get("lianban_stocks") or [])
@@ -361,9 +407,13 @@ def feed_emotion(payload: dict[str, Any] | None) -> None:
     feed("emotion_industry", industries)
 
 
-def feed_overview(payload: dict[str, Any] | None) -> None:
+def feed_emotion(payload: dict[str, Any] | None) -> None:
     if not isinstance(payload, dict):
         return
+    _feed_payload(_feed_emotion, payload)
+
+
+def _feed_overview(payload: dict[str, Any]) -> None:
     names = [str(s.get("name") or "") for s in (payload.get("sectors") or []) if isinstance(s, dict)]
     feed("sector_flow", names)
     pos = [n for n in names if n][:6]
@@ -371,15 +421,25 @@ def feed_overview(payload: dict[str, Any] | None) -> None:
     feed("fund_rotation", pos + neg)
 
 
-def feed_mood_blocks(payload: dict[str, Any] | None) -> None:
+def feed_overview(payload: dict[str, Any] | None) -> None:
     if not isinstance(payload, dict):
         return
+    _feed_payload(_feed_overview, payload)
+
+
+def _feed_mood_blocks(payload: dict[str, Any]) -> None:
     blocks = payload.get("blocks") or payload.get("items") or []
     names = [str(b.get("name") or "") for b in blocks if isinstance(b, dict)]
     feed("mood_block", names)
 
 
-def feed_message_targets(items: list[Any]) -> None:
+def feed_mood_blocks(payload: dict[str, Any] | None) -> None:
+    if not isinstance(payload, dict):
+        return
+    _feed_payload(_feed_mood_blocks, payload)
+
+
+def _feed_message_targets(items: list[Any]) -> None:
     names: list[str] = []
     for row in items or []:
         targets = row.get("targets") if isinstance(row, dict) else getattr(row, "targets", None)
@@ -391,6 +451,10 @@ def feed_message_targets(items: list[Any]) -> None:
             if kind in ("sector", "theme") and name:
                 names.append(str(name))
     feed("message_target", names)
+
+
+def feed_message_targets(items: list[Any]) -> None:
+    _feed_payload(_feed_message_targets, items)
 
 
 def get_pending() -> list[dict[str, Any]]:

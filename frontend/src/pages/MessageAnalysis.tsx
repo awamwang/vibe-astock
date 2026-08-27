@@ -1135,7 +1135,7 @@ export function MessageAnalysis() {
                       <th className="w-32 px-3 py-2.5 text-left align-middle">
                         <span className={sortThLabelCls}>生效时间</span>
                       </th>
-                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[120px] max-w-[180px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[240px] max-w-[360px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="impact_level" label="级别" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="effect_status" label="生效情况" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("effect_status")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
@@ -1170,7 +1170,7 @@ export function MessageAnalysis() {
                             ? item.effective_at
                             : effectiveAt(item)}
                         </td>
-                        <td className="px-3 py-3 align-top max-w-[180px]">
+                        <td className="px-3 py-3 align-top max-w-[360px]">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {item.favorited && (
                               <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500" aria-label="已收藏" />
