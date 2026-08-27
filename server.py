@@ -50,6 +50,13 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost"} | {
 
 def _startup_aktools():
     """随本后端拉起 / 复用本机 AKTools（默认 127.0.0.1:8988）。"""
+    from duanxian import vr_host as vh
+
+    vh._add_vr_to_path()
+    import stock_universe
+
+    stock_universe.startup_load()
+
     from duanxian import aktools_service as aks
 
     info = aks.ensure_started()

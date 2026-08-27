@@ -28,27 +28,15 @@ _REVIEW_DIR = os.path.expanduser("~/.duanxian-agents/reviews")
 _REFLECT_DIR = os.path.expanduser("~/.duanxian-agents/reflections")
 
 
-_NAME_CODE: dict = {}
-
-
 def _name_code_map() -> dict:
-    """A 股 名称→代码 全表。只缓存非空结果（瞬时网络失败不毒化缓存）。"""
-    global _NAME_CODE
-    if _NAME_CODE:
-        return _NAME_CODE
-    try:
-        import akshare as ak
+    """A 股 名称→代码 全表（统一股票列表获取器）。"""
+    from . import vr_host
 
-        df = ak.stock_info_a_code_name()
-        cols = {c.lower(): c for c in df.columns}
-        cc = cols.get("code", df.columns[0])
-        nc = cols.get("name", df.columns[1])
-        m = {str(r[nc]).strip(): str(r[cc]).strip().zfill(6) for _, r in df.iterrows()}
-        if m:
-            _NAME_CODE = m
-        return m
-    except Exception:
-        return {}
+    vr_host._add_vr_to_path()
+    import stock_universe
+
+    stock_universe.ensure_loaded()
+    return stock_universe.get_name_to_code()
 
 
 def _next_trade_date(date: str) -> Optional[str]:
@@ -101,14 +89,24 @@ def _stock_change_on(code: str, eval_date: str) -> Optional[float]:
         return None
 
 
-def _resolve_code(name: str, name2code: dict) -> Optional[str]:
+def _resolve_code(name: str, name2code: dict | None = None) -> Optional[str]:
     """龙头名 → 代码。精确匹配；板块名/带括号说明的匹配不到就跳过。"""
-    n = (name or "").strip()
-    if n in name2code:
-        return name2code[n]
-    # 去掉括号补充说明再试一次（如「盛屯矿业（龙虎榜强势）」）
-    base = n.split("（")[0].split("(")[0].strip()
-    return name2code.get(base)
+    from . import vr_host
+
+    vr_host._add_vr_to_path()
+    import stock_universe
+
+    stock_universe.ensure_loaded()
+    hit = stock_universe.resolve_code_by_name(name)
+    if hit:
+        return hit
+    if name2code:
+        n = (name or "").strip()
+        if n in name2code:
+            return name2code[n]
+        base = n.split("（")[0].split("(")[0].strip()
+        return name2code.get(base)
+    return None
 
 
 # ---------------- 读写 ----------------
