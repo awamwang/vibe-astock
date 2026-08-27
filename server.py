@@ -49,7 +49,7 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost"} | {
 }
 
 def _startup_aktools():
-    """随本后端拉起 / 复用本机 AKTools（默认 127.0.0.1:8988）。"""
+    """随本后端拉起 AKTools / 市场序列；股票列表只读本地缓存，网络刷新由用户触发。"""
     from duanxian import vr_host as vh
 
     vh._add_vr_to_path()
@@ -57,14 +57,12 @@ def _startup_aktools():
 
     stock_universe.startup_load()
 
-    from duanxian import aktools_service as aks
+    try:
+        from ths_block.processor import schedule_ensure_kinds_cached
 
-    info = aks.ensure_started()
-    if info.get("ok"):
-        how = "复用已有" if info.get("reused") else "已托管启动"
-        print(f"✓ AKTools {how}  {info.get('base')}")
-    else:
-        print(f"⚠ AKTools 未就绪：{info.get('error') or '未知错误'}")
+        schedule_ensure_kinds_cached()
+    except Exception:  # noqa: BLE001
+        pass
 
     from duanxian import market_series as ms
 
@@ -1308,6 +1306,29 @@ def api_sentiment_s_refresh(request: Request, body: dict = Body(None)):
             {"error": f"{type(exc).__name__}: {exc}", "detail": str(exc)},
             status_code=500,
         )
+
+
+@app.get("/api/config/stock-universe")
+def api_stock_universe_status():
+    """A 股全量列表缓存与数据源优先级。"""
+    _add_vr_to_path()
+    import stock_universe
+
+    return {"data": stock_universe.export_status()}
+
+
+@app.post("/api/config/stock-universe/refresh")
+def api_stock_universe_refresh(request: Request):
+    """从网络刷新股票列表并写入本地缓存（按 STOCK_LIST_SOURCES 顺序降级）。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    _add_vr_to_path()
+    import stock_universe
+
+    if stock_universe.is_refreshing():
+        return {"data": {**stock_universe.export_status(), "refreshing": True, "started": False}}
+    stock_universe.schedule_refresh()
+    return {"data": {**stock_universe.export_status(), "refreshing": True, "started": True}}
 
 
 @app.get("/api/config/market-series")

@@ -32,10 +32,11 @@ import message as msg_layer
 from message import analyze as msg_analyze
 import ths_block as ths_block_layer
 import stock_universe
+import stock_processor
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
-stock_universe.schedule_startup_load()
+stock_universe.startup_load()
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
@@ -1107,3 +1108,29 @@ def ths_blocks_stocks(
         raise HTTPException(404, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"读取成分股失败：{e}") from e
+
+
+class StockResolveQuery(BaseModel):
+    code: str | None = None
+    name: str | None = None
+
+
+class StockResolveIn(BaseModel):
+    queries: list[StockResolveQuery] = []
+
+
+@app.post("/api/stocks/resolve")
+def stocks_resolve(body: StockResolveIn | None = None):
+    """批量解析股票名称或代码，返回匹配状态与标准代码。"""
+    rows = (body.queries if body else []) or []
+    try:
+        payload = [{"code": q.code, "name": q.name} for q in rows]
+        return {"data": stock_processor.export_resolve(payload)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"股票解析失败：{e}") from e
+
+
+@app.get("/api/stocks/index-info")
+def stocks_index_info():
+    """返回 A 股列表是否就绪及规模。"""
+    return {"data": stock_processor.index_info()}

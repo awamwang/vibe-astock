@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Archive, Database, Download, FolderInput, FolderOpen, FolderOutput, HardDrive, Loader2, Upload,
+  RefreshCw, ListOrdered,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import {
-  api, downloadBackup, type BackupStatus,
+  api, downloadBackup, type BackupStatus, type StockUniverseStatus,
 } from "@/lib/api";
 
 const DEST_KEY = "va-backup-dest";
@@ -95,6 +96,8 @@ function DirRow({
 export function DataBackup() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [stockUni, setStockUni] = useState<StockUniverseStatus | null>(null);
+  const [stockRefreshing, setStockRefreshing] = useState(false);
   const [destDir, setDestDir] = useState(() => readLocal(DEST_KEY));
   const [seriesDestDir, setSeriesDestDir] = useState(() => readLocal(SERIES_DEST_KEY) || readLocal(DEST_KEY));
   const [srcPath, setSrcPath] = useState(() => readLocal(SRC_KEY));
@@ -108,12 +111,43 @@ export function DataBackup() {
   const reload = () =>
     api.backupStatus().then(setStatus).catch(() => setStatus(null)).finally(() => setLoaded(true));
 
+  const reloadStockUni = () =>
+    api.stockUniverseStatus().then(setStockUni).catch(() => setStockUni(null));
+
   useEffect(() => {
     reload();
+    void reloadStockUni();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const busy = exporting || exportingSeries || downloading || importing || opening !== null;
+  useEffect(() => {
+    if (!stockRefreshing && !stockUni?.refreshing) return;
+    const timer = window.setInterval(() => {
+      void reloadStockUni().then((s) => {
+        if (!s.refreshing) setStockRefreshing(false);
+      });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [stockRefreshing, stockUni?.refreshing]);
+
+  const doRefreshStockUni = async () => {
+    setStockRefreshing(true);
+    try {
+      const r = await api.refreshStockUniverse();
+      setStockUni(r);
+      if (r.started === false) {
+        toast.info("股票列表正在刷新中…");
+      } else {
+        toast.success("已开始从网络刷新股票列表");
+      }
+    } catch (e) {
+      setStockRefreshing(false);
+      toast.error(e instanceof Error ? e.message : "刷新失败");
+    }
+  };
+
+  const busy = exporting || exportingSeries || downloading || importing || opening !== null
+    || stockRefreshing || Boolean(stockUni?.refreshing);
 
   const openDir = async (kind: "root" | "cache" | "series") => {
     setOpening(kind);
@@ -225,6 +259,84 @@ export function DataBackup() {
         title="数据管理"
         subtitle="查看本机数据目录，打包导出已落盘的请求缓存与生成结果，也可从压缩包或文件夹导入"
       />
+
+      <GlassCard className="mb-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+              <ListOrdered className="h-4 w-4 text-primary" /> A 股股票列表
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              启动时只读本地缓存；点「刷新列表」才按下方顺序从网络拉取并落盘。
+              网络顺序由环境变量 <code className="rounded bg-muted/50 px-1">STOCK_LIST_SOURCES</code> 控制（默认东财 → AkShare）。
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void doRefreshStockUni()}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25 disabled:opacity-50"
+          >
+            {(stockRefreshing || stockUni?.refreshing) ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {(stockRefreshing || stockUni?.refreshing) ? "刷新中…" : "刷新列表"}
+          </button>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+          <div className="text-[11px] font-medium text-muted-foreground">读取 / 刷新顺序</div>
+          <ol className="mt-1.5 space-y-1 text-sm">
+            {(stockUni?.read_order || [
+              { id: "cache", label: "本地缓存" },
+              { id: "eastmoney", label: "东财" },
+              { id: "akshare", label: "AkShare" },
+            ]).map((src, idx) => (
+              <li key={src.id} className="flex items-center gap-2">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+                  {idx + 1}
+                </span>
+                <span>{src.label}</span>
+                {src.id === "cache" && (
+                  <span className="text-[11px] text-muted-foreground">（启动时）</span>
+                )}
+                {src.id !== "cache" && idx === 1 && (
+                  <span className="text-[11px] text-muted-foreground">（刷新时首选）</span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        {stockUni ? (
+          <div className="space-y-1 text-sm">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>{stockUni.loaded ? `已载入 ${stockUni.count} 只` : "尚未载入"}</span>
+              {stockUni.updated_at && <span>更新 {stockUni.updated_at}</span>}
+              {stockUni.source && (
+                <span>
+                  来源 {stockUni.from_cache ? "本地缓存" : stockUni.source === "eastmoney" ? "东财" : stockUni.source === "akshare" ? "AkShare" : stockUni.source}
+                </span>
+              )}
+            </div>
+            <div className="break-all text-[11px] text-muted-foreground">
+              缓存文件：{stockUni.cache_path}
+              {!stockUni.cache_exists && !stockUni.loaded && (
+                <span className="ml-2 text-amber-700 dark:text-amber-300">尚无缓存，请先刷新</span>
+              )}
+            </div>
+            {!stockUni.loaded && stockUni.error && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">{stockUni.error}</p>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> 正在读取状态…
+          </div>
+        )}
+      </GlassCard>
 
       <GlassCard className="mb-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">

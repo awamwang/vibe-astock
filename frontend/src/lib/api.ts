@@ -674,6 +674,9 @@ export const api = {
     request<BackupImportResult>("/backup/import", "POST", { path }),
   backupImportZip: (contentB64: string) =>
     request<BackupImportResult>("/backup/import", "POST", { content_b64: contentB64 }),
+  stockUniverseStatus: () => get<StockUniverseStatus>("/config/stock-universe"),
+  refreshStockUniverse: () =>
+    request<StockUniverseStatus>("/config/stock-universe/refresh", "POST"),
   themeAliases: () => get<ThemeAliasConfig>("/config/theme-aliases"),
   saveThemeAliases: (entries: ThemeAliasEntry[]) =>
     request<ThemeAliasSaveResult>("/config/theme-aliases", "POST", { entries }),
@@ -806,6 +809,9 @@ export const api = {
   thsBlocksResolve: (names: string[]) =>
     request<BlockResolveResult>("/ths-blocks/resolve", "POST", { names }),
   thsBlocksIndexInfo: () => get<BlockIndexInfo>("/ths-blocks/index-info"),
+  stocksResolve: (queries: StockResolveQuery[]) =>
+    request<StockResolveResult>("/stocks/resolve", "POST", { queries }),
+  stocksIndexInfo: () => get<StockIndexInfo>("/stocks/index-info"),
 };
 
 export interface PluginPickResult {
@@ -934,6 +940,41 @@ export interface BlockResolveResult {
   items: BlockResolveItem[];
   by_raw: Record<string, BlockResolveItem>;
   index: BlockIndexInfo;
+}
+
+export interface StockRef {
+  code: string;
+  name: string;
+  market: string;
+  types: string[];
+}
+
+export interface StockResolveQuery {
+  code?: string | null;
+  name?: string | null;
+}
+
+export interface StockResolveItem {
+  key: string;
+  code?: string | null;
+  name?: string | null;
+  status: "empty" | "matched" | "unmatched";
+  stock: StockRef | null;
+}
+
+export interface StockIndexInfo {
+  ready: boolean;
+  refreshing?: boolean;
+  count: number;
+  updated_at?: string | null;
+  source?: string | null;
+  error?: string | null;
+}
+
+export interface StockResolveResult {
+  items: StockResolveItem[];
+  by_key: Record<string, StockResolveItem>;
+  index: StockIndexInfo;
 }
 
 export interface ThsBlockStocksDetail {
@@ -1157,6 +1198,26 @@ export interface SeriesExportResult {
 export interface BackupImportResult {
   ok: boolean; imported: number; byte_count: number;
   skipped_logs: number; root: string;
+}
+
+export interface StockUniverseSource {
+  id: string;
+  label: string;
+}
+
+export interface StockUniverseStatus {
+  loaded: boolean;
+  refreshing: boolean;
+  count: number;
+  source?: string | null;
+  from_cache?: boolean;
+  updated_at?: string | null;
+  cache_path: string;
+  cache_exists: boolean;
+  read_order: StockUniverseSource[];
+  network_sources: string[];
+  error?: string | null;
+  started?: boolean;
 }
 
 export async function downloadBackup(): Promise<string> {

@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Literal
@@ -28,6 +31,8 @@ A_SHARE_FS = (
 )
 
 _DEFAULT_SOURCES: tuple[SourceId, ...] = ("eastmoney", "akshare")
+_CACHE_SCHEMA = 1
+_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache")
 _EM_UT = "b2884a393a59ad64002292a3e90d46a5"
 _EM_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
 
@@ -56,16 +61,21 @@ class StockItem:
 @dataclass
 class LoadMeta:
     ok: bool
-    source: SourceId | None = None
+    source: SourceId | Literal["cache"] | None = None
     count: int = 0
-    tried: tuple[SourceId, ...] = ()
+    tried: tuple[str, ...] = ()
     error: str | None = None
+    updated_at: str | None = None
+    from_cache: bool = False
 
 
 _by_code: dict[str, StockItem] = {}
 _name_to_code: dict[str, str] = {}
 _loaded = False
 _meta = LoadMeta(ok=False)
+_cache_updated_at: str | None = None
+_REFRESH_LOCK = threading.Lock()
+_REFRESH_RUNNING = False
 
 
 def configured_sources() -> tuple[SourceId, ...]:
@@ -80,6 +90,79 @@ def configured_sources() -> tuple[SourceId, ...]:
         if sid in valid and sid not in out:
             out.append(sid)  # type: ignore[arg-type]
     return tuple(out) if out else _DEFAULT_SOURCES
+
+
+def read_source_order() -> tuple[str, ...]:
+    """读取优先级：本地缓存 → 网络源（按 STOCK_LIST_SOURCES）。"""
+    return ("cache", *configured_sources())
+
+
+def _cache_path() -> str:
+    return os.path.join(_CACHE_DIR, "stock_universe.json")
+
+
+def _now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _items_from_payload(rows: list[dict[str, Any]]) -> list[StockItem]:
+    out: list[StockItem] = []
+    for row in rows:
+        code = str(row.get("code") or "").zfill(6)
+        name = str(row.get("name") or "").strip()
+        market = row.get("market") or infer_market(code)
+        if market not in ("SH", "SZ", "BJ"):
+            market = infer_market(code)
+        types_raw = row.get("types") or ()
+        if isinstance(types_raw, str):
+            types = (types_raw,) if types_raw else ()
+        else:
+            types = tuple(str(x) for x in types_raw if x)
+        item = StockItem(code=code, name=name, market=market, types=types)  # type: ignore[arg-type]
+        if code.isdigit() and len(code) == 6 and name:
+            out.append(item)
+    return out
+
+
+def _save_cache(items: list[StockItem], source: SourceId) -> str:
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    updated_at = _now_str()
+    payload = {
+        "schema": _CACHE_SCHEMA,
+        "updated_at": updated_at,
+        "source": source,
+        "count": len(items),
+        "items": [it.to_dict() for it in items],
+    }
+    path = _cache_path()
+    tmp = f"{path}.{uuid.uuid4().hex}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    return updated_at
+
+
+def _load_cache_file() -> tuple[list[StockItem], str, SourceId] | None:
+    path = _cache_path()
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or int(data.get("schema") or 0) != _CACHE_SCHEMA:
+        return None
+    source = str(data.get("source") or "eastmoney").lower()
+    if source not in ("eastmoney", "akshare"):
+        source = "eastmoney"
+    items = _items_from_payload(list(data.get("items") or []))
+    if not items:
+        return None
+    updated_at = str(data.get("updated_at") or "").strip() or None
+    return items, updated_at or _now_str(), source  # type: ignore[return-value]
 
 
 def infer_market(code: str) -> MarketId:
@@ -294,19 +377,57 @@ _FETCHERS: dict[SourceId, Callable[..., list[StockItem]]] = {
 }
 
 
-def _apply_items(items: list[StockItem], source: SourceId) -> None:
-    global _by_code, _name_to_code, _loaded, _meta
+def _apply_items(
+    items: list[StockItem],
+    source: SourceId | Literal["cache"],
+    *,
+    tried: tuple[str, ...] = (),
+    updated_at: str | None = None,
+    from_cache: bool = False,
+) -> None:
+    global _by_code, _name_to_code, _loaded, _meta, _cache_updated_at
     _by_code = {it.code: it for it in items}
     _name_to_code = {it.name: it.code for it in items}
     _loaded = True
-    _meta = LoadMeta(ok=True, source=source, count=len(items), tried=(source,))
+    if updated_at:
+        _cache_updated_at = updated_at
+    _meta = LoadMeta(
+        ok=True,
+        source=source,
+        count=len(items),
+        tried=tried or (source,),
+        updated_at=updated_at or _cache_updated_at,
+        from_cache=from_cache,
+    )
 
 
-def load_stock_universe(*, force: bool = False) -> LoadMeta:
-    """按配置优先级加载全量列表；已加载且非 force 时直接返回。"""
-    global _loaded, _meta
-    if _loaded and not force:
+def load_from_cache() -> LoadMeta:
+    """仅从用户目录本地缓存载入，不打网络。"""
+    global _loaded, _meta, _cache_updated_at
+    hit = _load_cache_file()
+    if hit is None:
+        _loaded = False
+        _meta = LoadMeta(
+            ok=False,
+            tried=("cache",),
+            error="本地无股票列表缓存",
+        )
         return _meta
+    items, updated_at, source = hit
+    _apply_items(
+        items,
+        "cache",
+        tried=("cache",),
+        updated_at=updated_at,
+        from_cache=True,
+    )
+    logger.info("股票列表已从本地缓存载入：%d 只（原数据源=%s）", len(items), source)
+    return _meta
+
+
+def _fetch_from_network() -> LoadMeta:
+    """按配置优先级从网络拉取，成功则写入本地缓存。"""
+    global _loaded, _meta
     sources = configured_sources()
     tried: list[SourceId] = []
     errors: list[str] = []
@@ -318,8 +439,15 @@ def load_stock_universe(*, force: bool = False) -> LoadMeta:
             continue
         try:
             items = fetcher(today=today)
-            _apply_items(items, sid)
-            logger.info("股票列表已载入：%d 只，数据源=%s", len(items), sid)
+            updated_at = _save_cache(items, sid)
+            _apply_items(
+                items,
+                sid,
+                tried=tuple(tried),
+                updated_at=updated_at,
+                from_cache=False,
+            )
+            logger.info("股票列表已刷新：%d 只，数据源=%s", len(items), sid)
             return _meta
         except Exception as exc:  # noqa: BLE001
             msg = f"{sid}: {type(exc).__name__}: {exc}"
@@ -331,6 +459,52 @@ def load_stock_universe(*, force: bool = False) -> LoadMeta:
         tried=tuple(tried),
         error="；".join(errors) if errors else "无可用数据源",
     )
+    return _meta
+
+
+def load_stock_universe(*, force: bool = False) -> LoadMeta:
+    """载入股票列表：默认只读本地缓存；force=True 时走网络刷新。"""
+    if _loaded and not force:
+        return _meta
+    if force:
+        return _fetch_from_network()
+    return load_from_cache()
+
+
+def refresh_universe(*, blocking: bool = True) -> LoadMeta:
+    """从网络刷新股票列表并写入本地缓存。"""
+    if blocking:
+        return _fetch_from_network()
+    return schedule_refresh()
+
+
+def is_refreshing() -> bool:
+    return _REFRESH_RUNNING
+
+
+def schedule_refresh() -> LoadMeta:
+    """后台从网络刷新；已在刷新中则直接返回当前状态。"""
+    global _REFRESH_RUNNING
+    if _REFRESH_RUNNING:
+        return _meta
+    with _REFRESH_LOCK:
+        if _REFRESH_RUNNING:
+            return _meta
+        _REFRESH_RUNNING = True
+
+    def _run() -> None:
+        global _REFRESH_RUNNING
+        try:
+            meta = _fetch_from_network()
+            if meta.ok:
+                print(f"✓ 股票列表已刷新 {meta.count} 只（{meta.source}）")
+            else:
+                print(f"⚠ 股票列表刷新失败：{meta.error}")
+        finally:
+            with _REFRESH_LOCK:
+                _REFRESH_RUNNING = False
+
+    threading.Thread(target=_run, daemon=True, name="stock-universe-refresh").start()
     return _meta
 
 
@@ -386,10 +560,33 @@ def resolve_code_by_name(name: str) -> str | None:
 
 
 def startup_load() -> LoadMeta:
-    """进程启动时调用，失败不抛异常。"""
-    meta = load_stock_universe(force=False)
+    """进程启动时只读本地缓存，失败不抛异常、不自动打网络。"""
+    meta = load_from_cache()
     if meta.ok:
-        print(f"✓ 股票列表 {meta.count} 只（{meta.source}）")
+        print(f"✓ 股票列表 {meta.count} 只（本地缓存）")
     else:
-        print(f"⚠ 股票列表未载入：{meta.error}")
+        print(f"ℹ 股票列表：{meta.error}，可在「数据备份」页手动刷新")
     return meta
+
+
+def export_status() -> dict[str, Any]:
+    """供 API 返回的当前状态。"""
+    order = read_source_order()
+    labels = {
+        "cache": "本地缓存",
+        "eastmoney": "东财",
+        "akshare": "AkShare",
+    }
+    return {
+        "loaded": _loaded,
+        "refreshing": _REFRESH_RUNNING,
+        "count": _meta.count if _loaded else 0,
+        "source": _meta.source,
+        "from_cache": _meta.from_cache,
+        "updated_at": _meta.updated_at or _cache_updated_at,
+        "cache_path": _cache_path(),
+        "cache_exists": os.path.isfile(_cache_path()),
+        "read_order": [{"id": sid, "label": labels.get(sid, sid)} for sid in order],
+        "network_sources": list(configured_sources()),
+        "error": None if _loaded else _meta.error,
+    }

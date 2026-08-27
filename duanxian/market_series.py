@@ -877,7 +877,15 @@ def ensure_fresh_background() -> None:
         try:
             from . import aktools_service as aks
 
+            from . import aktools_client as akc
+
             aks.ensure_started(wait_s=15.0)
+            st = aks.runtime_status()
+            if st.get("available"):
+                how = "复用已有" if not st.get("owned") else "已托管启动"
+                print(f"✓ AKTools {how}  {st.get('base') or akc.base_url()}")
+            else:
+                print(f"⚠ AKTools 未就绪：{st.get('error') or '未知错误'}")
             result = ensure_fresh()
             if result.get("skipped"):
                 print("✓ 市场序列缓存已是最新")
