@@ -1,6 +1,6 @@
 /** 同花顺板块类型与展示文案 */
 
-import type { ThsBlockRow, ThsTreeNode } from "@/lib/api";
+import type { ThsBlockRow, ThsTreeNode, BlockResolveItem } from "@/lib/api";
 
 export const THS_BLOCK_KINDS = [
   { value: "conception", label: "概念" },
@@ -140,4 +140,15 @@ export function sortRowsByTreeOrder(rows: ThsBlockRow[]): ThsBlockRow[] {
     if (ao !== bo) return ao - bo;
     return a.name.localeCompare(b.name, "zh-CN");
   });
+}
+
+/** 板块映射成功时的标签样式 */
+export function blockMatchedClass(matched?: boolean): string {
+  return matched
+    ? "border-emerald-500/40 bg-emerald-500/10 font-medium text-emerald-800 ring-1 ring-emerald-500/25 dark:text-emerald-300"
+    : "";
+}
+
+export function isBlockMatched(item?: BlockResolveItem | null): boolean {
+  return item?.status === "matched" && !!item.block;
 }

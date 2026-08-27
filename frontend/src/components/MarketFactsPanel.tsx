@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, Gauge, Layers3,
   ListTree, Lock, Network, Rows3,
@@ -13,6 +13,8 @@ import type {
   StatItem, StatsContext, ThemeNode, ThemeStructure, ThemeTree,
 } from "@/lib/agent";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { BlockLabel } from "@/components/block/BlockLabel";
+import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 
 function rate(v?: number | null): string {
   return v == null ? "—" : `${Math.round(v * 100)}%`;
@@ -148,7 +150,12 @@ export function Themes({ ts }: { ts?: ThemeStructure }) {
   const themes = safeArray<ThemeStructure["themes"] extends (infer T)[] | undefined ? T : never>(ts?.themes);
   const timeline = safeArray<{ slot: string; count: number }>(ts?.timeline);
   const maxSlot = Math.max(1, ...timeline.map((x) => x.count));
+  const blockNames = useMemo(
+    () => themes.map((t) => t.sector).filter(Boolean),
+    [themes],
+  );
   return (
+    <BlockResolveScope names={blockNames}>
     <Section
       icon={Layers3}
       title="题材结构 · 发酵节奏"
@@ -159,7 +166,9 @@ export function Themes({ ts }: { ts?: ThemeStructure }) {
       <div className="mb-3 space-y-1">
         {themes.map((t) => (
           <div key={t.sector} className="flex items-center gap-2 text-[12px] tabular-nums">
-            <span className="w-20 shrink-0 truncate font-semibold" title={t.sector}>{t.sector}</span>
+            <span className="w-20 shrink-0 truncate font-semibold" title={t.sector}>
+              <BlockLabel name={t.sector} />
+            </span>
             <span className="flex gap-0.5">
               {Array.from({ length: Math.min(t.limit_up, 12) }).map((_, i) => (
                 <span key={i} className="h-3 w-1.5 rounded-sm bg-primary/70" />
@@ -205,6 +214,7 @@ export function Themes({ ts }: { ts?: ThemeStructure }) {
         </p>
       )}
     </Section>
+    </BlockResolveScope>
   );
 }
 
@@ -321,7 +331,12 @@ const STATE_TONE: Record<string, string> = {
 /** 题材事件树 —— 按真实事件题材（问财涨停原因）而不是行业分类 */
 export function ThemeTreeView({ t }: { t?: ThemeTree }) {
   const themes = safeArray<ThemeNode>(t?.themes);
+  const blockNames = useMemo(
+    () => themes.map((n) => n.tag).filter(Boolean),
+    [themes],
+  );
   return (
+    <BlockResolveScope names={blockNames}>
     <Section
       icon={Network}
       title="题材事件树"
@@ -340,7 +355,7 @@ export function ThemeTreeView({ t }: { t?: ThemeTree }) {
             {themes.map((n) => (
               <div key={n.tag} className="border-b border-border/40 pb-2 last:border-0 last:pb-0">
                 <div className="flex flex-wrap items-center gap-2 text-[13px]">
-                  <span className="font-bold">{n.tag}</span>
+                  <span className="font-bold"><BlockLabel name={n.tag} /></span>
                   <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
                     STATE_TONE[n.state] || "bg-muted text-muted-foreground")}>{n.state}</span>
                   <span className="tabular-nums text-muted-foreground">
@@ -383,6 +398,7 @@ export function ThemeTreeView({ t }: { t?: ThemeTree }) {
         </>
       )}
     </Section>
+    </BlockResolveScope>
   );
 }
 

@@ -189,3 +189,17 @@ def test_feed_skips_without_cache(monkeypatch: pytest.MonkeyPatch):
     assert bp.get_pending() == []
     assert bp.feed_overview({"sectors": [{"name": "半导体"}]}) is None
 
+
+def test_resolve_many_and_index_info():
+    info = bp.index_info()
+    assert info["ready"] is True
+    assert info["name_count"] >= 3
+    rows = bp.resolve_many(["华为概念", "半导体", "不存在"])
+    assert len(rows) == 3
+    assert rows[0]["status"] == "matched"
+    assert rows[1]["status"] == "matched"
+    assert rows[2]["status"] == "unmatched"
+    exported = bp.export_resolve(["华为概念", "半导体"])
+    assert "华为概念" in exported["by_raw"]
+    assert exported["index"]["ready"] is True
+

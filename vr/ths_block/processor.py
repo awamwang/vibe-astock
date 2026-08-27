@@ -234,6 +234,51 @@ def _partial_matches(mapped: str, index: dict[str, list[dict[str, Any]]]) -> lis
     return _dedupe_refs(hits)
 
 
+def index_info() -> dict[str, Any]:
+    """返回名称索引元信息（供前端判断映射是否可用）。"""
+    try:
+        index = _get_name_index(ensure=False)
+    except Exception:  # noqa: BLE001
+        index = {}
+    snap = service.get_snapshot()
+    return {
+        "ready": bool(index),
+        "name_count": len(index),
+        "ref_count": sum(len(v) for v in index.values()),
+        "updated_at": snap.get("updated_at"),
+        "ths_dir": snap.get("ths_dir"),
+    }
+
+
+def resolve_many(names: list[str]) -> list[dict[str, Any]]:
+    """批量解析板块名称，保持输入顺序并去重。"""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in names or []:
+        norm = _norm(raw)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        cleaned.append(norm)
+    if not cleaned:
+        return []
+    try:
+        index = _get_name_index(ensure=False)
+    except Exception:  # noqa: BLE001
+        index = {}
+    return [resolve_one(raw, index=index) for raw in cleaned]
+
+
+def export_resolve(names: list[str]) -> dict[str, Any]:
+    """批量解析并附带按 raw 索引的映射表。"""
+    items = resolve_many(names)
+    return {
+        "items": items,
+        "by_raw": {str(item.get("raw") or ""): item for item in items if item.get("raw")},
+        "index": index_info(),
+    }
+
+
 def resolve_one(raw: str, *, index: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
     """解析单个字符串，返回匹配结果。"""
     raw_norm = _norm(raw)

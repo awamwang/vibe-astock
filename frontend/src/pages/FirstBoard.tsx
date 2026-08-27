@@ -9,6 +9,8 @@ import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem 
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 import { DEFAULT_ZT_KEYWORDS, setZtKeywordsCache } from "@/lib/zt-keywords";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { BlockLabel } from "@/components/block/BlockLabel";
+import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SortTh, type SortOrder } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 
@@ -203,6 +205,15 @@ export function FirstBoard() {
     );
   };
 
+  const blockNames = useMemo(() => {
+    const names: string[] = [];
+    for (const opt of themeOptions) names.push(opt.tag);
+    for (const s of allStocks) {
+      if (s.industry) names.push(s.industry);
+    }
+    return names;
+  }, [themeOptions, allStocks]);
+
   const closeImport = () => {
     if (importing) return;
     setImportOpen(false);
@@ -287,6 +298,7 @@ export function FirstBoard() {
   const nameByCode = Object.fromEntries(sortedStocks.map((s) => [s.code, s.name]));
 
   return (
+    <BlockResolveScope names={blockNames}>
     <div>
       <PageHeader
         title="涨停分析"
@@ -385,7 +397,7 @@ export function FirstBoard() {
                         : "border-border/50 bg-muted/20 text-muted-foreground hover:border-primary/30 hover:text-foreground",
                     )}
                   >
-                    {opt.tag}
+                    <BlockLabel name={opt.tag} className={active ? "text-primary" : undefined} />
                     <span className="ml-1 font-mono opacity-70">{opt.count}</span>
                   </button>
                 );
@@ -488,7 +500,9 @@ export function FirstBoard() {
                           ? <span className="rounded border border-border/50 bg-muted/30 px-1.5 py-0.5 font-medium text-foreground">{diveMeta.duration}</span>
                           : <span className="text-muted-foreground/50">—</span>}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">
+                        {s.industry ? <BlockLabel name={s.industry} /> : "—"}
+                      </td>
                       <td className="whitespace-nowrap px-2 py-2 text-right">
                         <button
                           onClick={() => dd.toggle(diveItem(s))}
@@ -621,5 +635,6 @@ export function FirstBoard() {
         </div>
       )}
     </div>
+    </BlockResolveScope>
   );
 }

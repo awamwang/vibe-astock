@@ -26,6 +26,9 @@ import {
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { Link } from "react-router-dom";
+import { StockLabel } from "@/components/stock/StockLabel";
+import { BlockLabel } from "@/components/block/BlockLabel";
+import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
@@ -260,25 +263,48 @@ function MessageKeywords({ item }: { item: AnalyzedMessage }) {
   );
 }
 
+function sortMessageTargets(targets: AnalyzedMessage["targets"]) {
+  return [...targets].sort((a, b) => {
+    const rank = (t: (typeof targets)[number]) => (t.kind === "stock" ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+}
+
+function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
+  if (t.kind === "stock" && t.code) {
+    return (
+      <Badge
+        className="border-primary/30 bg-primary/10 text-foreground"
+        title={targetHint(t)}
+      >
+        <StockLabel code={t.code} name={t.name} variant="inline" />
+      </Badge>
+    );
+  }
+  if (t.kind === "sector" || t.kind === "theme") {
+    return (
+      <Badge
+        className="border-amber-500/30 bg-amber-500/10 p-0 text-foreground"
+        title={targetHint(t)}
+      >
+        <BlockLabel name={targetTitle(t)} variant="tag" className="border-0 bg-transparent" />
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="border-border bg-background text-foreground" title={targetHint(t)}>
+      {targetTitle(t)}
+    </Badge>
+  );
+}
+
 function MessageTargets({ item, max = 4 }: { item: AnalyzedMessage; max?: number }) {
   if (!item.targets.length) return <span className="text-muted-foreground">—</span>;
+  const targets = sortMessageTargets(item.targets);
   return (
     <div className="flex flex-wrap gap-1">
-      {item.targets.slice(0, max).map((t, i) => (
-        <Badge
-          key={`${t.name}-${i}`}
-          className={cn(
-            "text-foreground",
-            t.kind === "stock"
-              ? "border-primary/30 bg-primary/10"
-              : t.kind === "sector"
-                ? "border-amber-500/30 bg-amber-500/10"
-                : "border-border bg-background",
-          )}
-          title={targetHint(t)}
-        >
-          {targetTitle(t)}
-        </Badge>
+      {targets.slice(0, max).map((t, i) => (
+        <MessageTargetBadge key={`${t.name}-${i}`} t={t} />
       ))}
     </div>
   );
@@ -827,7 +853,20 @@ export function MessageAnalysis() {
     }
   };
 
+  const blockNames = useMemo(() => {
+    const names: string[] = [];
+    const pool = [...items, ...calendarItems];
+    if (selected) pool.push(selected);
+    for (const item of pool) {
+      for (const t of item.targets) {
+        if ((t.kind === "sector" || t.kind === "theme") && t.name) names.push(t.name);
+      }
+    }
+    return names;
+  }, [items, calendarItems, selected]);
+
   return (
+    <BlockResolveScope names={blockNames}>
     <div className="w-full min-w-0 space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -1427,21 +1466,8 @@ export function MessageAnalysis() {
                 {selected.targets.length > 0 && (
                   <DetailSection label="影响标的">
                     <div className="flex flex-wrap gap-2">
-                      {selected.targets.map((t, i) => (
-                        <Badge
-                          key={i}
-                          className={cn(
-                            "px-2.5 py-1 text-sm text-foreground",
-                            t.kind === "stock"
-                              ? "border-primary/30 bg-primary/10"
-                              : t.kind === "sector"
-                                ? "border-amber-500/30 bg-amber-500/10"
-                                : "border-border bg-background",
-                          )}
-                          title={targetHint(t)}
-                        >
-                          {targetTitle(t)}
-                        </Badge>
+                      {sortMessageTargets(selected.targets).map((t, i) => (
+                        <MessageTargetBadge key={i} t={t} />
                       ))}
                     </div>
                   </DetailSection>
@@ -1647,5 +1673,6 @@ export function MessageAnalysis() {
         </div>
       )}
     </div>
+    </BlockResolveScope>
   );
 }

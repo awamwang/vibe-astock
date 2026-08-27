@@ -802,6 +802,9 @@ export const api = {
     request<ThsBlocksSnapshot>(`/ths-blocks/refresh/${encodeURIComponent(kind)}`, "POST", ths_dir ? { ths_dir } : {}),
   thsBlockStocks: (kind: string, blockId: string) =>
     get<ThsBlockStocksDetail>(`/ths-blocks/stocks?kind=${encodeURIComponent(kind)}&block_id=${encodeURIComponent(blockId)}`),
+  thsBlocksResolve: (names: string[]) =>
+    request<BlockResolveResult>("/ths-blocks/resolve", "POST", { names }),
+  thsBlocksIndexInfo: () => get<BlockIndexInfo>("/ths-blocks/index-info"),
 };
 
 export interface PluginPickResult {
@@ -899,6 +902,35 @@ export interface ThsBlocksSnapshot {
 export interface ThsBlockStockItem {
   code: string;
   market: string;
+}
+
+export interface ThsBlockRef {
+  kind: string;
+  kind_label: string;
+  id: string;
+  name: string;
+}
+
+export interface BlockResolveItem {
+  raw: string;
+  mapped: string;
+  status: "empty" | "matched" | "partial" | "unmatched";
+  block: ThsBlockRef | null;
+  candidates: ThsBlockRef[];
+}
+
+export interface BlockIndexInfo {
+  ready: boolean;
+  name_count: number;
+  ref_count: number;
+  updated_at?: string | null;
+  ths_dir?: string | null;
+}
+
+export interface BlockResolveResult {
+  items: BlockResolveItem[];
+  by_raw: Record<string, BlockResolveItem>;
+  index: BlockIndexInfo;
 }
 
 export interface ThsBlockStocksDetail {

@@ -6,6 +6,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
+import { BlockPanelHost, BlockPanelProvider, useBlockPanelOptional } from "@/components/block/BlockPanelContext";
 
 function XLogo({ className }: { className?: string }) {
   return (
@@ -46,8 +47,10 @@ const SETTINGS_NAV = [
 ];
 
 function MainShell() {
-  const panel = useStockPanelOptional();
-  const open = !!panel?.target;
+  const stockPanel = useStockPanelOptional();
+  const blockPanel = useBlockPanelOptional();
+  const stockOpen = !!stockPanel?.target;
+  const blockOpen = !!blockPanel?.target;
   const { pathname } = useLocation();
   const widePage = pathname === "/heat" || pathname === "/messages" || pathname === "/blocks";
   const settingsKeywordsPage = pathname === "/settings/keywords";
@@ -64,7 +67,8 @@ function MainShell() {
           <Outlet />
         </div>
       </div>
-      {open && <StockPanelHost />}
+      {stockOpen && <StockPanelHost />}
+      {blockOpen && <BlockPanelHost />}
     </main>
   );
 }
@@ -113,6 +117,7 @@ export function Layout() {
 
   return (
     <StockPanelProvider>
+      <BlockPanelProvider>
       <div className="flex h-screen">
         {/* Sidebar */}
         <aside className={cn(
@@ -187,6 +192,7 @@ export function Layout() {
 
         <MainShell />
       </div>
+      </BlockPanelProvider>
     </StockPanelProvider>
   );
 }

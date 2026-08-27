@@ -1036,6 +1036,26 @@ def ths_blocks_refresh_kind(kind: str, body: ThsBlockRefreshIn | None = None):
         raise HTTPException(502, f"板块刷新失败：{e}") from e
 
 
+class ThsBlockResolveIn(BaseModel):
+    names: list[str] = []
+
+
+@app.post("/api/ths-blocks/resolve")
+def ths_blocks_resolve(body: ThsBlockResolveIn | None = None):
+    """批量解析板块名称，返回匹配状态与同花顺板块引用。"""
+    names = (body.names if body else []) or []
+    try:
+        return {"data": ths_block_layer.export_resolve(names)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"板块解析失败：{e}") from e
+
+
+@app.get("/api/ths-blocks/index-info")
+def ths_blocks_index_info():
+    """返回板块名称索引是否就绪及规模。"""
+    return {"data": ths_block_layer.index_info()}
+
+
 @app.get("/api/ths-blocks/stocks")
 def ths_blocks_stocks(
     kind: str = Query(..., description="板块大类型"),

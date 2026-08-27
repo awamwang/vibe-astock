@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment, type ReactNode } from "react";
+import { useState, useEffect, useMemo, Fragment, type ReactNode } from "react";
 import { pctColor } from "@/lib/colors";
 import {
   Sparkles, Loader2, RefreshCw, TrendingUp, TrendingDown,
@@ -29,6 +29,8 @@ import {
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { cn } from "@/lib/utils";
 import { StockLabel } from "@/components/stock/StockLabel";
+import { BlockLabel } from "@/components/block/BlockLabel";
+import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
 const LIVE_MS = 5_000;
@@ -397,7 +399,22 @@ export function ShortBoard() {
     else loadSectors();
   };
 
+  const blockNames = useMemo(() => {
+    const names: string[] = [];
+    for (const s of emotion?.lianban_stocks ?? []) {
+      if (s.industry) names.push(s.industry);
+    }
+    for (const s of sectors) {
+      if (s.name) names.push(s.name);
+    }
+    for (const b of moodBlocks?.blocks ?? []) {
+      if (b.name) names.push(b.name);
+    }
+    return names;
+  }, [emotion?.lianban_stocks, sectors, moodBlocks?.blocks]);
+
   return (
+    <BlockResolveScope names={blockNames}>
     <div>
       <PageHeader
         title="短线盘面"
@@ -665,7 +682,9 @@ export function ShortBoard() {
                               <td className="max-w-56 px-2 py-2 text-xs">
                                 {s.reason ? <span className="text-foreground">{s.reason}</span> : <span className="text-muted-foreground/50">—</span>}
                               </td>
-                              <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
+                              <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">
+                                {s.industry ? <BlockLabel name={s.industry} /> : "—"}
+                              </td>
                               <td className="whitespace-nowrap px-2 py-2 text-right">
                                 <button
                                   onClick={() => dd.toggle(lianbanItem(s))}
@@ -765,7 +784,7 @@ export function ShortBoard() {
                 <tbody>
                   {sectors.slice(0, 15).map((s) => (
                     <tr key={s.name} className="border-b border-border/30">
-                      <td className="px-2 py-2 font-medium">{s.name}</td>
+                      <td className="px-2 py-2 font-medium"><BlockLabel name={s.name} /></td>
                       <td className={cn("px-2 py-2 font-mono", pctColor(s.pct))}>{s.pct > 0 ? "+" : ""}{s.pct}%</td>
                       <td className={cn("px-2 py-2 font-mono", pctColor(s.net))}>{s.net > 0 ? "+" : ""}{fmt(s.net)} 亿</td>
                       <td className="px-2 py-2 font-mono text-muted-foreground">{fmt(s.inflow)}</td>
@@ -811,7 +830,8 @@ export function ShortBoard() {
                     <tr key={b.code} className="border-b border-border/30">
                       <td className="px-2 py-2 font-mono text-xs text-muted-foreground/50">{b.sort}</td>
                       <td className="px-2 py-2">
-                        <span className="font-medium">{b.name}</span>{" "}
+                        <BlockLabel name={b.name} variant="text" className="font-medium" />
+                        {" "}
                         <span className="text-xs text-muted-foreground/50">{b.code}</span>
                       </td>
                       <td className={cn("px-2 py-2 font-mono",
@@ -871,7 +891,7 @@ export function ShortBoard() {
                   {col.rows.map((s, i) => (
                     <div key={s.name} className="flex items-center gap-3 border-b border-border/30 pb-1.5 text-sm last:border-0">
                       <span className="w-5 text-xs text-muted-foreground/50">{i + 1}</span>
-                      <span className="flex-1 truncate">{s.name}</span>
+                      <span className="flex-1 truncate"><BlockLabel name={s.name} /></span>
                       <span className={cn("font-mono text-xs", pctColor(s.pct))}>{s.pct > 0 ? "+" : ""}{s.pct}%</span>
                       <span className={cn("w-20 text-right font-mono text-xs", pctColor(s.net))}>{s.net > 0 ? "+" : ""}{fmt(s.net)} 亿</span>
                     </div>
@@ -885,5 +905,6 @@ export function ShortBoard() {
 
       <Disclaimer />
     </div>
+    </BlockResolveScope>
   );
 }
