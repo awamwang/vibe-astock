@@ -2,8 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw,
+  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw, Pencil,
 } from "lucide-react";
+import {
+  MessageDetailEdit,
+  draftFromMessage,
+  patchFromDraft,
+  type DetailEditDraft,
+} from "@/components/MessageDetailEdit";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
@@ -172,12 +178,15 @@ function SectionLabel({ children }: { children: ReactNode }) {
 function Badge({
   children,
   className,
+  title,
 }: {
   children: React.ReactNode;
   className?: string;
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
         className,
@@ -348,6 +357,9 @@ export function MessageAnalysis() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState<DetailEditDraft | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -435,7 +447,38 @@ export function MessageAnalysis() {
   }, []);
 
   const selectItem = (item: AnalyzedMessage) => {
+    setEditing(false);
+    setEditDraft(null);
     void loadDetail(item);
+  };
+
+  const startEdit = () => {
+    if (!selected) return;
+    setEditDraft(draftFromMessage(selected));
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditDraft(null);
+  };
+
+  const saveEdit = async () => {
+    if (!selected || !editDraft) return;
+    setSaveLoading(true);
+    try {
+      const updated = await api.messageAnalyzedPatch(selected.id, patchFromDraft(editDraft));
+      setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+      setSelected(updated);
+      setEditing(false);
+      setEditDraft(null);
+      notify.success("已保存人工修正");
+      await loadDetail(updated);
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "保存失败");
+    } finally {
+      setSaveLoading(false);
+    }
   };
 
   const clsSource = useMemo(() => sources.find((s) => s.id === "cls_telegraph"), [sources]);
@@ -1069,16 +1112,53 @@ export function MessageAnalysis() {
                     </button>
                     <button
                       type="button"
-                      disabled={analyzing || !hasLlm()}
+                      disabled={analyzing || !hasLlm() || editing}
                       className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
                       onClick={() => runAnalyze([selected.id])}
                     >
                       {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                       AI 分析
                     </button>
+                    {!editing ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground"
+                        onClick={startEdit}
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> 编辑
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          disabled={saveLoading}
+                          className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+                          onClick={() => void saveEdit()}
+                        >
+                          {saveLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saveLoading}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-40"
+                          onClick={cancelEdit}
+                        >
+                          取消
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
+                {editing && editDraft ? (
+                  <MessageDetailEdit
+                    sourceId={selected.source_id}
+                    draft={editDraft}
+                    onChange={setEditDraft}
+                  />
+                ) : (
+                  <>
                 {selected.url && (
                   <a
                     href={selected.url}
@@ -1193,6 +1273,8 @@ export function MessageAnalysis() {
                   rawMessages={rawMessages}
                   loading={detailLoading}
                 />
+                  </>
+                )}
               </div>
             )}
           </div>

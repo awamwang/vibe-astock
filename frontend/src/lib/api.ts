@@ -61,7 +61,7 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-export async function request<T>(path: string, method: "GET" | "POST" | "DELETE" | "PUT" = "GET", body?: unknown): Promise<T> {
+export async function request<T>(path: string, method: "GET" | "POST" | "DELETE" | "PUT" | "PATCH" = "GET", body?: unknown): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
   const opts: RequestInit = { method };

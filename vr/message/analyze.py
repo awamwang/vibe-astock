@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from . import store
@@ -14,16 +15,12 @@ _EFFECT = frozenset({
     "not_erupted", "early_hype", "ongoing_hype", "already_hyped", "faded", "invalid",
 })
 _TARGET_KIND = frozenset({"market", "sector", "theme", "stock", "other"})
-_EFFECTIVE = frozenset({"immediate", "scheduled"})
+_URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
 JSON_SKELETON = """{
   "title": "标题，字符串",
   "summary": "一句话摘要，不超过120字",
-  "detail": "详情，Markdown 允许多段",
   "keywords": ["关键词1", "关键词2"],
-  "marks": ["highlight"],
-  "effective_mode": "immediate 或 scheduled",
-  "effective_at": "指定生效时间 YYYY-MM-DD HH:MM:SS，immediate 时为 null",
   "targets": [{"kind": "stock|sector|theme|market|other", "code": "6位代码或null", "name": "显示名"}],
   "impact_level": "critical|high|medium|low|noise",
   "freshness": "new|follow_up|duplicate|rumor",
@@ -37,8 +34,6 @@ SYSTEM = """你是 A 股资讯整理助手。根据用户给出的单条消息�
 - freshness（消息新旧）仅根据本条正文判断，禁止引用或假设系统里还有其他消息。
 - duplicate=与常见公开信息高度重复；follow_up=同主题续报；rumor=未经证实的传闻；new=全新信息。
 - effect_status 默认 not_erupted，除非正文明确提到已在炒作/已兑现等。
-- 生效「立即」时 effective_mode=immediate，effective_at=null；有明确未来时间点则 scheduled。
-- 保留原文链接类信息到 detail 末尾即可；marks 可含 highlight（重要/标红类）。
 
 请严格只输出一个 JSON 对象，不要 markdown 代码块，不要解释。"""
 
@@ -88,6 +83,56 @@ def _norm_list(val: Any) -> list[str]:
     return []
 
 
+def _extract_url(text: str) -> str | None:
+    m = _URL_RE.search(text or "")
+    if not m:
+        return None
+    return m.group(0).rstrip(".,;)")
+
+
+def _merge_keywords(*groups: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in groups:
+        for item in group:
+            k = str(item).strip()
+            if k and k not in seen:
+                seen.add(k)
+                out.append(k)
+    return out
+
+
+def _target_key(t: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(t.get("kind") or "other"),
+        str(t.get("code") or "").strip(),
+        str(t.get("name") or "").strip(),
+    )
+
+
+def _merge_targets(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for group in groups:
+        for t in group:
+            key = _target_key(t)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(t)
+    return out
+
+
+def _existing_targets(raw: RawMessage, analyzed: AnalyzedMessage) -> list[dict[str, Any]]:
+    if analyzed.targets:
+        return [t.model_dump() for t in analyzed.targets]
+    return [
+        ImpactTarget.model_validate(t).model_dump()
+        for t in (raw.meta.get("_targets_json") or [])
+        if isinstance(t, dict)
+    ]
+
+
 def _norm_targets(val: Any) -> list[dict[str, Any]]:
     if not isinstance(val, list):
         return []
@@ -109,42 +154,37 @@ def _norm_targets(val: Any) -> list[dict[str, Any]]:
 
 
 def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: AnalyzedMessage) -> dict[str, Any]:
+    """将 AI 结构化字段融合进已有数据；detail/marks/生效时间等不由 AI 改写。"""
     summary = str(obj.get("summary") or analyzed.summary or raw.title or raw.content[:120]).strip()
     if len(summary) > 120:
         summary = summary[:117] + "…"
     impact = str(obj.get("impact_level") or analyzed.impact_level or "medium")
     if impact not in _IMPACT:
-        impact = "medium"
-    freshness = str(obj.get("freshness") or "new")
+        impact = analyzed.impact_level if analyzed.impact_level in _IMPACT else "medium"
+    freshness = str(obj.get("freshness") or analyzed.freshness or "new")
     if freshness not in _FRESHNESS:
-        freshness = "new"
+        freshness = analyzed.freshness if analyzed.freshness in _FRESHNESS else "new"
     effect = str(obj.get("effect_status") or analyzed.effect_status or "not_erupted")
     if effect not in _EFFECT:
-        effect = "not_erupted"
-    eff_mode = str(obj.get("effective_mode") or analyzed.effective_mode or "immediate")
-    if eff_mode not in _EFFECTIVE:
-        eff_mode = "immediate"
-    eff_at = obj.get("effective_at")
-    eff_at_s = str(eff_at).strip() if eff_at else None
-    if eff_mode == "immediate":
-        eff_at_s = None
-    targets = _norm_targets(obj.get("targets"))
-    if not targets and analyzed.targets:
-        targets = [t.model_dump() for t in analyzed.targets]
-    title = str(obj.get("title") or raw.title or analyzed.title or summary[:80]).strip()
-    detail = str(obj.get("detail") or raw.content or analyzed.detail).strip()
-    keywords = _norm_list(obj.get("keywords")) or list(raw.keywords or analyzed.keywords)
-    marks = _norm_list(obj.get("marks")) or list(raw.marks or analyzed.marks)
-    url = raw.url or analyzed.url
+        effect = analyzed.effect_status if analyzed.effect_status in _EFFECT else "not_erupted"
+    existing_targets = _existing_targets(raw, analyzed)
+    ai_targets = _norm_targets(obj.get("targets"))
+    targets = _merge_targets(existing_targets, ai_targets)
+    ai_title = str(obj.get("title") or "").strip()
+    title = ai_title or analyzed.title or raw.title or summary[:80]
+    detail = (raw.content or analyzed.detail or "").strip()
+    keywords = _merge_keywords(
+        list(raw.keywords),
+        list(analyzed.keywords),
+        _norm_list(obj.get("keywords")),
+    )
+    url = raw.url or analyzed.url or _extract_url(detail) or ""
     return {
         "title": title,
         "summary": summary,
         "detail": detail,
         "keywords": keywords,
-        "marks": marks,
         "url": url,
-        "effective_mode": eff_mode,
-        "effective_at": eff_at_s,
         "targets": targets,
         "impact_level": impact,
         "freshness": freshness,
@@ -161,22 +201,14 @@ def build_user_prompt(raw: RawMessage, analyzed: AnalyzedMessage) -> str:
     ]
     if raw.title or analyzed.title:
         parts.append("【标题】" + (raw.title or analyzed.title))
-    if raw.url or analyzed.url:
-        parts.append("【链接】" + (raw.url or analyzed.url))
     if raw.keywords:
         parts.append("【已有标签】" + "、".join(raw.keywords))
-    existing = analyzed.targets or []
-    if not existing:
-        existing = [
-            ImpactTarget.model_validate(t)
-            for t in (raw.meta.get("_targets_json") or [])
-            if isinstance(t, dict)
-        ]
+    existing = _existing_targets(raw, analyzed)
     if existing:
         lines = []
         for t in existing:
-            code_part = f"({t.code})" if t.code else ""
-            lines.append(f"- {t.kind}:{t.name}{code_part}")
+            code_part = f"({t['code']})" if t.get("code") else ""
+            lines.append(f"- {t['kind']}:{t['name']}{code_part}")
         parts.append("【已有标的】\n" + "\n".join(lines))
         parts.append("（分析时请保留以上已有标的，可补充但勿清空）")
     parts.append("【正文】\n" + (raw.content or analyzed.detail))

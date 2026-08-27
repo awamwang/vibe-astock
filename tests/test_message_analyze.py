@@ -33,11 +33,11 @@ def test_parse_llm_patch(msg_db):
     obj = {
         "title": "低空经济政策",
         "summary": "低空经济再出政策利好",
-        "detail": "正文展开…",
+        "detail": "AI 不应改写 detail",
         "keywords": ["低空经济", "政策"],
-        "marks": [],
-        "effective_mode": "immediate",
-        "effective_at": None,
+        "marks": ["highlight"],
+        "effective_mode": "scheduled",
+        "effective_at": "2026-12-31 00:00:00",
         "targets": [{"kind": "theme", "name": "低空经济", "code": None}],
         "impact_level": "high",
         "freshness": "new",
@@ -46,7 +46,55 @@ def test_parse_llm_patch(msg_db):
     patch = analyze_mod._parse_llm_patch(obj, raw=raw, analyzed=analyzed)
     assert patch["impact_level"] == "high"
     assert patch["freshness"] == "new"
-    assert patch["keywords"] == ["低空经济", "政策"]
+    assert patch["keywords"] == ["9", "低空经济", "政策"]
+    assert patch["detail"] == raw.content
+    assert "marks" not in patch
+    assert "effective_mode" not in patch
+    assert "effective_at" not in patch
+
+
+def test_parse_llm_patch_preserves_targets(msg_db):
+    drafts = [
+        RawMessageDraft(
+            draft_key="d1b",
+            source_id="paste",
+            source_label="粘贴",
+            content="测试",
+            title="测试",
+        )
+    ]
+    raw = store.insert_raw_batch(drafts, path=msg_db)[0]
+    analyzed = store.upsert_analyzed_from_raw(
+        raw,
+        patch={"targets": [{"kind": "stock", "code": "600000", "name": "浦发银行"}]},
+        path=msg_db,
+    )
+    obj = {
+        "summary": "摘要",
+        "targets": [{"kind": "theme", "name": "低空经济", "code": None}],
+        "impact_level": "medium",
+        "freshness": "new",
+        "effect_status": "not_erupted",
+    }
+    patch = analyze_mod._parse_llm_patch(obj, raw=raw, analyzed=analyzed)
+    assert len(patch["targets"]) == 2
+    assert patch["targets"][0]["code"] == "600000"
+
+
+def test_extract_url_from_content(msg_db):
+    drafts = [
+        RawMessageDraft(
+            draft_key="d1c",
+            source_id="paste",
+            source_label="粘贴",
+            content="详见 https://example.com/news/1 报道",
+            title="链接测试",
+        )
+    ]
+    raw = store.insert_raw_batch(drafts, path=msg_db)[0]
+    analyzed = store.upsert_analyzed_from_raw(raw, path=msg_db)
+    patch = analyze_mod._parse_llm_patch({"summary": "摘要"}, raw=raw, analyzed=analyzed)
+    assert patch["url"] == "https://example.com/news/1"
 
 
 def test_analyze_one_mock(msg_db, monkeypatch):
@@ -66,11 +114,7 @@ def test_analyze_one_mock(msg_db, monkeypatch):
         {
             "title": "测试",
             "summary": "测试摘要",
-            "detail": "测试详情",
             "keywords": ["测试"],
-            "marks": [],
-            "effective_mode": "immediate",
-            "effective_at": None,
             "targets": [],
             "impact_level": "medium",
             "freshness": "new",
@@ -88,6 +132,7 @@ def test_analyze_one_mock(msg_db, monkeypatch):
         analyzed_id=analyzed.id,
     )
     assert result.summary == "测试摘要"
+    assert result.detail == raw.content
     assert result.analyzed_by == "ai"
     assert result.status == "draft"
 

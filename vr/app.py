@@ -716,6 +716,7 @@ class AnalyzedPatchIn(BaseModel):
     detail: str | None = None
     effective_mode: str | None = None
     effective_at: str | None = None
+    produced_at: str | None = None
     impact_level: str | None = None
     freshness: str | None = None
     effect_status: str | None = None
