@@ -849,11 +849,21 @@ export interface ThsBlockRow {
   name: string;
   node_type: "branch" | "leaf" | "flat";
   tree_path: string;
+  depth?: number;
+  parent_id?: string | null;
+  tree_order?: number;
   custom_type?: "static" | "dynamic";
   dynamic_kind?: "broker" | "concept" | "rule";
   query_key?: string;
   hex_id?: string;
   stock_count?: number;
+}
+
+export interface ThsTreeNode {
+  id: string;
+  name: string;
+  node_type: "branch" | "leaf";
+  children?: ThsTreeNode[];
 }
 
 export interface ThsBlockKindSnapshot {

@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import cache, linker, stocks
+from . import cache, linker, persist, stocks, tree as block_tree
 
 _BEIJING = timezone(timedelta(hours=8))
 _TREE_KINDS = set(linker.tree_kinds())
@@ -70,31 +70,71 @@ def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _enrich_leaf_row(
+    row: dict[str, Any],
+    *,
+    blocks_names: dict[str, str] | None,
+    blocks_meta: dict[str, dict[str, Any]] | None,
+) -> None:
+    """用 list 接口的 blocks / blocks_meta 补全树叶子节点的名称与扩展字段。"""
+    if row.get("node_type") == "branch":
+        return
+    bid = str(row.get("id") or "")
+    if blocks_names and not row.get("name"):
+        row["name"] = str(blocks_names.get(bid) or "").strip()
+    if blocks_meta and bid in blocks_meta:
+        row.update(_custom_row_fields(blocks_meta[bid]))
+
+
 def _flatten_tree(
     node: dict[str, Any],
     *,
     kind: str,
     kind_label: str,
     path_parts: list[str] | None = None,
+    depth: int = 0,
+    parent_id: str | None = None,
+    blocks_names: dict[str, str] | None = None,
+    blocks_meta: dict[str, dict[str, Any]] | None = None,
+    order_counter: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     parts = list(path_parts or [])
     name = str(node.get("name") or "").strip()
     label = name or str(node.get("id") or "")
     cur_path = parts + [label]
+    node_id = str(node.get("id") or "")
+    node_type = str(node.get("node_type") or "leaf")
+    if order_counter is None:
+        order_counter = [0]
     row: dict[str, Any] = {
         "kind": kind,
         "kind_label": kind_label,
-        "id": str(node.get("id") or ""),
+        "id": node_id,
         "name": name,
-        "node_type": str(node.get("node_type") or "leaf"),
+        "node_type": node_type,
         "tree_path": " › ".join(cur_path),
+        "depth": depth,
+        "parent_id": parent_id,
+        "tree_order": order_counter[0],
     }
+    order_counter[0] += 1
+    _enrich_leaf_row(row, blocks_names=blocks_names, blocks_meta=blocks_meta)
     rows = [row]
-    if node.get("node_type") == "branch":
+    if node_type == "branch":
         for child in node.get("children") or []:
             if isinstance(child, dict):
                 rows.extend(
-                    _flatten_tree(child, kind=kind, kind_label=kind_label, path_parts=cur_path)
+                    _flatten_tree(
+                        child,
+                        kind=kind,
+                        kind_label=kind_label,
+                        path_parts=cur_path,
+                        depth=depth + 1,
+                        parent_id=node_id or None,
+                        blocks_names=blocks_names,
+                        blocks_meta=blocks_meta,
+                        order_counter=order_counter,
+                    )
                 )
     return rows
 
@@ -144,26 +184,55 @@ def _fetch_kind_entry(ths_dir: str, kind: str) -> tuple[dict[str, Any], list[str
 
     if kind in _TREE_KINDS:
         try:
-            tree_payload = linker.fetch_tree(kind, ths_dir=ths_dir)
-            tree = tree_payload.get("tree")
+            tree_result = block_tree.build_block_tree(
+                ths_dir, kind_key, names=blocks_names
+            )
+            tree = tree_result.get("tree")
             if not isinstance(tree, dict) or not tree:
                 raise RuntimeError("板块树为空")
-            entry["root_id"] = tree_payload.get("root_id")
-            entry["root_name"] = tree_payload.get("root_name")
-            entry["branch_count"] = tree_payload.get("branch_count")
-            entry["leaf_count"] = tree_payload.get("leaf_count")
+            entry["root_id"] = tree_result.get("root_id")
+            entry["root_name"] = tree_result.get("root_name")
+            entry["branch_count"] = tree_result.get("branch_count")
+            entry["leaf_count"] = tree_result.get("leaf_count")
             entry["tree"] = tree
             entry["tree_mode"] = "tree"
-            entry["rows"] = _flatten_tree(tree, kind=kind_key, kind_label=kind_label)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{kind}: 树结构不可用（{exc}），已使用 flat 列表")
-            entry["tree_mode"] = "flat_fallback"
-            entry["rows"] = _rows_from_list(
-                kind_key,
-                kind_label,
-                blocks_names,
+            entry["rows"] = _flatten_tree(
+                tree,
+                kind=kind_key,
+                kind_label=kind_label,
+                blocks_names=blocks_names,
                 blocks_meta=blocks_meta,
             )
+        except Exception as local_exc:  # noqa: BLE001
+            try:
+                tree_payload = linker.fetch_tree(kind, ths_dir=ths_dir)
+                tree = tree_payload.get("tree")
+                if not isinstance(tree, dict) or not tree:
+                    raise RuntimeError("板块树为空")
+                entry["root_id"] = tree_payload.get("root_id")
+                entry["root_name"] = tree_payload.get("root_name")
+                entry["branch_count"] = tree_payload.get("branch_count")
+                entry["leaf_count"] = tree_payload.get("leaf_count")
+                entry["tree"] = tree
+                entry["tree_mode"] = "tree"
+                entry["rows"] = _flatten_tree(
+                    tree,
+                    kind=kind_key,
+                    kind_label=kind_label,
+                    blocks_names=blocks_names,
+                    blocks_meta=blocks_meta,
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(
+                    f"{kind}: 树结构不可用（{local_exc}；ths-linker: {exc}），已使用 flat 列表"
+                )
+                entry["tree_mode"] = "flat_fallback"
+                entry["rows"] = _rows_from_list(
+                    kind_key,
+                    kind_label,
+                    blocks_names,
+                    blocks_meta=blocks_meta,
+                )
     else:
         entry["rows"] = _rows_from_list(
             kind_key,
@@ -180,6 +249,21 @@ def _merge_errors(existing: list[str], *, kind: str, new_items: list[str]) -> li
     return kept + new_items
 
 
+def _maybe_persist_custom_dynamic(
+    *,
+    kind: str,
+    ths_dir: str,
+    entry: dict[str, Any] | None,
+    warnings: list[str],
+) -> None:
+    if kind != "custom" or not entry:
+        return
+    try:
+        persist.save_dynamic_custom_blocks(ths_dir=ths_dir, entry=entry)
+    except OSError as exc:
+        warnings.append(f"custom: 动态板块落盘失败（{exc}）")
+
+
 def _apply_kind_refresh(
     snap: dict[str, Any],
     kind: str,
@@ -193,6 +277,9 @@ def _apply_kind_refresh(
     try:
         entry, warnings = _fetch_kind_entry(resolved, kind)
         kinds_data[kind] = entry
+        _maybe_persist_custom_dynamic(
+            kind=kind, ths_dir=resolved, entry=entry, warnings=warnings
+        )
         errors = _merge_errors(errors, kind=kind, new_items=warnings)
     except Exception as exc:  # noqa: BLE001
         errors = _merge_errors(errors, kind=kind, new_items=[f"{kind}: {exc}"])
@@ -231,6 +318,9 @@ def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
             try:
                 entry, warnings = _fetch_kind_entry(resolved, kind)
                 kinds_data[kind] = entry
+                _maybe_persist_custom_dynamic(
+                    kind=kind, ths_dir=resolved, entry=entry, warnings=warnings
+                )
                 errors.extend(warnings)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{kind}: {exc}")

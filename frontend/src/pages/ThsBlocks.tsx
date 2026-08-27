@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Boxes, Loader2, RefreshCw, Search } from "lucide-react";
+import {
+  Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
+  LayoutList, Loader2, Network, RefreshCw, Search,
+} from "lucide-react";
 import { toast } from "sonner";
 import { StockLabel } from "@/components/stock/StockLabel";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -8,10 +11,12 @@ import { cn } from "@/lib/utils";
 import {
   api, ApiError,
   type Quote, type ThsBlockRow, type ThsBlocksSnapshot, type ThsBlockStocksDetail,
+  type ThsTreeNode,
 } from "@/lib/api";
 import {
   THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL,
-  thsBlockKindLabel, thsCustomSubtypeLabel,
+  collectThsBranchIds, filterThsTree, parseThsTree,
+  sortRowsByTreeOrder, thsBlockKindLabel, thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
 
 const notify = {
@@ -25,6 +30,7 @@ const inputCls =
   "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
 type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype";
+type ViewMode = "tree" | "list";
 
 function DetailSection({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -45,6 +51,94 @@ function kindHasError(errors: string[] | undefined, kind: string): boolean {
   return (errors || []).some((e) => e.startsWith(`${kind}:`));
 }
 
+function ThsBlockTreeItem({
+  node,
+  depth,
+  expanded,
+  rowById,
+  selectedId,
+  onToggle,
+  onSelect,
+}: {
+  node: ThsTreeNode;
+  depth: number;
+  expanded: Set<string>;
+  rowById: Map<string, ThsBlockRow>;
+  selectedId: string | null;
+  onToggle: (id: string) => void;
+  onSelect: (row: ThsBlockRow) => void;
+}) {
+  const isBranch = node.node_type === "branch";
+  const isOpen = isBranch && expanded.has(node.id);
+  const row = rowById.get(node.id);
+  const active = selectedId === node.id;
+  const stockCount = row?.stock_count;
+
+  const handleClick = () => {
+    if (isBranch) {
+      onToggle(node.id);
+      if (row) onSelect(row);
+      return;
+    }
+    if (row) onSelect(row);
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={handleClick}
+        className={cn(
+          "group flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
+          "hover:bg-muted/40",
+          active && "bg-primary/10 ring-1 ring-primary/20",
+        )}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+          {isBranch ? (
+            isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+          ) : (
+            <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+          )}
+        </span>
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+          {isBranch ? (
+            isOpen
+              ? <FolderOpen className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              : <Folder className="h-4 w-4 text-amber-600/80 dark:text-amber-400/80" />
+          ) : (
+            <Boxes className="h-3.5 w-3.5 text-primary/70" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+          {node.name || node.id}
+        </span>
+        {stockCount != null && (
+          <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+            {stockCount}
+          </span>
+        )}
+        <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground/70 sm:inline">
+          {node.id}
+        </span>
+      </button>
+      {isBranch && isOpen && (node.children ?? []).map((child) => (
+        <ThsBlockTreeItem
+          key={child.id}
+          node={child}
+          depth={depth + 1}
+          expanded={expanded}
+          rowById={rowById}
+          selectedId={selectedId}
+          onToggle={onToggle}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function ThsBlocks() {
   const [snapshot, setSnapshot] = useState<ThsBlocksSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,6 +148,8 @@ export function ThsBlocks() {
   const [kindFilter, setKindFilter] = useState<string>("conception");
   const [q, setQ] = useState("");
   const [nodeFilter, setNodeFilter] = useState<"all" | "leaf" | "branch">("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("tree");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
 
@@ -132,6 +228,45 @@ export function ThsBlocks() {
   const kindEntry = snapshot?.kinds?.[kindFilter];
   const allRows = kindEntry?.rows || [];
   const showSubtypeCol = kindFilter === "custom";
+  const canShowTree = kindEntry?.tree_mode === "tree" && !!kindEntry.tree;
+
+  useEffect(() => {
+    if (canShowTree) {
+      setViewMode("tree");
+    } else {
+      setViewMode("list");
+    }
+  }, [kindFilter, canShowTree]);
+
+  useEffect(() => {
+    if (!canShowTree || !kindEntry?.tree) {
+      setExpanded(new Set());
+      return;
+    }
+    const root = parseThsTree(kindEntry.tree);
+    if (!root) return;
+    const ids = new Set<string>();
+    const walk = (node: ThsTreeNode, depth: number) => {
+      if (node.node_type === "branch" && depth < 2) {
+        ids.add(node.id);
+        for (const child of node.children ?? []) walk(child, depth + 1);
+      }
+    };
+    walk(root, 0);
+    setExpanded(ids);
+  }, [kindFilter, canShowTree, kindEntry?.tree]);
+
+  const rowById = useMemo(
+    () => new Map(allRows.map((row) => [row.id, row])),
+    [allRows],
+  );
+
+  const filteredTree = useMemo(() => {
+    if (!canShowTree || !kindEntry?.tree) return null;
+    const root = parseThsTree(kindEntry.tree);
+    if (!root) return null;
+    return filterThsTree(root, { query: q, nodeFilter });
+  }, [canShowTree, kindEntry?.tree, q, nodeFilter]);
 
   const filteredRows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -148,6 +283,9 @@ export function ThsBlocks() {
         || (row.query_key || "").toLowerCase().includes(query)
       );
     });
+    if (viewMode === "tree" && canShowTree && !query && nodeFilter === "all") {
+      return sortRowsByTreeOrder(rows);
+    }
     rows = [...rows].sort((a, b) => {
       let av: string;
       let bv: string;
@@ -162,7 +300,7 @@ export function ThsBlocks() {
       return order === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [allRows, q, nodeFilter, sort, order]);
+  }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree]);
 
   const toggleSort = (key: SortKey) => {
     if (sort === key) setOrder((o) => (o === "asc" ? "desc" : "asc"));
@@ -171,6 +309,24 @@ export function ThsBlocks() {
       setOrder("asc");
     }
   };
+
+  const toggleExpanded = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const expandAllBranches = () => {
+    if (!kindEntry?.tree) return;
+    const root = parseThsTree(kindEntry.tree);
+    if (!root) return;
+    setExpanded(new Set(collectThsBranchIds(root)));
+  };
+
+  const collapseAllBranches = () => setExpanded(new Set());
 
   const openDetail = async (row: ThsBlockRow) => {
     setSelected(row);
@@ -202,6 +358,7 @@ export function ThsBlocks() {
 
   const emptyCache = !snapshot?.updated_at;
   const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
+  const visibleCount = filteredRows.length;
 
   return (
     <div className="space-y-6">
@@ -212,7 +369,7 @@ export function ThsBlocks() {
               <Boxes className="h-5 w-5 text-primary" />
               <h1 className="text-xl font-bold text-foreground">同花顺板块</h1>
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="max-w-2xl text-sm text-muted-foreground">
               概念 / 行业 / 地域层级树，以及自定义、每日动态板块；数据经 ths-linker 读取，成分股来自本地配置。
             </p>
           </div>
@@ -231,6 +388,7 @@ export function ThsBlocks() {
           {THS_BLOCK_KINDS.map((k) => {
             const loaded = snapshot?.kinds?.[k.value] != null;
             const hasErr = kindHasError(snapshot?.errors, k.value);
+            const count = snapshot?.kinds?.[k.value]?.count;
             return (
               <button
                 key={k.value}
@@ -249,10 +407,8 @@ export function ThsBlocks() {
                 )}
               >
                 {k.label}
-                {snapshot?.kinds?.[k.value]?.count != null && (
-                  <span className="ml-1.5 tabular-nums opacity-70">
-                    {snapshot.kinds[k.value].count}
-                  </span>
+                {count != null && (
+                  <span className="ml-1.5 tabular-nums opacity-70">{count}</span>
                 )}
                 {!loaded && !emptyCache && (
                   <span className="ml-1 text-xs opacity-60">未加载</span>
@@ -262,22 +418,25 @@ export function ThsBlocks() {
           })}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {emptyCache ? (
             <span className="text-amber-700 dark:text-amber-300">尚未刷新 — 请点击「刷新板块」从 ths-linker 拉取</span>
           ) : (
             <>
-              <span>缓存时间 <strong className="text-foreground">{snapshot?.updated_at}</strong></span>
+              <span>缓存 <strong className="text-foreground">{snapshot?.updated_at}</strong></span>
               {snapshot?.ths_dir && (
-                <span className="truncate" title={snapshot.ths_dir}>· {snapshot.ths_dir}</span>
+                <span className="max-w-xs truncate" title={snapshot.ths_dir}>{snapshot.ths_dir}</span>
               )}
             </>
           )}
           {kindEntry?.branch_count != null && (
-            <span>· 树节点 {kindEntry.branch_count} · 叶子 {kindEntry.leaf_count}</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-muted/40 px-2 py-0.5">
+              <Network className="h-3 w-3" />
+              分组 {kindEntry.branch_count} · 板块 {kindEntry.leaf_count}
+            </span>
           )}
           {kindEntry?.tree_mode === "flat_fallback" && (
-            <span className="text-amber-700 dark:text-amber-300">· 树结构不可用，已展示 flat 列表</span>
+            <span className="text-amber-700 dark:text-amber-300">树结构不可用，已展示 flat 列表</span>
           )}
           {kindEntry && (
             <button
@@ -293,8 +452,8 @@ export function ThsBlocks() {
       </section>
 
       <section className="w-full min-w-0">
-        <div className="grid w-full min-w-0 gap-4 xl:grid-cols-3">
-          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-2">
+        <div className="grid w-full min-w-0 gap-4 xl:grid-cols-5">
+          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-3">
             <div className="border-b border-border/60 p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative min-w-[200px] flex-1">
@@ -315,14 +474,56 @@ export function ThsBlocks() {
                   <option value="leaf">仅叶子板块</option>
                   <option value="branch">仅分组</option>
                 </select>
+                {canShowTree && (
+                  <div className="inline-flex rounded-lg border border-border p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("tree")}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                        viewMode === "tree"
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <Network className="h-3.5 w-3.5" /> 树形
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("list")}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                        viewMode === "list"
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <LayoutList className="h-3.5 w-3.5" /> 列表
+                    </button>
+                  </div>
+                )}
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                共 <strong className="text-foreground">{filteredRows.length}</strong> 条
-                {kindEntry ? ` · ${kindEntry.kind_label}` : ""}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  共 <strong className="text-foreground">{visibleCount}</strong> 条
+                  {kindEntry ? ` · ${kindEntry.kind_label}` : ""}
+                  {viewMode === "tree" && canShowTree ? " · 树形浏览" : ""}
+                </p>
+                {viewMode === "tree" && canShowTree && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <button type="button" onClick={expandAllBranches} className="text-primary hover:underline">
+                      全部展开
+                    </button>
+                    <span className="text-muted-foreground/50">|</span>
+                    <button type="button" onClick={collapseAllBranches} className="text-primary hover:underline">
+                      全部折叠
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="max-h-[calc(100vh-280px)] overflow-auto">
+            <div className="max-h-[calc(100vh-280px)] overflow-auto p-2">
               {loading ? (
                 <div className="flex items-center justify-center gap-2 p-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" /> 加载中…
@@ -340,23 +541,40 @@ export function ThsBlocks() {
                     </p>
                   )}
                 </div>
+              ) : viewMode === "tree" && canShowTree ? (
+                filteredTree ? (
+                  <div className="py-1">
+                    <ThsBlockTreeItem
+                      node={filteredTree}
+                      depth={0}
+                      expanded={expanded}
+                      rowById={rowById}
+                      selectedId={selected?.id ?? null}
+                      onToggle={toggleExpanded}
+                      onSelect={(row) => void openDetail(row)}
+                    />
+                  </div>
+                ) : (
+                  <p className="p-8 text-center text-sm text-muted-foreground">无匹配板块</p>
+                )
               ) : (
                 <table className="w-full min-w-[640px] text-sm">
                   <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
                     <tr className="border-b border-border/60 text-left">
-                      <SortTh label="ID" active={sort === "id"} order={order} onClick={() => toggleSort("id")} />
-                      <SortTh label="名称" active={sort === "name"} order={order} onClick={() => toggleSort("name")} />
+                      <SortTh col="id" label="ID" sortCol={sort} order={order} onSort={toggleSort} />
+                      <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={toggleSort} />
                       {showSubtypeCol && (
-                        <SortTh label="子类型" active={sort === "subtype"} order={order} onClick={() => toggleSort("subtype")} />
+                        <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={toggleSort} />
                       )}
-                      <SortTh label="节点" active={sort === "node_type"} order={order} onClick={() => toggleSort("node_type")} />
-                      <SortTh label="树路径" active={sort === "tree_path"} order={order} onClick={() => toggleSort("tree_path")} />
+                      <SortTh col="node_type" label="节点" sortCol={sort} order={order} onSort={toggleSort} />
+                      <SortTh col="tree_path" label="树路径" sortCol={sort} order={order} onSort={toggleSort} />
                     </tr>
                   </thead>
                   <tbody>
                     {filteredRows.map((row) => {
                       const active = selected?.kind === row.kind && selected?.id === row.id;
                       const subtype = thsCustomSubtypeLabel(row);
+                      const depth = row.depth ?? 0;
                       return (
                         <tr
                           key={`${row.kind}-${row.id}`}
@@ -368,7 +586,9 @@ export function ThsBlocks() {
                         >
                           <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{row.id}</td>
                           <td className="px-4 py-2.5 font-medium text-foreground">
-                            {row.name || "—"}
+                            <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
+                              {row.name || "—"}
+                            </span>
                             {row.stock_count != null && (
                               <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">
                                 ({row.stock_count})
@@ -400,21 +620,37 @@ export function ThsBlocks() {
             </div>
           </div>
 
-          <div className="glass min-w-0 rounded-2xl xl:col-span-1">
+          <div className="glass min-w-0 rounded-2xl xl:col-span-2">
             <div className="border-b border-border/60 px-4 py-3">
               <p className="text-xs font-bold uppercase tracking-wider text-primary">板块详情</p>
             </div>
             <div className="max-h-[calc(100vh-280px)] overflow-auto p-4">
               {!selected ? (
-                <p className="text-sm text-muted-foreground">点击左侧表格行查看详情与成分股</p>
+                <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+                  <Boxes className="h-10 w-10 text-muted-foreground/30" />
+                  <p className="text-sm text-muted-foreground">选择左侧板块查看详情与成分股</p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   <div>
-                    <h2 className="text-lg font-semibold text-foreground">{selected.name || selected.id}</h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-semibold text-foreground">{selected.name || selected.id}</h2>
+                      <span className={cn(
+                        "rounded-md px-2 py-0.5 text-[11px] font-bold",
+                        selected.node_type === "branch"
+                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                          : "bg-primary/15 text-primary",
+                      )}>
+                        {THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}
+                      </span>
+                    </div>
                     <p className="mt-1 font-mono text-xs text-muted-foreground">{selected.id}</p>
+                    {selected.tree_path && (
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selected.tree_path}</p>
+                    )}
                   </div>
 
-                  <div className="glass rounded-xl bg-muted/20 p-4 text-sm">
+                  <div className="rounded-xl border border-border/60 bg-muted/15 p-4 text-sm">
                     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
                       <dt className="text-muted-foreground">类型</dt>
                       <dd className="text-foreground">{thsBlockKindLabel(selected.kind)}</dd>
@@ -442,75 +678,71 @@ export function ThsBlocks() {
                           <dd className="text-foreground">{selected.stock_count}</dd>
                         </>
                       )}
-                      <dt className="text-muted-foreground">节点</dt>
-                      <dd className="text-foreground">{THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}</dd>
-                      <dt className="text-muted-foreground">路径</dt>
-                      <dd className="text-foreground">{selected.tree_path || "—"}</dd>
                     </dl>
                   </div>
 
                   {selected.node_type === "branch" ? (
-                    <p className="text-sm text-muted-foreground">分组节点不含成分股，请选择叶子板块。</p>
+                    <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
+                      分组节点不含成分股，请展开并选择叶子板块。
+                    </p>
                   ) : (
-                    <>
-                      <DetailSection label="成分股">
-                        {stocksLoading ? (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" /> 加载成分股…
-                          </div>
-                        ) : stocksDetail ? (
-                          <>
-                            <p className="mb-2 text-xs text-muted-foreground">
-                              共 <strong className="text-foreground">{stocksDetail.count}</strong> 只
-                            </p>
-                            {stocksDetail.count === 0 ? (
-                              <p className="text-sm text-muted-foreground">暂无成分股数据</p>
-                            ) : (
-                              <div className="overflow-hidden rounded-xl border border-border/60">
-                                <table className="w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-border/60 bg-muted/20 text-left text-xs text-muted-foreground">
-                                      <th className="px-3 py-2">代码</th>
-                                      <th className="px-3 py-2">名称</th>
-                                      <th className="px-3 py-2 text-right">涨跌幅</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {stocksDetail.stocks.map((s) => {
-                                      const q = quotes[s.code];
-                                      const pct = q?.change_pct;
-                                      return (
-                                        <tr key={s.code} className="border-b border-border/30">
-                                          <td className="px-3 py-2">
-                                            <StockLabel code={s.code} variant="codeOnly" />
-                                          </td>
-                                          <td className="px-3 py-2">
-                                            <StockLabel
-                                              code={s.code}
-                                              name={q?.name}
-                                              variant="nameOnly"
-                                            />
-                                          </td>
-                                          <td className={cn(
-                                            "px-3 py-2 text-right tabular-nums",
-                                            pct == null ? "text-muted-foreground"
-                                              : pct > 0 ? "text-danger" : pct < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground",
-                                          )}>
-                                            {pct != null ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "—"}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-sm text-muted-foreground">—</p>
-                        )}
-                      </DetailSection>
-                    </>
+                    <DetailSection label="成分股">
+                      {stocksLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" /> 加载成分股…
+                        </div>
+                      ) : stocksDetail ? (
+                        <>
+                          <p className="mb-2 text-xs text-muted-foreground">
+                            共 <strong className="text-foreground">{stocksDetail.count}</strong> 只
+                          </p>
+                          {stocksDetail.count === 0 ? (
+                            <p className="text-sm text-muted-foreground">暂无成分股数据</p>
+                          ) : (
+                            <div className="overflow-hidden rounded-xl border border-border/60">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="border-b border-border/60 bg-muted/20 text-left text-xs text-muted-foreground">
+                                    <th className="px-3 py-2">代码</th>
+                                    <th className="px-3 py-2">名称</th>
+                                    <th className="px-3 py-2 text-right">涨跌幅</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {stocksDetail.stocks.map((s) => {
+                                    const qt = quotes[s.code];
+                                    const pct = qt?.change_pct;
+                                    return (
+                                      <tr key={s.code} className="border-b border-border/30">
+                                        <td className="px-3 py-2">
+                                          <StockLabel code={s.code} variant="codeOnly" />
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          <StockLabel
+                                            code={s.code}
+                                            name={qt?.name}
+                                            variant="nameOnly"
+                                          />
+                                        </td>
+                                        <td className={cn(
+                                          "px-3 py-2 text-right tabular-nums",
+                                          pct == null ? "text-muted-foreground"
+                                            : pct > 0 ? "text-danger" : pct < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground",
+                                        )}>
+                                          {pct != null ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "—"}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">—</p>
+                      )}
+                    </DetailSection>
                   )}
                 </div>
               )}
