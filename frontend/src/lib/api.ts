@@ -921,6 +921,8 @@ export interface BlockResolveItem {
 
 export interface BlockIndexInfo {
   ready: boolean;
+  complete?: boolean;
+  ensuring?: boolean;
   name_count: number;
   ref_count: number;
   updated_at?: string | null;

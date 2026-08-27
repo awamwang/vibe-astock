@@ -193,6 +193,7 @@ def test_feed_skips_without_cache(monkeypatch: pytest.MonkeyPatch):
 def test_resolve_many_and_index_info():
     info = bp.index_info()
     assert info["ready"] is True
+    assert info["complete"] is True
     assert info["name_count"] >= 3
     rows = bp.resolve_many(["华为概念", "半导体", "不存在"])
     assert len(rows) == 3
@@ -202,4 +203,44 @@ def test_resolve_many_and_index_info():
     exported = bp.export_resolve(["华为概念", "半导体"])
     assert "华为概念" in exported["by_raw"]
     assert exported["index"]["ready"] is True
+    assert exported["index"]["complete"] is True
+
+
+def test_schedule_ensure_kinds_cached_async(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    called: list[str] = []
+
+    def fake_refresh(*, kind: str, ths_dir=None):
+        called.append(kind)
+        snap = block_cache.get() or {"kinds": {}}
+        kinds = dict(snap.get("kinds") or {})
+        kinds[kind] = {
+            "kind": kind,
+            "kind_label": kind,
+            "blocks": {"X1": "测试板块"},
+            "rows": [{"kind": kind, "kind_label": kind, "id": "X1", "name": "测试板块"}],
+        }
+        block_cache.set_snapshot({"updated_at": "2026-08-27 14:00:00", "ths_dir": "/tmp", "kinds": kinds})
+        return block_cache.get()
+
+    monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
+    bp.invalidate_index()
+    assert bp.schedule_ensure_kinds_cached() is True
+    import time
+    deadline = time.time() + 5
+    while time.time() < deadline and len(called) < len(linker.list_kinds()):
+        time.sleep(0.05)
+    assert set(called) == set(linker.list_kinds())
+
+
+def test_export_resolve_schedules_ensure(monkeypatch: pytest.MonkeyPatch):
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    scheduled: list[bool] = []
+    monkeypatch.setattr(
+        "ths_block.processor.schedule_ensure_kinds_cached",
+        lambda: scheduled.append(True) or True,
+    )
+    bp.invalidate_index()
+    bp.export_resolve(["半导体"])
+    assert scheduled
 

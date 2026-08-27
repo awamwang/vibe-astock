@@ -1,5 +1,5 @@
 import {
-  createContext, useContext, useEffect, useMemo, useState, type ReactNode,
+  createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
 import { api, type BlockResolveItem } from "@/lib/api";
 
@@ -13,6 +13,8 @@ const Ctx = createContext<BlockResolveCtx | null>(null);
 function normKey(name: string): string {
   return (name || "").replace(/\s+/g, "").trim();
 }
+
+const POLL_MS = 2000;
 
 /** 批量解析板块名称，供 BlockLabel 读取映射结果 */
 export function BlockResolveScope({ names, children }: { names: string[]; children: ReactNode }) {
@@ -28,18 +30,56 @@ export function BlockResolveScope({ names, children }: { names: string[]; childr
     }
     return out.sort().join("\0");
   }, [names]);
+  const indexAtRef = useRef<string | null>(null);
 
   useEffect(() => {
     const list = key ? key.split("\0") : [];
     if (!list.length) {
       setByRaw({});
+      indexAtRef.current = null;
       return;
     }
+
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const applyResolve = (data: Awaited<ReturnType<typeof api.thsBlocksResolve>>) => {
+      if (cancelled) return;
+      setByRaw(data.by_raw || {});
+      indexAtRef.current = data.index?.updated_at ?? null;
+    };
+
+    const needsPoll = (index: Awaited<ReturnType<typeof api.thsBlocksResolve>>["index"]) =>
+      !index?.complete || !index?.ready || !!index?.ensuring;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const info = await api.thsBlocksIndexInfo();
+        if (cancelled) return;
+        const ts = info.updated_at ?? null;
+        if (ts !== indexAtRef.current || info.complete) {
+          const data = await api.thsBlocksResolve(list);
+          applyResolve(data);
+          if (!needsPoll(data.index)) return;
+        }
+      } catch {
+        /* 轮询失败时静默，下次继续 */
+      }
+      if (!cancelled) timer = setTimeout(poll, POLL_MS);
+    };
+
     api.thsBlocksResolve(list)
-      .then((data) => { if (!cancelled) setByRaw(data.by_raw || {}); })
+      .then((data) => {
+        applyResolve(data);
+        if (!cancelled && needsPoll(data.index)) poll();
+      })
       .catch(() => { if (!cancelled) setByRaw({}); });
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [key]);
 
   const value = useMemo<BlockResolveCtx>(() => ({

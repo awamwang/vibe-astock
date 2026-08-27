@@ -43,6 +43,7 @@ _NAME_INDEX: dict[str, list[dict[str, Any]]] | None = None
 _NAME_INDEX_AT: float | None = None
 _ENSURE_SNAPSHOT_AT: Any = None
 _ENSURE_TRIED: set[str] = set()
+_ENSURE_ASYNC_SCHEDULED = False
 
 
 def _now() -> str:
@@ -165,11 +166,21 @@ def _snapshot_indexable(snap: dict[str, Any]) -> bool:
     return False
 
 
+def _kinds_missing(snap: dict[str, Any] | None = None) -> list[str]:
+    """返回尚无数据的板块类型列表。"""
+    data = snap if snap is not None else service.get_snapshot()
+    kinds_data = data.get("kinds") or {}
+    missing: list[str] = []
+    for kind in linker.list_kinds():
+        if not _kind_has_data(kinds_data.get(kind)):
+            missing.append(kind)
+    return missing
+
+
 def ensure_kinds_cached() -> list[str]:
     """确保各板块类型均有缓存；缺失的类型各触发一次 refresh_kind。
 
-    仅由用户显式刷新（/api/ths-blocks/refresh*）或管理入口调用；
-    feed 路径不得触发，避免 ths-linker 不可用时拖死业务接口。
+    同步补拉，供显式刷新或后台异步线程调用；业务 feed 路径不得直接调用。
     """
     refreshed: list[str] = []
     with _ENSURE_LOCK:
@@ -192,6 +203,28 @@ def ensure_kinds_cached() -> list[str]:
     if refreshed:
         invalidate_index()
     return refreshed
+
+
+def schedule_ensure_kinds_cached() -> bool:
+    """若存在缺失类型则异步补拉；已在队列中则跳过。不阻塞调用方。"""
+    global _ENSURE_ASYNC_SCHEDULED
+    if not _kinds_missing():
+        return False
+    with _ENSURE_LOCK:
+        if _ENSURE_ASYNC_SCHEDULED:
+            return True
+        _ENSURE_ASYNC_SCHEDULED = True
+
+    def _run() -> None:
+        global _ENSURE_ASYNC_SCHEDULED
+        try:
+            ensure_kinds_cached()
+        finally:
+            with _ENSURE_LOCK:
+                _ENSURE_ASYNC_SCHEDULED = False
+
+    threading.Thread(target=_run, daemon=True, name="ths-block-ensure").start()
+    return True
 
 
 def _get_name_index(*, ensure: bool = False) -> dict[str, list[dict[str, Any]]]:
@@ -236,13 +269,17 @@ def _partial_matches(mapped: str, index: dict[str, list[dict[str, Any]]]) -> lis
 
 def index_info() -> dict[str, Any]:
     """返回名称索引元信息（供前端判断映射是否可用）。"""
+    schedule_ensure_kinds_cached()
     try:
         index = _get_name_index(ensure=False)
     except Exception:  # noqa: BLE001
         index = {}
     snap = service.get_snapshot()
+    missing = _kinds_missing(snap)
     return {
         "ready": bool(index),
+        "complete": len(missing) == 0,
+        "ensuring": _ENSURE_ASYNC_SCHEDULED,
         "name_count": len(index),
         "ref_count": sum(len(v) for v in index.values()),
         "updated_at": snap.get("updated_at"),
@@ -271,6 +308,7 @@ def resolve_many(names: list[str]) -> list[dict[str, Any]]:
 
 def export_resolve(names: list[str]) -> dict[str, Any]:
     """批量解析并附带按 raw 索引的映射表。"""
+    schedule_ensure_kinds_cached()
     items = resolve_many(names)
     return {
         "items": items,

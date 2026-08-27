@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { BlockStocksTable } from "@/components/block/BlockStocksTable";
-import { api, type Quote, type ThsBlockStocksDetail } from "@/lib/api";
+import { api, ApiError, type Quote, type ThsBlockStocksDetail } from "@/lib/api";
 import { thsBlockKindLabel } from "@/lib/thsBlocks";
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -9,6 +9,9 @@ function chunk<T>(arr: T[], size: number): T[][] {
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
+
+const POLL_MS = 2000;
+const MAX_WAIT_MS = 120_000;
 
 interface Props {
   kind: string;
@@ -20,6 +23,7 @@ interface Props {
 export function BlockDetailPanel({ kind, blockId, name }: Props) {
   const [detail, setDetail] = useState<ThsBlockStocksDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
 
   useEffect(() => {
@@ -27,10 +31,39 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
     setLoading(true);
     setDetail(null);
     setQuotes({});
-    api.thsBlockStocks(kind, blockId)
-      .then((data) => { if (!cancelled) setDetail(data); })
-      .catch(() => { if (!cancelled) setDetail(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    setError(null);
+
+    const load = async () => {
+      const started = Date.now();
+      while (!cancelled) {
+        try {
+          const data = await api.thsBlockStocks(kind, blockId);
+          if (!cancelled) {
+            setDetail(data);
+            setError(null);
+          }
+          return;
+        } catch (e) {
+          const retry = e instanceof ApiError && e.status === 409 && Date.now() - started < MAX_WAIT_MS;
+          if (retry) {
+            try {
+              await api.thsBlocksIndexInfo();
+            } catch {
+              /* 触发后端异步补拉即可 */
+            }
+            await new Promise((r) => setTimeout(r, POLL_MS));
+            continue;
+          }
+          if (!cancelled) {
+            setDetail(null);
+            setError(e instanceof ApiError ? e.message : "加载失败");
+          }
+          return;
+        }
+      }
+    };
+
+    load().finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [kind, blockId]);
 
@@ -101,7 +134,7 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
             )}
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">—</p>
+          <p className="text-sm text-muted-foreground">{error || "—"}</p>
         )}
       </div>
     </div>
