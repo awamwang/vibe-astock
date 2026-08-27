@@ -939,6 +939,7 @@ export interface BlockPendingItem {
   mapped: string;
   status: "partial" | "unmatched";
   candidates: BlockPendingCandidate[];
+  suggested_canonical?: string;
   sources: string[];
   source_labels: string[];
   sort_rank: number;

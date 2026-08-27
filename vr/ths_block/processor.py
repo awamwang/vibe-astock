@@ -95,6 +95,23 @@ def _pick_best(refs: list[dict[str, Any]]) -> dict[str, Any] | None:
     return deduped[0] if deduped else None
 
 
+def _unique_names_from_refs(refs: list[dict[str, Any]]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for ref in _dedupe_refs(refs):
+        name = str(ref.get("name") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _suggested_canonical(status: str, candidates: list[dict[str, Any]]) -> str:
+    if status != "partial":
+        return ""
+    return " ".join(_unique_names_from_refs(candidates))
+
+
 def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     index: dict[str, list[dict[str, Any]]] = {}
     for kind, entry in (snapshot.get("kinds") or {}).items():
@@ -267,6 +284,8 @@ def _merge_pending(key: str, item: dict[str, Any], source: str) -> None:
     elif item.get("status") == "partial":
         merged = _dedupe_refs(list(prev.get("candidates") or []) + list(item.get("candidates") or []))
         prev["candidates"] = merged
+    if prev.get("status") == "partial":
+        prev["suggested_canonical"] = _suggested_canonical("partial", prev.get("candidates") or [])
 
 
 def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
@@ -283,11 +302,13 @@ def feed(source: str, strings: list[str]) -> list[dict[str, Any]]:
             if result["status"] not in ("partial", "unmatched"):
                 continue
             key = str(result["mapped"] or result["raw"])
+            candidates = result.get("candidates") or []
             item = {
                 "raw": result["raw"],
                 "mapped": result["mapped"],
                 "status": result["status"],
-                "candidates": result.get("candidates") or [],
+                "candidates": candidates,
+                "suggested_canonical": _suggested_canonical(result["status"], candidates),
                 "sources": [source],
                 "source_labels": [_SOURCE_LABELS.get(source, source)],
                 "sort_rank": _source_rank(source),

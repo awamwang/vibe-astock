@@ -69,8 +69,35 @@ def test_partial_match_recorded():
     assert len(pending) == 1
     assert pending[0]["status"] == "partial"
     assert pending[0]["raw"] == "华为"
+    assert pending[0]["suggested_canonical"] == "华为概念"
     names = {c["name"] for c in pending[0]["candidates"]}
     assert "华为概念" in names
+
+
+def test_multiple_exact_match_not_pending():
+    r = bp.resolve_one("华为概念")
+    assert r["status"] == "matched"
+    assert len(r["candidates"]) >= 2
+    bp.feed("firstboard_theme", ["华为概念"])
+    assert bp.get_pending() == []
+
+
+def test_partial_suggested_canonical_space_joined():
+    snap = _fake_snapshot()
+    snap["kinds"]["conception"]["blocks"]["D003"] = "人工合成"
+    snap["kinds"]["conception"]["rows"].append(
+        {"kind": "conception", "kind_label": "概念", "id": "D003", "name": "人工合成"},
+    )
+    snap["kinds"]["industry"]["blocks"]["I003"] = "人工成本"
+    snap["kinds"]["industry"]["rows"].append(
+        {"kind": "industry", "kind_label": "行业", "id": "I003", "name": "人工成本"},
+    )
+    block_cache.set_snapshot(snap)
+    bp.invalidate_index()
+    bp.feed("sector_flow", ["人工"])
+    pending = bp.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["suggested_canonical"] == "人工合成 人工成本"
 
 
 def test_unmatched_recorded():

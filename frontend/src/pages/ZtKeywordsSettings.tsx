@@ -243,7 +243,10 @@ export function ZtKeywordsSettings() {
           const drafts: Record<string, string> = {};
           for (const row of items) {
             const key = row.mapped || row.raw;
-            drafts[key] = row.candidates[0]?.name || row.mapped || "";
+            drafts[key] = row.suggested_canonical
+              || row.candidates.map((c) => c.name).join(" ")
+              || row.mapped
+              || "";
           }
           setPendingDrafts(drafts);
         }
@@ -619,7 +622,8 @@ export function ZtKeywordsSettings() {
   const savePendingRow = async (row: BlockPendingItem) => {
     const key = row.mapped || row.raw;
     const alias = row.raw.replace(/\s+/g, "").trim();
-    const canonical = (pendingDrafts[key] || "").replace(/\s+/g, "").trim();
+    const draft = (pendingDrafts[key] || "").trim();
+    const canonical = draft.split(/\s+/).filter(Boolean)[0] || "";
     if (!alias || !canonical) {
       toast.error("请填写标准板块");
       return;
@@ -942,8 +946,8 @@ export function ZtKeywordsSettings() {
             <AlertCircle className="h-4 w-4 text-amber-500" /> 待匹配板块
           </h4>
           <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-            各业务页加载时自动收集未能完全匹配同花顺板块的名称。可部分匹配的会列出候选板块；
-            保存后将写入上方板块别名表。
+            各业务页加载时自动收集未能完全匹配同花顺板块的名称。完全匹配（含多命中取优先级最高）不会出现在此列表；
+            部分匹配会将候选板块名以空格填入右侧输入框，保存后写入上方板块别名表。
           </p>
 
           {pendingLoading ? (
@@ -976,10 +980,9 @@ export function ZtKeywordsSettings() {
                         onChange={(e) =>
                           setPendingDrafts((d) => ({ ...d, [key]: e.target.value }))
                         }
-                        maxLength={20}
                         disabled={saving}
-                        placeholder="标准板块"
-                        className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
+                        placeholder={row.status === "partial" ? "候选板块（空格分隔）" : "标准板块"}
+                        className="min-w-[12rem] flex-1 rounded-lg border border-border bg-black/20 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
                       />
                       <button
                         type="button"
@@ -998,25 +1001,6 @@ export function ZtKeywordsSettings() {
                         {row.status === "partial" ? "部分匹配" : "未匹配"}
                       </span>
                     </div>
-                    {row.candidates.length > 0 && (
-                      <p className="mt-1.5 text-[11px] text-muted-foreground">
-                        候选：
-                        {row.candidates.map((c, i) => (
-                          <button
-                            key={`${c.kind}-${c.id}`}
-                            type="button"
-                            className="ml-1 text-primary hover:underline"
-                            onClick={() =>
-                              setPendingDrafts((d) => ({ ...d, [key]: c.name }))
-                            }
-                          >
-                            {c.name}
-                            <span className="text-muted-foreground">({c.kind_label})</span>
-                            {i < row.candidates.length - 1 ? "、" : ""}
-                          </button>
-                        ))}
-                      </p>
-                    )}
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       来源：{(row.source_labels || []).join("、") || "—"}
                       {row.hit_count > 1 ? ` · 命中 ${row.hit_count} 次` : ""}
