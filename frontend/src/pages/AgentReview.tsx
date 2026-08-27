@@ -324,20 +324,27 @@ export function AgentReview() {
         const prev = datesR.prev_trade_date || "";
         const prevDone = Boolean(prev && archived.includes(prev));
 
-        if (r && (r.target_date || r.trade_date)) {
-          const day = r.target_date || r.trade_date || "";
-          if (prevDone) {
-            // 上一交易日已落盘 → 日期框推到今天，方便接着跑本场；今日尚无存档则只展示骨架
-            setDate(today);
+        const latestDay = r?.target_date || r?.trade_date || "";
+        if (prevDone) {
+          // 上一交易日已落盘 → 日期框推到今天；今日已有存档则加载，否则只展示骨架
+          setDate(today);
+          if (archived.includes(today) && latestDay === today) {
+            setData(r);
+            setMissing("");
+            void loadTradeBudget(today);
+          } else if (archived.includes(today)) {
+            // 存档列表有今天但 latest 不是今天（少见）→ 按日期拉当日缓存
+            void loadLatest(today);
+          } else {
             setData(null);
             setMissing(today);
             setTradeBudget(null);
-          } else {
-            setData(r);
-            setMissing("");
-            setDate(day);
-            void loadTradeBudget(day);
           }
+        } else if (latestDay) {
+          setData(r);
+          setMissing("");
+          setDate(latestDay);
+          void loadTradeBudget(latestDay);
         }
       } catch {
         if (alive.current && my === reqId.current) {

@@ -2536,6 +2536,7 @@ class TestReviewHistory:
         assert "setMissing(" in s and "这天还没跑过复盘" in s, "那天没有要说出来"
         assert '<datalist id="review-dates">' in s, "list= 指向的 datalist 必须存在"
         assert "prevDone" in s and "prev_trade_date" in s, "上一交易日已有复盘时要把日期框推到今天"
+        assert "archived.includes(today)" in s, "今日已有存档时须加载当日缓存，不能一律判 missing"
         assert "showContent" in s and "loadedDay" in s, "选中日与载入日复盘不一致时不展示内容"
         assert "chipDates" in s and "date === d" in s, "下部日期列表高亮跟日历选中日，选中日置顶"
 
