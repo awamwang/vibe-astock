@@ -289,7 +289,7 @@ function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
           code={stock.code}
           name={stock.name}
           resolved={stockResolved}
-          variant="inline"
+          variant="nameOnly"
           className="border-0 bg-transparent px-1.5 py-0.5"
         />
       </Badge>
@@ -317,12 +317,13 @@ function MessageTargetBadge({ t }: { t: AnalyzedMessage["targets"][number] }) {
       <Badge
         className="border-primary/30 bg-primary/10 p-0 text-foreground"
         title={targetHint(t)}
+        data-stock-code={t.code || undefined}
       >
         <StockLabel
           code={t.code || ""}
           name={t.name}
           resolved={stockResolved}
-          variant="inline"
+          variant="nameOnly"
           className="border-0 bg-transparent px-1.5 py-0.5"
         />
       </Badge>
@@ -733,18 +734,19 @@ export function MessageAnalysis() {
 
   const removeDraft = (key: string) => setDrafts((d) => d.filter((x) => x.draft_key !== key));
 
-  const pollCls = useCallback(async (opts?: { silent?: boolean }) => {
+  const pollCls = useCallback(async (opts?: { silent?: boolean; backfill?: boolean }) => {
     if (pollInFlight.current) return;
     pollInFlight.current = true;
     setPollingCls(true);
     try {
-      const r = await api.messagePollCls();
+      const r = await api.messagePollCls({ backfill: opts?.backfill });
       if (r.inserted > 0) {
         notify.success(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
         await refreshMessages();
         await loadSources();
       } else if (!opts?.silent) {
-        notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增`);
+        const backfillHint = r.backfill_today ? " · 已补拉当日" : "";
+        notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增${backfillHint}`);
       }
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "财联社同步失败");
@@ -959,7 +961,7 @@ export function MessageAnalysis() {
           </button>
           <button
             type="button"
-            onClick={() => pollCls()}
+            onClick={() => pollCls({ backfill: true })}
             disabled={pollingCls}
             className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-50"
           >

@@ -1010,9 +1010,9 @@ def messages_analyze_queue():
 
 
 @app.post("/api/messages/poll/cls")
-def messages_poll_cls():
+def messages_poll_cls(backfill: bool = False):
     try:
-        return {"data": msg_layer.cls.fetch_telegraph()}
+        return {"data": msg_layer.cls.fetch_telegraph(backfill_today=backfill)}
     except Exception as e:  # noqa: BLE001
         msg_layer.store.set_poll_state("cls_telegraph", last_error=str(e)[:500])
         raise HTTPException(502, f"财联社轮询失败：{e}") from e

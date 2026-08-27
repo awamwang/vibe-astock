@@ -161,6 +161,7 @@ def fetch_roll_since_id(
             break
 
         min_id = 0
+        page_has_new = False
         for item in page:
             mid = _item_id(item)
             if mid <= 0 or mid in seen:
@@ -168,24 +169,86 @@ def fetch_roll_since_id(
             seen.add(mid)
             if mid > last_id:
                 collected.append(item)
+                page_has_new = True
             if min_id == 0 or (0 < mid < min_id):
                 min_id = mid
 
         if min_id > 0 and min_id <= last_id:
-            break
-        if len(page) < rn:
             break
 
         try:
             tail_ctime = int(page[-1].get("ctime") or 0)
         except (TypeError, ValueError):
             break
-        if tail_ctime <= 0:
+        if tail_ctime <= 0 or tail_ctime >= last_time:
+            break
+        last_time = tail_ctime - 1
+
+        # API 偶发不满页，但若本页仍有 id > last_id 的消息则继续翻页
+        if len(page) < rn and not page_has_new:
+            break
+
+    collected.sort(key=_item_id)
+    return collected, pages_used
+
+
+def fetch_roll_since_ctime(
+    min_ctime: int,
+    *,
+    page_size: int | None = None,
+    max_pages: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """翻页拉取 ctime >= min_ctime 的全部电报（用于当日补拉，可回填 tail_mark 之后漏掉的条目）。"""
+    rn = page_size or int(os.environ.get("CLS_PAGE_RN", "50"))
+    cap = max_pages or int(os.environ.get("CLS_MAX_PAGES", "30"))
+    rn = max(1, min(rn, 100))
+    cap = max(1, min(cap, 200))
+
+    collected: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    last_time = int(time.time())
+    pages_used = 0
+
+    for _ in range(cap):
+        page = _fetch_roll_page(last_time=last_time, rn=rn)
+        pages_used += 1
+        if not page:
+            break
+
+        oldest_ctime: int | None = None
+        for item in page:
+            mid = _item_id(item)
+            if mid <= 0 or mid in seen:
+                continue
+            try:
+                ctime = int(item.get("ctime") or 0)
+            except (TypeError, ValueError):
+                ctime = 0
+            if ctime >= min_ctime:
+                seen.add(mid)
+                collected.append(item)
+            if ctime > 0 and (oldest_ctime is None or ctime < oldest_ctime):
+                oldest_ctime = ctime
+
+        if oldest_ctime is None or oldest_ctime < min_ctime:
+            break
+
+        try:
+            tail_ctime = int(page[-1].get("ctime") or 0)
+        except (TypeError, ValueError):
+            break
+        if tail_ctime <= 0 or tail_ctime >= last_time:
             break
         last_time = tail_ctime - 1
 
     collected.sort(key=_item_id)
     return collected, pages_used
+
+
+def _today_start_ts() -> int:
+    now = datetime.now(BEIJING)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(start.timestamp())
 
 
 def _analyzed_patch(raw: RawMessage, item: dict[str, Any]) -> dict[str, Any]:
@@ -205,15 +268,39 @@ def _analyzed_patch(raw: RawMessage, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dict[str, Any]:
-    """翻页拉取 tail_mark 之后的财联社电报，增量入库并更新 tail_mark。"""
+def fetch_telegraph(
+    *,
+    limit: int | None = None,
+    path: str | None = None,
+    backfill_today: bool = False,
+) -> dict[str, Any]:
+    """翻页拉取 tail_mark 之后的财联社电报，增量入库并更新 tail_mark。
+
+    backfill_today=True 时额外按当日 0 点起补拉，可回填因 tail_mark 超前而漏掉的条目。
+    """
     state = store.get_poll_state("cls_telegraph", path=path)
     try:
         last_id = int(state.get("tail_mark") or 0)
     except (TypeError, ValueError):
         last_id = 0
 
-    items, pages_used = fetch_roll_since_id(last_id)
+    by_id: dict[int, dict[str, Any]] = {}
+    items_inc, pages_used = fetch_roll_since_id(last_id)
+    for item in items_inc:
+        mid = _item_id(item)
+        if mid > 0:
+            by_id[mid] = item
+
+    pages_backfill = 0
+    if backfill_today:
+        bf_items, pages_backfill = fetch_roll_since_ctime(_today_start_ts())
+        for item in bf_items:
+            mid = _item_id(item)
+            if mid > 0:
+                by_id[mid] = item
+
+    items = sorted(by_id.values(), key=_item_id)
+    pages_used += pages_backfill
     if limit is not None and limit > 0:
         items = items[:limit]
     elif lim := int(os.environ.get("CLS_FETCH_LIMIT", "0")):
@@ -256,11 +343,13 @@ def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dic
     return {
         "fetched": len(items),
         "pages_used": pages_used,
+        "pages_backfill": pages_backfill,
         "new_candidates": len(new_ids),
         "inserted": inserted_new,
         "updated": max(0, len(inserted) - inserted_new),
         "synced": synced,
         "tail_mark": str(max_id),
         "last_id": last_id,
+        "backfill_today": backfill_today,
         "archive": archive_stats,
     }

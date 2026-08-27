@@ -474,6 +474,75 @@ def test_cls_fetch_roll_pagination(monkeypatch):
     assert [i["id"] for i in items] == [200, 250, 300]
 
 
+def test_cls_fetch_roll_partial_page_continues(monkeypatch):
+    """API 返回不满页但仍有新消息时，应继续翻页而非提前停止。"""
+    page1 = [{"id": 300, "ctime": 1000}, {"id": 250, "ctime": 900}]
+    page2 = [{"id": 200, "ctime": 800}]
+    calls: list[int] = []
+
+    def fake_page(*, last_time, rn, timeout=20):
+        calls.append(last_time)
+        if len(calls) == 1:
+            return page1
+        if len(calls) == 2:
+            return page2
+        return []
+
+    monkeypatch.setattr(cls, "_fetch_roll_page", fake_page)
+    items, pages = cls.fetch_roll_since_id(180, page_size=3, max_pages=5)
+    assert pages == 3
+    assert [i["id"] for i in items] == [200, 250, 300]
+
+
+def test_cls_fetch_roll_since_ctime(monkeypatch):
+    page1 = [
+        {"id": 300, "ctime": 2000},
+        {"id": 250, "ctime": 1500},
+    ]
+    page2 = [
+        {"id": 200, "ctime": 800},
+        {"id": 150, "ctime": 500},
+    ]
+    calls: list[int] = []
+
+    def fake_page(*, last_time, rn, timeout=20):
+        calls.append(last_time)
+        if len(calls) == 1:
+            return page1
+        if len(calls) == 2:
+            return page2
+        return []
+
+    monkeypatch.setattr(cls, "_fetch_roll_page", fake_page)
+    items, pages = cls.fetch_roll_since_ctime(1000, page_size=2, max_pages=5)
+    assert pages == 2
+    assert [i["id"] for i in items] == [250, 300]
+
+
+def test_cls_fetch_telegraph_backfill_today(msg_db, monkeypatch):
+    inc = [{"id": 102, "title": "新", "content": "新内容", "ctime": 2000, "level": "B", "subjects": []}]
+    backfill = [{"id": 101, "title": "漏", "content": "漏掉", "ctime": 1500, "level": "C", "subjects": []}]
+
+    monkeypatch.setattr(cls, "fetch_roll_since_id", lambda last_id, **_kw: (inc, 1))
+    monkeypatch.setattr(cls, "fetch_roll_since_ctime", lambda min_ctime, **_kw: (backfill, 1))
+    monkeypatch.setattr(
+        archive,
+        "archive_immediate_expired",
+        lambda **_: {"archived": 0, "deleted_analyzed": 0, "cutoff": ""},
+    )
+    store.set_poll_state("cls_telegraph", tail_mark="100", path=msg_db)
+
+    r = cls.fetch_telegraph(path=msg_db, backfill_today=True)
+    assert r["fetched"] == 2
+    assert r["inserted"] == 2
+    assert r["tail_mark"] == "102"
+
+    rows, total = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
+    assert total == 2
+    titles = {row.title for row in rows}
+    assert titles == {"新", "漏"}
+
+
 def test_archive_immediate_expired(msg_db, tmp_path):
     arc_path = str(tmp_path / "archive.db")
     old_time = "2020-01-01 10:00:00"

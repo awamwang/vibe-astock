@@ -326,12 +326,15 @@ export interface XgbPollResult {
 
 export interface ClsPollResult {
   fetched: number;
+  pages_used?: number;
+  pages_backfill?: number;
   new_candidates: number;
   inserted: number;
   updated?: number;
   synced: number;
   tail_mark?: string;
   last_id?: number;
+  backfill_today?: boolean;
 }
 
 export interface Holding {
@@ -796,7 +799,8 @@ export const api = {
     }),
   messageAnalyzeQueueStatus: () =>
     get<{ counts: Record<string, number>; pending: unknown[] }>("/messages/analyze/queue"),
-  messagePollCls: () => request<ClsPollResult>("/messages/poll/cls", "POST"),
+  messagePollCls: (opts?: { backfill?: boolean }) =>
+    request<ClsPollResult>(`/messages/poll/cls${opts?.backfill ? "?backfill=true" : ""}`, "POST"),
   messagePollXgb: () => request<XgbPollResult>("/messages/poll/xgb", "POST"),
   messageXgbResyncTargets: () => request<{ synced: number }>("/messages/xgb/resync-targets", "POST"),
   thsBlocksSnapshot: () => get<ThsBlocksSnapshot>("/ths-blocks"),
