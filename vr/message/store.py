@@ -28,7 +28,7 @@ DATA_ROOT = os.path.expanduser("~/.duanxian-agents")
 MSG_DIR = os.path.join(DATA_ROOT, "messages")
 DB_PATH = os.path.join(MSG_DIR, "messages.db")
 BEIJING = timezone(timedelta(hours=8))
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 _INITED = False
 
 DEFAULT_SOURCES = [
@@ -377,6 +377,10 @@ def insert_raw_batch(
                 meta = _draft_meta(d)
 
                 if ext:
+                    from . import archive as msg_archive
+
+                    if msg_archive.external_ref_in_archive(d.source_id, ext, path=path):
+                        continue
                     exists = conn.execute(
                         "SELECT id FROM raw_message WHERE source_id = ? AND external_ref = ? AND withdrawn = 0",
                         (d.source_id, ext),
@@ -677,6 +681,9 @@ def _build_analyzed_where(q: ListQuery) -> tuple[str, list[Any]]:
 
 
 def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[AnalyzedMessage], int]:
+    from . import archive as msg_archive
+
+    msg_archive.archive_immediate_expired(main_path=path)
     init_db(path)
     db = path or DB_PATH
     where, args = _build_analyzed_where(q)

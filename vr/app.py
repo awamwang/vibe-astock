@@ -31,8 +31,11 @@ import watchtower
 import message as msg_layer
 from message import analyze as msg_analyze
 import ths_block as ths_block_layer
+import stock_universe
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
+
+stock_universe.startup_load()
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
@@ -863,6 +866,28 @@ def messages_raw_list(
     query = _list_query(source=source, q=q, from_dt=from_dt, to_dt=to_dt, sort=sort, order=order, limit=limit, offset=offset)
     rows, total = msg_layer.store.list_raw(query)
     return {"data": {"items": [r.model_dump() for r in rows], "total": total}}
+
+
+@app.get("/api/messages/raw/archive")
+def messages_raw_archive_list(
+    source: str = "",
+    q: str = "",
+    from_dt: str = "",
+    to_dt: str = "",
+    sort: str = "produced_at",
+    order: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+):
+    query = _list_query(source=source, q=q, from_dt=from_dt, to_dt=to_dt, sort=sort, order=order, limit=limit, offset=offset)
+    rows, total = msg_layer.archive.list_raw_archive(query)
+    return {"data": {"items": [r.model_dump() for r in rows], "total": total}}
+
+
+@app.post("/api/messages/archive/run")
+def messages_archive_run():
+    """手动触发：立即生效且超过保留期的消息 raw 归档。"""
+    return {"data": msg_layer.archive.archive_immediate_expired()}
 
 
 @app.get("/api/messages/analyzed")

@@ -5,18 +5,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from .schemas import ImpactTarget, RawMessageDraft
-from . import store
+from .schemas import ImpactTarget, RawMessage, RawMessageDraft
+from . import archive, store
 
 # RSSHub lib/routes/cls/utils.ts
 _CLS_SV = "8.7.9"
 _CLS_APP = "CailianpressWeb"
-_CLS_CACHE_URL = "https://www.cls.cn/api/cache"
+_CLS_ROLL_URL = "https://www.cls.cn/v1/roll/get_roll_list"
 BEIJING = timezone(timedelta(hours=8))
 
 UA = (
@@ -41,13 +42,15 @@ def _生成_sign(参数字典: dict[str, str]) -> str:
     return hashlib.md5(sha1.encode("utf-8")).hexdigest()
 
 
-def _构建查询(**extra: str) -> dict[str, str]:
+def _构建_roll_查询(**extra: str) -> dict[str, str]:
     base: dict[str, str] = {
-        "appName": _CLS_APP,
+        "app": _CLS_APP,
+        "category": "",
         "os": "web",
+        "refresh_type": "1",
         "sv": _CLS_SV,
     }
-    base.update({k: v for k, v in extra.items() if v is not None})
+    base.update({k: str(v) for k, v in extra.items() if v is not None})
     base["sign"] = _生成_sign({k: v for k, v in base.items() if k != "sign"})
     return base
 
@@ -117,14 +120,72 @@ def map_cls_item(item: dict[str, Any]) -> RawMessageDraft:
     )
 
 
-def _fetch_roll_data(*, timeout: float = 20) -> list[dict[str, Any]]:
-    query = _构建查询(name="telegraph")
-    url = f"{_CLS_CACHE_URL}?{urllib.parse.urlencode(query)}"
+def _fetch_roll_page(*, last_time: int, rn: int, timeout: float = 20) -> list[dict[str, Any]]:
+    query = _构建_roll_查询(last_time=str(last_time), rn=str(rn))
+    url = f"{_CLS_ROLL_URL}?{urllib.parse.urlencode(query)}"
     req = urllib.request.Request(url, headers=_headers())
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     roll = (body.get("data") or {}).get("roll_data") or []
     return [i for i in roll if isinstance(i, dict)]
+
+
+def _item_id(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def fetch_roll_since_id(
+    last_id: int,
+    *,
+    page_size: int | None = None,
+    max_pages: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """翻页拉取 id 大于 last_id 的全部财联社电报，返回 (条目列表, 实际页数)。"""
+    rn = page_size or int(os.environ.get("CLS_PAGE_RN", "50"))
+    cap = max_pages or int(os.environ.get("CLS_MAX_PAGES", "30"))
+    rn = max(1, min(rn, 100))
+    cap = max(1, min(cap, 200))
+
+    collected: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    last_time = int(time.time())
+    pages_used = 0
+
+    for _ in range(cap):
+        page = _fetch_roll_page(last_time=last_time, rn=rn)
+        pages_used += 1
+        if not page:
+            break
+
+        min_id = 0
+        for item in page:
+            mid = _item_id(item)
+            if mid <= 0 or mid in seen:
+                continue
+            seen.add(mid)
+            if mid > last_id:
+                collected.append(item)
+            if min_id == 0 or (0 < mid < min_id):
+                min_id = mid
+
+        if min_id > 0 and min_id <= last_id:
+            break
+        if len(page) < rn:
+            break
+
+        try:
+            tail_ctime = int(page[-1].get("ctime") or 0)
+        except (TypeError, ValueError):
+            break
+        if tail_ctime <= 0:
+            break
+        last_time = tail_ctime - 1
+
+    collected.sort(key=_item_id)
+    return collected, pages_used
 
 
 def _analyzed_patch(raw: RawMessage, item: dict[str, Any]) -> dict[str, Any]:
@@ -145,17 +206,19 @@ def _analyzed_patch(raw: RawMessage, item: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dict[str, Any]:
-    """拉取财联社电报，按 external_ref 增量去重，更新 tail_mark。"""
+    """翻页拉取 tail_mark 之后的财联社电报，增量入库并更新 tail_mark。"""
     state = store.get_poll_state("cls_telegraph", path=path)
     try:
         last_id = int(state.get("tail_mark") or 0)
     except (TypeError, ValueError):
         last_id = 0
 
-    lim = limit or int(os.environ.get("CLS_FETCH_LIMIT", "50"))
-    items = _fetch_roll_data()
-    if lim > 0:
-        items = items[:lim]
+    items, pages_used = fetch_roll_since_id(last_id)
+    if limit is not None and limit > 0:
+        items = items[:limit]
+    elif lim := int(os.environ.get("CLS_FETCH_LIMIT", "0")):
+        if lim > 0:
+            items = items[:lim]
 
     drafts = [map_cls_item(i) for i in items]
     inserted = store.insert_raw_batch(drafts, path=path)
@@ -163,10 +226,7 @@ def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dic
     synced = 0
     inserted_new = 0
     for raw in inserted:
-        try:
-            ext_id = int(raw.external_ref or 0)
-        except (TypeError, ValueError):
-            ext_id = 0
+        ext_id = _item_id({"id": raw.external_ref})
         is_new = last_id == 0 or ext_id > last_id
         if is_new:
             inserted_new += 1
@@ -178,18 +238,11 @@ def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dic
 
     max_id = last_id
     for i in items:
-        try:
-            mid = int(i.get("id") or 0)
-        except (TypeError, ValueError):
-            continue
+        mid = _item_id(i)
         if mid > max_id:
             max_id = mid
 
-    new_ids = [
-        int(d.external_ref)
-        for d in drafts
-        if d.external_ref and int(d.external_ref) > last_id
-    ]
+    new_ids = [_item_id({"id": d.external_ref}) for d in drafts if d.external_ref and _item_id({"id": d.external_ref}) > last_id]
 
     store.set_poll_state(
         "cls_telegraph",
@@ -197,12 +250,17 @@ def fetch_telegraph(*, limit: int | None = None, path: str | None = None) -> dic
         last_error=None,
         path=path,
     )
+
+    archive_stats = archive.archive_immediate_expired(main_path=path)
+
     return {
         "fetched": len(items),
+        "pages_used": pages_used,
         "new_candidates": len(new_ids),
         "inserted": inserted_new,
         "updated": max(0, len(inserted) - inserted_new),
         "synced": synced,
         "tail_mark": str(max_id),
         "last_id": last_id,
+        "archive": archive_stats,
     }

@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from vr.message import cls, parser, store, xgb
+from vr.message import archive, cls, parser, store, xgb
 from vr.message.schemas import IngestPayload, RawMessageDraft
 
 
@@ -199,12 +199,14 @@ def test_xgb_body_fallback_title():
 
 
 def test_xgb_targets_sync_to_analyzed(msg_db):
+    import time
+
     item = {
         "Id": "888",
         "Title": "板块异动",
         "AllStocks": [{"Name": "海南橡胶", "Symbol": "601118.SH"}],
         "BkjInfoArr": [{"Id": "123", "Name": "农业"}],
-        "CreatedAtInSec": 1700000000,
+        "CreatedAtInSec": int(time.time()) - 60,
     }
     draft = xgb.map_xgb_item(item)
     raw = store.insert_raw_batch([draft], path=msg_db)[0]
@@ -392,12 +394,15 @@ def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
 
 
 def test_cls_fetch_incremental(msg_db, monkeypatch):
+    import time
+
+    base = int(time.time()) - 120
     batch1 = [
         {
             "id": 100,
             "title": "第一条",
             "content": "第一条内容",
-            "ctime": 1700000000,
+            "ctime": base,
             "level": "C",
             "subjects": [],
         },
@@ -405,7 +410,7 @@ def test_cls_fetch_incremental(msg_db, monkeypatch):
             "id": 101,
             "title": "第二条",
             "content": "第二条内容",
-            "ctime": 1700000060,
+            "ctime": base + 60,
             "level": "B",
             "subjects": [{"subject_name": "测试题材"}],
         },
@@ -415,7 +420,7 @@ def test_cls_fetch_incremental(msg_db, monkeypatch):
             "id": 102,
             "title": "第三条",
             "content": "第三条内容",
-            "ctime": 1700000120,
+            "ctime": base + 120,
             "level": "A",
             "subjects": [],
         },
@@ -424,11 +429,18 @@ def test_cls_fetch_incremental(msg_db, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_roll():
+    def fake_roll(last_id, **_kw):
         calls["n"] += 1
-        return batch1 if calls["n"] == 1 else batch2
+        items = batch2 if calls["n"] > 1 else batch1
+        new_items = [i for i in items if int(i["id"]) > last_id]
+        return new_items, 1
 
-    monkeypatch.setattr(cls, "_fetch_roll_data", fake_roll)
+    monkeypatch.setattr(cls, "fetch_roll_since_id", fake_roll)
+    monkeypatch.setattr(
+        archive,
+        "archive_immediate_expired",
+        lambda **_: {"archived": 0, "deleted_analyzed": 0, "cutoff": ""},
+    )
     r1 = cls.fetch_telegraph(path=msg_db)
     assert r1["inserted"] == 2
     assert r1["synced"] == 2
@@ -441,6 +453,69 @@ def test_cls_fetch_incremental(msg_db, monkeypatch):
 
     rows, total = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
     assert total == 3
+
+
+def test_cls_fetch_roll_pagination(monkeypatch):
+    page1 = [{"id": 300, "ctime": 1000}, {"id": 250, "ctime": 900}]
+    page2 = [{"id": 200, "ctime": 800}, {"id": 150, "ctime": 700}]
+    calls: list[int] = []
+
+    def fake_page(*, last_time, rn, timeout=20):
+        calls.append(last_time)
+        if len(calls) == 1:
+            return page1
+        if len(calls) == 2:
+            return page2
+        return []
+
+    monkeypatch.setattr(cls, "_fetch_roll_page", fake_page)
+    items, pages = cls.fetch_roll_since_id(180, page_size=2, max_pages=5)
+    assert pages == 2
+    assert [i["id"] for i in items] == [200, 250, 300]
+
+
+def test_archive_immediate_expired(msg_db, tmp_path):
+    arc_path = str(tmp_path / "archive.db")
+    old_time = "2020-01-01 10:00:00"
+    recent_time = store._now()
+
+    d_old = RawMessageDraft(
+        draft_key="old",
+        source_id="manual",
+        source_label="粘贴",
+        content="旧消息",
+        title="旧消息",
+        produced_at=old_time,
+    )
+    d_new = RawMessageDraft(
+        draft_key="new",
+        source_id="manual",
+        source_label="粘贴",
+        content="新消息",
+        title="新消息",
+        produced_at=recent_time,
+    )
+    raw_old = store.insert_raw_batch([d_old], path=msg_db)[0]
+    raw_new = store.insert_raw_batch([d_new], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(raw_old, patch={"effective_mode": "immediate"}, path=msg_db)
+    store.upsert_analyzed_from_raw(
+        raw_new,
+        patch={"effective_mode": "scheduled", "effective_at": "2099-01-01 09:00:00"},
+        path=msg_db,
+    )
+
+    stats = archive.archive_immediate_expired(days=7, main_path=msg_db, archive_path=arc_path)
+    assert stats["archived"] == 1
+    assert stats["deleted_analyzed"] == 1
+
+    active, active_total = store.list_analyzed(store.ListQuery(), path=msg_db)
+    assert active_total == 1
+    assert active[0].title == "新消息"
+
+    archived_rows, archived_total = archive.list_raw_archive(store.ListQuery(), path=arc_path)
+    assert archived_total == 1
+    assert archived_rows[0].title == "旧消息"
+    assert archived_rows[0].content == "旧消息"
 
 
 def test_list_analyzed_pagination_and_sort(msg_db):
