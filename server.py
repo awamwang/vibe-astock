@@ -1575,6 +1575,35 @@ def api_articles_to_message(request: Request, body: dict = Body(...)):
     return {"data": result}
 
 
+@app.post("/api/articles/update")
+def api_articles_update(request: Request, body: dict = Body(...)):
+    """更新已落盘文章内容（文件名不变），并刷新索引标题/摘要。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import articles as arts
+
+    name = str((body or {}).get("name") or (body or {}).get("filename") or "").strip()
+    if not name:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    content = (body or {}).get("content")
+    title = (body or {}).get("title")
+    summary = (body or {}).get("summary")
+    try:
+        result = arts.update_article(
+            name,
+            content=None if content is None else str(content),
+            title=None if title is None else str(title),
+            summary=None if summary is None else str(summary),
+        )
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": result}
+
+
 def _plugin_row(rec) -> dict:
     from pathlib import Path
 

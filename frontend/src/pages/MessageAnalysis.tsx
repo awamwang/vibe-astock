@@ -85,6 +85,17 @@ const IMPACT_BADGE: Record<string, string> = {
   noise: "bg-muted/40 text-muted-foreground border-border/40",
 };
 
+const EFFECT_BADGE: Record<string, string> = {
+  not_erupted: "bg-sky-500/12 text-sky-800 border-sky-500/35 dark:text-sky-200",
+  pending_verify: "bg-amber-500/12 text-amber-800 border-amber-500/35 dark:text-amber-200",
+  ongoing_hype: "bg-primary/15 text-primary border-primary/30",
+  already_hyped: "bg-muted/60 text-muted-foreground border-border/60",
+  invalid: "bg-muted/40 text-muted-foreground/80 border-border/40 line-through",
+  // 历史数据兼容
+  early_hype: "bg-orange-500/12 text-orange-800 border-orange-500/35 dark:text-orange-200",
+  faded: "bg-muted/50 text-muted-foreground border-border/50",
+};
+
 const selectCls =
   "rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground";
 const inputCls =
@@ -247,7 +258,7 @@ function ImpactBadge({ level }: { level: string }) {
 
 function EffectBadge({ status }: { status: string }) {
   return (
-    <Badge className="border-border bg-muted/50 text-foreground">
+    <Badge className={EFFECT_BADGE[status] || EFFECT_BADGE.not_erupted}>
       {EFFECT_LABEL[status] || status}
     </Badge>
   );
@@ -1498,20 +1509,20 @@ export function MessageAnalysis() {
                           aria-label="全选当前页"
                         />
                       </th>
+                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[240px] max-w-[360px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="produced_at" label="产生时间" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("produced_at")} className="w-32 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <th className="w-32 px-3 py-2.5 text-left align-middle">
                         <span className={sortThLabelCls}>生效时间</span>
                       </th>
-                      <th className="w-32 px-3 py-2.5 text-left align-middle">
-                        <span className={sortThLabelCls}>结束时间</span>
-                      </th>
-                      <SortTh col="title" label="标题" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("title")} className="min-w-[240px] max-w-[360px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="source" label="来源" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("source")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="impact_level" label="级别" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("impact_level")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="effect_status" label="生效情况" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("effect_status")} className="w-24 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="followed" label="关注" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("followed")} className="w-20 px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="keywords" label="关键词" hint="粘贴/结构化录入的关键词" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("keywords")} className="min-w-[140px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
                       <SortTh col="targets" label="关联标的" sortCol={sort} order={order} onSort={toggleSort} sortable={SORTABLE_COLS.has("targets")} className="min-w-[160px] px-3 py-2.5 text-left align-middle" labelClassName={sortThLabelCls} />
+                      <th className="w-32 px-3 py-2.5 text-left align-middle">
+                        <span className={sortThLabelCls}>结束时间</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1532,23 +1543,6 @@ export function MessageAnalysis() {
                             onChange={() => toggleSelect(item.id)}
                           />
                         </td>
-                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                          {item.produced_at}
-                        </td>
-                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                          {item.effective_mode === "scheduled" && item.effective_at
-                            ? item.effective_at
-                            : effectiveAt(item)}
-                        </td>
-                        <td
-                          className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap"
-                          title={hasExplicitEndAt(item) ? undefined : `默认 ${defaultEndDays} 天`}
-                        >
-                          {endAt(item, defaultEndDays)}
-                          {!hasExplicitEndAt(item) && (
-                            <span className="ml-0.5 text-[10px] text-muted-foreground/70">*</span>
-                          )}
-                        </td>
                         <td className="px-3 py-3 align-top max-w-[360px]">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {item.favorited && (
@@ -1561,6 +1555,14 @@ export function MessageAnalysis() {
                               {item.title || "—"}
                             </span>
                           </div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {item.produced_at}
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                          {item.effective_mode === "scheduled" && item.effective_at
+                            ? item.effective_at
+                            : effectiveAt(item)}
                         </td>
                         <td className="px-3 py-3 align-top text-xs text-muted-foreground">
                           {item.source_label}
@@ -1598,6 +1600,15 @@ export function MessageAnalysis() {
                               followStockChange ? item.matched_current_stock_blocks : undefined
                             }
                           />
+                        </td>
+                        <td
+                          className="px-3 py-3 align-top text-xs tabular-nums text-muted-foreground whitespace-nowrap"
+                          title={hasExplicitEndAt(item) ? undefined : `默认 ${defaultEndDays} 天`}
+                        >
+                          {endAt(item, defaultEndDays)}
+                          {!hasExplicitEndAt(item) && (
+                            <span className="ml-0.5 text-[10px] text-muted-foreground/70">*</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1823,7 +1834,9 @@ export function MessageAnalysis() {
                     <dt className="text-muted-foreground">新旧</dt>
                     <dd className="text-foreground">{FRESHNESS_LABEL[selected.freshness]}</dd>
                     <dt className="text-muted-foreground">炒作</dt>
-                    <dd className="text-foreground">{EFFECT_LABEL[selected.effect_status]}</dd>
+                    <dd className="text-foreground">
+                      <EffectBadge status={selected.effect_status} />
+                    </dd>
                   </dl>
                 </div>
 

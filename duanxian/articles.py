@@ -200,6 +200,7 @@ def read_article(filename: str, root: Optional[str] = None) -> dict[str, Any]:
         "stocks": parsed.get("stocks") or [],
         "sectors": parsed.get("sectors") or [],
         "content": content,
+        "original": extract_original(content),
         "path": path,
     }
 
@@ -410,6 +411,87 @@ def _format_sectors_line(sectors: list[dict[str, Any]]) -> str:
     return "；".join(parts) if parts else "（无）"
 
 
+# 明显与正文无关的 UI / 营销 / 粘贴杂质（整行匹配，保守删除）
+_NOISE_LINE = re.compile(
+    r"^\s*(?:"
+    r"打开微信扫一扫|"
+    r"扫码关注(?:公众号)?|"
+    r"长按识别二维码|"
+    r"关注公众号|"
+    r"点击阅读原文|"
+    r"阅读原文|"
+    r"展开全文|"
+    r"收起全文|"
+    r"复制全文|"
+    r"分享到(?:微信|朋友圈|微博|QQ)?|"
+    r"点赞|在看|收藏|转发|"
+    r"相关推荐|猜你喜欢|热门评论|热门文章|"
+    r"登录后查看(?:全文|更多)?|"
+    r"下载.+?(?:APP|客户端|应用)|"
+    r"打开APP|"
+    r"广告|"
+    r"Cookie\s*(?:设置|政策|同意)?|"
+    r"我们使用\s*Cookie|"
+    r"本网站使用Cookie|"
+    r")\s*[。.!！]?$",
+    re.I,
+)
+# 单独成行的页码 / 装饰分隔（不含 markdown 的 ---）
+_PAGE_ONLY = re.compile(
+    r"^\s*(?:"
+    r"[—\-–~～·•]*\s*\d{1,4}\s*[—\-–~～·•]*|"
+    r"第\s*\d{1,4}\s*页|"
+    r"Page\s*\d{1,4}|"
+    r"[=\-*_]{4,}|"
+    r"[·•…]{3,}"
+    r")\s*$",
+    re.I,
+)
+_ZW_CHARS = re.compile(r"[\u200b\u200c\u200d\ufeff\u00ad]")
+_MULTI_SPACE = re.compile(r"[^\S\n]{2,}")
+_MULTI_BLANK = re.compile(r"\n{3,}")
+
+
+def _is_noise_line(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    if _NOISE_LINE.match(s):
+        return True
+    if _PAGE_ONLY.match(s):
+        return True
+    # 极短且全是符号/空白的装饰行
+    if len(s) <= 2 and not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", s):
+        return True
+    return False
+
+
+def clean_original_text(text: str) -> str:
+    """轻度清洗粘贴原文：去明显杂质、整理空白，最大限度保留正文。
+
+    不做语义改写、不删段落级正文内容。
+    """
+    if not text:
+        return ""
+    s = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    s = _ZW_CHARS.sub("", s)
+    # 全角空格统一，便于后续压缩
+    s = s.replace("\u3000", " ")
+
+    kept: list[str] = []
+    for raw_line in s.split("\n"):
+        line = raw_line.rstrip()
+        # 行内多余空格压缩（保留单个空格；中文不受影响）
+        line = _MULTI_SPACE.sub(" ", line)
+        if _is_noise_line(line):
+            continue
+        kept.append(line)
+
+    out = "\n".join(kept)
+    out = _MULTI_BLANK.sub("\n\n", out)
+    return out.strip()
+
+
 def build_article_markdown(
     *,
     title: str,
@@ -419,8 +501,8 @@ def build_article_markdown(
     stocks: list[dict[str, Any]],
     sectors: list[dict[str, Any]],
 ) -> str:
-    """组装落盘 Markdown：元数据 + 保留原文。"""
-    body = (original or "").strip()
+    """组装落盘 Markdown：元数据 + 清洗后的原文。"""
+    body = clean_original_text(original)
     lines = [
         f"# {title}",
         "",
@@ -646,8 +728,8 @@ def commit_files(
             filename = dated_filename(title, date)
         else:
             filename = sanitize_filename(filename)
-        # 用户原文优先；缺省时再用 content
-        original = str(raw.get("original") or raw.get("content") or "")
+        # 用户原文优先；缺省时再用 content；落盘前轻度清洗
+        original = clean_original_text(str(raw.get("original") or raw.get("content") or ""))
         if not original.strip():
             raise ValueError(f"文章原文不能为空：{filename}")
         summary = str(raw.get("summary") or "").strip()
@@ -708,5 +790,74 @@ def commit_files(
         "ok": True,
         "root": base,
         "written": written,
+        "articles": load_index_articles(base),
+    }
+
+
+def update_article(
+    filename: str,
+    *,
+    content: Optional[str] = None,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    root: Optional[str] = None,
+) -> dict[str, Any]:
+    """更新已落盘文章全文（及索引标题/摘要）。文件名不变。"""
+    path = _article_path(filename, root)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"文章不存在：{os.path.basename(path)}")
+    name = os.path.basename(path)
+    base = ensure_dir(root)
+
+    old = _read_text(path)
+    if content is None:
+        new_content = old
+    else:
+        new_content = str(content)
+        if not new_content.strip():
+            raise ValueError("文章内容不能为空")
+        # 若含「## 原文」块，仅对该块做轻度清洗，元数据区保持用户编辑结果
+        marker = "## 原文"
+        idx = new_content.find(marker)
+        if idx >= 0:
+            head = new_content[: idx + len(marker)]
+            body = new_content[idx + len(marker):].lstrip("\r\n")
+            cleaned = clean_original_text(body)
+            new_content = head + "\n\n" + cleaned + ("\n" if cleaned else "")
+        else:
+            new_content = clean_original_text(new_content)
+
+    parsed = _parse_article_body(new_content)
+    new_title = (title if title is not None else "").strip() or parsed.get("title") or name[:-3]
+    new_summary = (summary if summary is not None else "").strip() or parsed.get("summary") or new_title
+
+    # 同步文首标题与摘要行（若结构仍是标准模板）
+    lines = new_content.splitlines()
+    if lines and lines[0].startswith("# "):
+        lines[0] = f"# {new_title}"
+    for i, line in enumerate(lines[:20]):
+        if line.startswith("- 摘要："):
+            lines[i] = f"- 摘要：{new_summary}"
+            break
+    new_content = "\n".join(lines)
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+
+    with _LOCK:
+        _atomic_write_text(path, new_content)
+        articles = {a["filename"].lower(): dict(a) for a in load_index_articles(base)}
+        articles[name.lower()] = {
+            "filename": name,
+            "title": new_title,
+            "summary": new_summary,
+        }
+        ordered = sorted(articles.values(), key=lambda t: t["filename"])
+        index_path = os.path.join(base, INDEX_NAME)
+        _atomic_write_text(index_path, build_index(ordered, base))
+
+    return {
+        "ok": True,
+        "root": base,
+        "article": read_article(name, base),
         "articles": load_index_articles(base),
     }

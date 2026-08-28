@@ -4935,3 +4935,62 @@ class TestArticles:
         assert "stock" in kinds
         assert "sector" in kinds
 
+    def test_clean_original_removes_noise_keeps_body(self):
+        from duanxian import articles as arts
+
+        raw = (
+            "\ufeff白酒景气跟踪\n"
+            "\n\n\n"
+            "贵州茅台  份额提升。\n"
+            "打开微信扫一扫\n"
+            "— 3 —\n"
+            "行业集中度上行。\n"
+            "相关推荐\n"
+            "点击阅读原文\n"
+        )
+        cleaned = arts.clean_original_text(raw)
+        assert "贵州茅台 份额提升" in cleaned or "贵州茅台份额提升" in cleaned.replace(" ", "")
+        assert "行业集中度上行" in cleaned
+        assert "打开微信扫一扫" not in cleaned
+        assert "相关推荐" not in cleaned
+        assert "点击阅读原文" not in cleaned
+        assert "— 3 —" not in cleaned
+        assert "\n\n\n" not in cleaned
+        # 正文标题与关键句仍在
+        assert "白酒景气跟踪" in cleaned
+
+    def test_update_article_content(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [])
+        root = str(tmp_path / "articles")
+        arts.commit_files([{
+            "title": "可编辑文章",
+            "date": "2026-08-28",
+            "summary": "旧摘要",
+            "original": "旧正文第一段。\n",
+        }], root)
+        out = arts.update_article(
+            "可编辑文章-2026-08-28.md",
+            content=(
+                "# 可编辑文章\n\n"
+                "- 日期：2026-08-28\n"
+                "- 摘要：新摘要\n"
+                "- 个股：（无）\n"
+                "- 板块：（无）\n\n"
+                "## 原文\n\n"
+                "新正文已修改。\n打开微信扫一扫\n"
+            ),
+            title="可编辑文章",
+            summary="新摘要",
+            root=root,
+        )
+        assert out["ok"]
+        body = out["article"]["content"]
+        assert "新正文已修改" in body
+        assert "打开微信扫一扫" not in body
+        assert out["article"]["summary"] == "新摘要"
+        idx = (tmp_path / "articles" / "index.md").read_text(encoding="utf-8")
+        assert "新摘要" in idx
+

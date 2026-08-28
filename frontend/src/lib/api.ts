@@ -742,6 +742,8 @@ export const api = {
     request<ArticlesCommitResult>("/articles/commit", "POST", { files }),
   articlesToMessage: (name: string) =>
     request<ArticlesToMessageResult>("/articles/to-message", "POST", { name }),
+  articlesUpdate: (body: { name: string; content?: string; title?: string; summary?: string }) =>
+    request<ArticlesUpdateResult>("/articles/update", "POST", body),
   pluginsList: () => get<PluginsListResult>("/plugins"),
   pluginsPick: (initialDir?: string) =>
     request<PluginPickResult>("/plugins/pick", "POST", { initial_dir: initialDir || "" }),
@@ -1226,6 +1228,7 @@ export interface ArticleItem extends ArticleMeta {
   content: string;
   path: string;
   date?: string;
+  original?: string;
   stocks?: ArticleStockRef[];
   sectors?: ArticleSectorRef[];
 }
@@ -1266,6 +1269,12 @@ export interface ArticlesToMessageResult {
   article_path: string;
   inserted: unknown[];
   analyzed: AnalyzedMessage[];
+}
+export interface ArticlesUpdateResult {
+  ok: boolean;
+  root: string;
+  article: ArticleItem;
+  articles: ArticleMeta[];
 }
 
 export interface BackupFolder {

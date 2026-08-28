@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText,
-  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft,
+  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -15,12 +15,22 @@ import {
 import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
 import { buildArticlePrompt, parseArticleJson, type ArticleDraftFile } from "@/lib/articles";
 
+interface ArticleEditState {
+  filename: string;
+  title: string;
+  summary: string;
+  content: string;
+}
+
 export function Articles() {
   const navigate = useNavigate();
   const [root, setRoot] = useState("");
   const [articles, setArticles] = useState<ArticleMeta[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [selectedBody, setSelectedBody] = useState("");
+  const [edit, setEdit] = useState<ArticleEditState | null>(null);
+  const [editBaseline, setEditBaseline] = useState<ArticleEditState | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
   const [note, setNote] = useState("");
   const [organizing, setOrganizing] = useState(false);
@@ -53,23 +63,42 @@ export function Articles() {
 
   useEffect(() => {
     if (!selected) {
-      setSelectedBody("");
+      setEdit(null);
+      setEditBaseline(null);
       return;
     }
     let cancelled = false;
+    setEditLoading(true);
     (async () => {
       try {
         const t = await api.articlesItem(selected);
-        if (!cancelled) setSelectedBody(t.content || "");
+        if (cancelled) return;
+        const state: ArticleEditState = {
+          filename: t.filename,
+          title: t.title || "",
+          summary: t.summary || "",
+          content: t.content || "",
+        };
+        setEdit(state);
+        setEditBaseline(state);
       } catch (e) {
         if (!cancelled) {
-          setSelectedBody("");
+          setEdit(null);
+          setEditBaseline(null);
           toast.error(e instanceof ApiError ? e.message : "读取文章失败");
         }
+      } finally {
+        if (!cancelled) setEditLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [selected]);
+
+  const editDirty = !!(edit && editBaseline && (
+    edit.title !== editBaseline.title
+    || edit.summary !== editBaseline.summary
+    || edit.content !== editBaseline.content
+  ));
 
   useEffect(() => {
     if (qaOpen) setQaConfigured(hasLlm());
@@ -96,6 +125,10 @@ export function Articles() {
       toast.error("请先选择一篇文章");
       return;
     }
+    if (editDirty) {
+      toast.error("请先保存或撤销当前编辑");
+      return;
+    }
     setConverting(true);
     try {
       const res = await api.articlesToMessage(selected);
@@ -112,6 +145,43 @@ export function Articles() {
       toast.error(e instanceof ApiError ? e.message : "转为消息失败");
     } finally {
       setConverting(false);
+    }
+  };
+
+  const resetEdit = () => {
+    if (editBaseline) setEdit({ ...editBaseline });
+  };
+
+  const saveEdit = async () => {
+    if (!edit || !selected) return;
+    if (!edit.content.trim()) {
+      toast.error("文章内容不能为空");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.articlesUpdate({
+        name: edit.filename,
+        title: edit.title,
+        summary: edit.summary,
+        content: edit.content,
+      });
+      setArticles(res.articles || []);
+      setRoot(res.root || root);
+      const next: ArticleEditState = {
+        filename: res.article.filename,
+        title: res.article.title || "",
+        summary: res.article.summary || "",
+        content: res.article.content || "",
+      };
+      setEdit(next);
+      setEditBaseline(next);
+      toast.success("已保存修改");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "保存失败");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -396,18 +466,38 @@ export function Articles() {
         <GlassCard className="mb-2">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold">
-              <FileText className="h-4 w-4 text-primary" /> 文章列表（只读）
+              <FileText className="h-4 w-4 text-primary" /> 文章列表
             </h3>
-            <button
-              type="button"
-              onClick={() => void toMessage()}
-              disabled={!selected || converting}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 hover:text-primary disabled:opacity-40"
-              title="把当前文章插入消息分析；产生时间为转换时刻，原文末尾保留文章文件关联"
-            >
-              {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
-              转为消息
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={resetEdit}
+                disabled={!editDirty || saving || editLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-40"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                撤销
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveEdit()}
+                disabled={!editDirty || saving || editLoading || !edit}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                保存
+              </button>
+              <button
+                type="button"
+                onClick={() => void toMessage()}
+                disabled={!selected || converting || editDirty}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 hover:text-primary disabled:opacity-40"
+                title="把当前文章插入消息分析；产生时间为转换时刻，原文末尾保留文章文件关联"
+              >
+                {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+                转为消息
+              </button>
+            </div>
           </div>
           {articles.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无文章。粘贴原文后点「AI 整理」开始归档。</p>
@@ -418,7 +508,13 @@ export function Articles() {
                   <li key={t.filename}>
                     <button
                       type="button"
-                      onClick={() => setSelected(t.filename)}
+                      onClick={() => {
+                        if (editDirty && selected !== t.filename) {
+                          toast.error("请先保存或撤销当前编辑");
+                          return;
+                        }
+                        setSelected(t.filename);
+                      }}
                       className={cn(
                         "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors",
                         selected === t.filename
@@ -433,14 +529,38 @@ export function Articles() {
                 ))}
               </ul>
               <div className="flex min-h-0 flex-col gap-2">
-                <pre className="max-h-72 flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                  {selected ? (selectedBody || "加载中…") : "点击左侧文章查看正文"}
-                </pre>
-                {selected && (
-                  <p className="text-[11px] text-muted-foreground">
-                    「转为消息」会以当前时刻作为产生时间写入消息分析，并在原文末尾附上文件关联：
-                    <code className="mx-1 text-foreground/80">{selected}</code>
-                  </p>
+                {!selected ? (
+                  <p className="text-sm text-muted-foreground">点击左侧文章查看并编辑</p>
+                ) : editLoading || !edit ? (
+                  <p className="text-sm text-muted-foreground">加载中…</p>
+                ) : (
+                  <>
+                    <label className="text-[11px] text-muted-foreground">标题</label>
+                    <input
+                      value={edit.title}
+                      onChange={(e) => setEdit({ ...edit, title: e.target.value })}
+                      className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+                    />
+                    <label className="text-[11px] text-muted-foreground">一句话摘要</label>
+                    <input
+                      value={edit.summary}
+                      onChange={(e) => setEdit({ ...edit, summary: e.target.value })}
+                      className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+                    />
+                    <label className="text-[11px] text-muted-foreground">
+                      Markdown 全文（含元数据与原文）{editDirty ? " · 未保存" : ""}
+                    </label>
+                    <textarea
+                      value={edit.content}
+                      onChange={(e) => setEdit({ ...edit, content: e.target.value })}
+                      rows={16}
+                      className="max-h-[28rem] w-full resize-y rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-primary/50"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      文件名固定为 <code className="text-foreground/80">{edit.filename}</code>
+                      ；保存时会对「原文」块轻度清洗。有未保存修改时需先保存或撤销，才能切换文章或转为消息。
+                    </p>
+                  </>
                 )}
               </div>
             </div>
