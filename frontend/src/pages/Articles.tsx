@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText,
-  Loader2, Send, Settings, Sparkles, Newspaper,
+  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -16,10 +16,12 @@ import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
 import { buildArticlePrompt, parseArticleJson, type ArticleDraftFile } from "@/lib/articles";
 
 export function Articles() {
+  const navigate = useNavigate();
   const [root, setRoot] = useState("");
   const [articles, setArticles] = useState<ArticleMeta[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedBody, setSelectedBody] = useState("");
+  const [converting, setConverting] = useState(false);
   const [note, setNote] = useState("");
   const [organizing, setOrganizing] = useState(false);
   const [drafts, setDrafts] = useState<ArticleDraftFile[] | null>(null);
@@ -86,6 +88,30 @@ export function Articles() {
       toast.success("已复制文章库路径");
     } catch {
       toast.error("复制失败");
+    }
+  };
+
+  const toMessage = async () => {
+    if (!selected) {
+      toast.error("请先选择一篇文章");
+      return;
+    }
+    setConverting(true);
+    try {
+      const res = await api.articlesToMessage(selected);
+      toast.success(
+        `已转入消息分析（产生时间 ${res.produced_at || "刚刚"}）`,
+        {
+          action: {
+            label: "去消息分析",
+            onClick: () => { navigate("/messages"); },
+          },
+        },
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "转为消息失败");
+    } finally {
+      setConverting(false);
     }
   };
 
@@ -368,9 +394,21 @@ export function Articles() {
         </GlassCard>
 
         <GlassCard className="mb-2">
-          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
-            <FileText className="h-4 w-4 text-primary" /> 文章列表（只读）
-          </h3>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+              <FileText className="h-4 w-4 text-primary" /> 文章列表（只读）
+            </h3>
+            <button
+              type="button"
+              onClick={() => void toMessage()}
+              disabled={!selected || converting}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 hover:text-primary disabled:opacity-40"
+              title="把当前文章插入消息分析；产生时间为转换时刻，原文末尾保留文章文件关联"
+            >
+              {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+              转为消息
+            </button>
+          </div>
           {articles.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无文章。粘贴原文后点「AI 整理」开始归档。</p>
           ) : (
@@ -394,9 +432,17 @@ export function Articles() {
                   </li>
                 ))}
               </ul>
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                {selected ? (selectedBody || "加载中…") : "点击左侧文章查看正文"}
-              </pre>
+              <div className="flex min-h-0 flex-col gap-2">
+                <pre className="max-h-72 flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {selected ? (selectedBody || "加载中…") : "点击左侧文章查看正文"}
+                </pre>
+                {selected && (
+                  <p className="text-[11px] text-muted-foreground">
+                    「转为消息」会以当前时刻作为产生时间写入消息分析，并在原文末尾附上文件关联：
+                    <code className="mx-1 text-foreground/80">{selected}</code>
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </GlassCard>

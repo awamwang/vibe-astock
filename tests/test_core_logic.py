@@ -4903,3 +4903,35 @@ class TestArticles:
         rows = arts.parse_index(text)
         assert rows == [{"filename": "白酒-2026-08-28.md", "title": "白酒", "summary": "景气回升"}]
 
+    def test_build_message_draft_keeps_file_link(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [
+            {"key": "c:600519", "code": "600519", "name": "贵州茅台", "status": "matched",
+             "stock": {"code": "600519", "name": "贵州茅台", "market": "sh", "types": []}},
+        ])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [
+            {"raw": "白酒", "mapped": "白酒", "status": "matched",
+             "block": {"kind": "conception", "kind_label": "概念", "id": "1", "name": "白酒"},
+             "candidates": []},
+        ])
+        root = str(tmp_path / "articles")
+        arts.commit_files([{
+            "title": "白酒景气",
+            "date": "2026-08-28",
+            "summary": "份额提升",
+            "original": "贵州茅台份额提升。\n",
+            "stocks": [{"code": "600519", "name": "贵州茅台"}],
+            "sectors": [{"name": "白酒"}],
+        }], root)
+        built = arts.build_message_draft("白酒景气-2026-08-28.md", root)
+        draft = built["draft"]
+        assert draft["source_id"] == "article"
+        assert "贵州茅台份额提升" in draft["content"]
+        assert "关联研报文章文件：`白酒景气-2026-08-28.md`" in draft["content"]
+        assert draft["meta"]["article_filename"] == "白酒景气-2026-08-28.md"
+        assert draft["produced_at"]
+        kinds = {t["kind"] for t in draft["targets"]}
+        assert "stock" in kinds
+        assert "sector" in kinds
+

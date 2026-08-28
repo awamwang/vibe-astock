@@ -1554,6 +1554,27 @@ def api_articles_commit(request: Request, body: dict = Body(...)):
     return {"data": result}
 
 
+@app.post("/api/articles/to-message")
+def api_articles_to_message(request: Request, body: dict = Body(...)):
+    """将研报文章转为消息分析条目；产生时间为转换时刻，原文末尾保留文章文件关联。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import articles as arts
+
+    name = str((body or {}).get("name") or (body or {}).get("filename") or "").strip()
+    if not name:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    try:
+        result = arts.to_message(name)
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": result}
+
+
 def _plugin_row(rec) -> dict:
     from pathlib import Path
 

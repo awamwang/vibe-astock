@@ -740,6 +740,8 @@ export const api = {
     request<ArticlesRetrieveResult>("/articles/retrieve", "POST", { query, k }),
   articlesCommit: (files: ArticleDraftPayload[]) =>
     request<ArticlesCommitResult>("/articles/commit", "POST", { files }),
+  articlesToMessage: (name: string) =>
+    request<ArticlesToMessageResult>("/articles/to-message", "POST", { name }),
   pluginsList: () => get<PluginsListResult>("/plugins"),
   pluginsPick: (initialDir?: string) =>
     request<PluginPickResult>("/plugins/pick", "POST", { initial_dir: initialDir || "" }),
@@ -1256,6 +1258,14 @@ export interface ArticlesCommitResult {
     sectors?: ArticleSectorRef[];
   })[];
   articles: ArticleMeta[];
+}
+export interface ArticlesToMessageResult {
+  ok: boolean;
+  produced_at: string;
+  article_filename: string;
+  article_path: string;
+  inserted: unknown[];
+  analyzed: AnalyzedMessage[];
 }
 
 export interface BackupFolder {

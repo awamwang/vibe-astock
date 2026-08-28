@@ -482,6 +482,147 @@ def _parse_article_body(content: str) -> dict[str, Any]:
     }
 
 
+def extract_original(content: str) -> str:
+    """从落盘 Markdown 取出「## 原文」之后的正文；无标记时退回全文。"""
+    text = content or ""
+    marker = "## 原文"
+    idx = text.find(marker)
+    if idx < 0:
+        return text.strip()
+    body = text[idx + len(marker):].lstrip("\r\n")
+    return body.strip()
+
+
+def _targets_from_article(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    """把文章元数据里的个股/板块标签转成消息标的。"""
+    targets: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _add(kind: str, code: str | None, name: str) -> None:
+        name = (name or "").strip()
+        code = (code or "").strip() or None
+        if not name and not code:
+            return
+        key = (kind, code or "", name)
+        if key in seen:
+            return
+        seen.add(key)
+        targets.append({"kind": kind, "code": code, "name": name or code or ""})
+
+    for row in parsed.get("stocks") or []:
+        label = str((row or {}).get("name") or "").strip()
+        if not label:
+            continue
+        label = re.sub(r"（未匹配）|\(未匹配\)$", "", label).strip()
+        m = re.match(r"^(\d{6})\s+(.+)$", label)
+        if m:
+            _add("stock", m.group(1), m.group(2).strip())
+        elif _CODE_RE.match(label):
+            _add("stock", label, label)
+        else:
+            _add("stock", None, label)
+
+    for row in parsed.get("sectors") or []:
+        label = str((row or {}).get("name") or "").strip()
+        if not label:
+            continue
+        label = re.sub(r"（未匹配）|\(未匹配\)$", "", label).strip()
+        # 「白酒（概念）」→ 白酒
+        label = re.sub(r"（[^）]+）|\([^)]+\)$", "", label).strip() or label
+        if label:
+            _add("sector", None, label)
+    return targets
+
+
+def build_message_draft(filename: str, root: Optional[str] = None) -> dict[str, Any]:
+    """把研报文章转成消息录入草稿（产生时间=转换时刻，原文末尾保留文件关联）。"""
+    art = read_article(filename, root)
+    name = art["filename"]
+    path = art["path"]
+    original = extract_original(art["content"])
+    if not original.strip():
+        raise ValueError(f"文章原文为空，无法转为消息：{name}")
+
+    link_block = (
+        f"\n\n---\n"
+        f"关联研报文章文件：`{name}`\n"
+        f"路径：`{path}`\n"
+    )
+    # 避免重复追加关联块
+    if f"关联研报文章文件：`{name}`" in original:
+        content = original if original.endswith("\n") else original + "\n"
+    else:
+        content = original.rstrip() + link_block
+
+    produced_at = china_now().strftime("%Y-%m-%d %H:%M:%S")
+    parsed = {
+        "stocks": art.get("stocks") or [],
+        "sectors": art.get("sectors") or [],
+    }
+    targets = _targets_from_article(parsed)
+    summary = (art.get("summary") or "").strip() or art.get("title") or name
+    draft = {
+        "draft_key": f"article-to-msg-{name}-{int(china_now().timestamp())}",
+        "source_id": "article",
+        "source_label": "研报文章",
+        "content": content,
+        "title": art.get("title") or name[:-3],
+        "keywords": [],
+        "url": "",
+        "marks": [],
+        "produced_at": produced_at,
+        "targets": targets,
+        "meta": {
+            "format": "article",
+            "from_article": True,
+            "article_filename": name,
+            "article_path": path,
+            "summary": summary,
+            "article_date": art.get("date") or "",
+        },
+    }
+    return {"draft": draft, "article": art, "produced_at": produced_at}
+
+
+def to_message(filename: str, root: Optional[str] = None) -> dict[str, Any]:
+    """将文章插入消息分析库，返回入库结果。"""
+    built = build_message_draft(filename, root)
+    draft_dict = built["draft"]
+
+    from duanxian import vr_host as vh
+
+    vh._add_vr_to_path()
+    from message.schemas import RawMessageDraft  # noqa: PLC0415
+    from message import store as msg_store  # noqa: PLC0415
+
+    draft = RawMessageDraft.model_validate(draft_dict)
+    inserted = msg_store.insert_raw_batch([draft])
+    if not inserted:
+        raise ValueError("消息入库未写入（可能与已有内容重复）")
+
+    analyzed = []
+    for raw in inserted:
+        patch: dict[str, Any] = {
+            "title": draft.title,
+            "detail": draft.content,
+            "summary": str((draft.meta or {}).get("summary") or draft.title),
+        }
+        if draft.targets:
+            patch["targets"] = [t.model_dump() for t in draft.targets]
+        if draft.keywords:
+            patch["keywords"] = list(draft.keywords)
+        analyzed.append(msg_store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by="rule"))
+
+    return {
+        "ok": True,
+        "produced_at": built["produced_at"],
+        "article_filename": built["article"]["filename"],
+        "article_path": built["article"]["path"],
+        "inserted": [r.model_dump() for r in inserted],
+        "analyzed": [a.model_dump() for a in analyzed],
+    }
+
+
 def commit_files(
     files: list[dict[str, Any]],
     root: Optional[str] = None,
