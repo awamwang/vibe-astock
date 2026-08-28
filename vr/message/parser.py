@@ -238,6 +238,23 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
             )
         return drafts
 
+    if fmt == "article":
+        # 整篇研报/文章：不按空行拆分，保留全文为一条
+        text = (payload.text or "").strip()
+        if not text:
+            return []
+        title = text.split("\n", 1)[0][:120]
+        return [
+            RawMessageDraft(
+                draft_key=_draft_key(),
+                source_id="article",
+                source_label=label or "研报文章",
+                content=text,
+                title=title,
+                meta={"format": "article"},
+            )
+        ]
+
     if fmt == "structured":
         items = payload.items or []
         if not items and payload.text:
@@ -380,6 +397,7 @@ def resplit_draft(draft: RawMessageDraft, mode: str = "blank") -> list[RawMessag
 def _default_label(source_id: str) -> str:
     return {
         "manual": "手动录入",
+        "article": "研报文章",
         "calendar": "财经大事日历",
         "xgb_msgs": "选股宝快讯",
         "cls_telegraph": "财联社电报",

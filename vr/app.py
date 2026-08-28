@@ -709,6 +709,30 @@ def industry(top: int = Query(20, ge=5, le=50)):
 # ── 消息分析 ──────────────────────────────────────────────────────────────
 
 
+def _analyzed_patch_from_draft(draft) -> dict:
+    """把录入草稿上的结构化字段写入分析记录（含研报 AI 提取结果）。"""
+    patch: dict = {}
+    if draft.effective_mode == "scheduled":
+        patch["effective_mode"] = "scheduled"
+        patch["effective_at"] = draft.effective_at
+    if draft.targets:
+        patch["targets"] = [t.model_dump() for t in draft.targets]
+    if draft.title:
+        patch["title"] = draft.title
+    if draft.keywords:
+        patch["keywords"] = list(draft.keywords)
+    if draft.url:
+        patch["url"] = draft.url
+    if draft.content:
+        patch["detail"] = draft.content
+    meta = draft.meta or {}
+    for key in ("summary", "impact_level", "freshness", "effect_status"):
+        val = meta.get(key)
+        if val:
+            patch[key] = val
+    return patch
+
+
 class IngestIn(BaseModel):
     format: str = "plain"
     source_id: str = "manual"
@@ -821,17 +845,11 @@ def messages_ingest_commit(body: IngestAdjustIn):
     analyzed = []
     for raw in inserted:
         draft = next((d for d in drafts if d.external_ref == raw.external_ref or d.title == raw.title), None)
-        patch: dict = {}
-        if draft:
-            if draft.effective_mode == "scheduled":
-                patch["effective_mode"] = "scheduled"
-                patch["effective_at"] = draft.effective_at
-            if draft.targets:
-                patch["targets"] = [t.model_dump() for t in draft.targets]
-            meta_il = (draft.meta or {}).get("impact_level")
-            if meta_il:
-                patch["impact_level"] = meta_il
-        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
+        if draft is None and len(drafts) == 1 and len(inserted) == 1:
+            draft = drafts[0]
+        patch = _analyzed_patch_from_draft(draft) if draft else {}
+        analyzed_by = "ai" if (draft and (draft.meta or {}).get("ai_extracted")) else "rule"
+        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by=analyzed_by))
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
 
@@ -842,17 +860,9 @@ def messages_ingest_adjust(body: IngestAdjustIn):
     analyzed = []
     for i, raw in enumerate(inserted):
         d = drafts[i] if i < len(drafts) else None
-        patch: dict = {}
-        if d:
-            if d.effective_mode == "scheduled":
-                patch["effective_mode"] = "scheduled"
-                patch["effective_at"] = d.effective_at
-            if d.targets:
-                patch["targets"] = [t.model_dump() for t in d.targets]
-            meta_il = (d.meta or {}).get("impact_level")
-            if meta_il:
-                patch["impact_level"] = meta_il
-        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch))
+        patch = _analyzed_patch_from_draft(d) if d else {}
+        analyzed_by = "ai" if (d and (d.meta or {}).get("ai_extracted")) else "rule"
+        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by=analyzed_by))
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
 

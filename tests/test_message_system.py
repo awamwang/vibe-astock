@@ -26,6 +26,18 @@ def test_split_plain_blank(msg_db):
     assert "第二条" in drafts[1].content
 
 
+def test_article_ingest_keeps_whole_text(msg_db):
+    text = "白酒景气跟踪\n\n贵州茅台份额提升。\n\n行业集中度上行。"
+    payload = IngestPayload(format="article", source_id="article", text=text)
+    drafts = parser.parse_ingest(payload)
+    assert len(drafts) == 1
+    assert drafts[0].source_id == "article"
+    assert drafts[0].source_label == "研报文章"
+    assert drafts[0].content == text
+    assert drafts[0].title.startswith("白酒景气跟踪")
+    assert drafts[0].meta.get("format") == "article"
+
+
 def test_structured_ingest(msg_db):
     items = [
         {

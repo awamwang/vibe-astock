@@ -28,6 +28,12 @@ import {
   monthRange, setDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
+import { chatStream } from "@/lib/llm";
+import {
+  buildArticleIngestPrompt,
+  parseArticleIngestExtract,
+  type ArticleIngestExtract,
+} from "@/lib/articles";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -562,8 +568,9 @@ export function MessageAnalysis() {
   const [calendarLoading, setCalendarLoading] = useState(false);
 
   const [ingestOpen, setIngestOpen] = useState(false);
-  const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar">("plain");
+  const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar" | "article">("plain");
   const [ingestText, setIngestText] = useState("");
+  const [articleExtract, setArticleExtract] = useState<ArticleIngestExtract | null>(null);
   const [drafts, setDrafts] = useState<RawMessageDraft[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [commitLoading, setCommitLoading] = useState(false);
@@ -777,6 +784,57 @@ export function MessageAnalysis() {
   const runPreview = async () => {
     setPreviewLoading(true);
     try {
+      if (ingestFormat === "article") {
+        const text = ingestText.trim();
+        if (!text) {
+          notify.error("请先粘贴整篇研报或文章");
+          return;
+        }
+        if (!hasLlm()) {
+          notify.error("请先在「接入 AI」配置模型");
+          return;
+        }
+        const prompt = buildArticleIngestPrompt(text);
+        const result = await chatStream(
+          [{ role: "user", content: prompt }],
+          "你只输出合法 JSON，不要调用工具，不要解释。",
+        );
+        const extracted = parseArticleIngestExtract(result.content, text);
+        const draftKey = `article-${Date.now()}`;
+        const draft: RawMessageDraft = {
+          draft_key: draftKey,
+          source_id: "article",
+          source_label: "研报文章",
+          content: extracted.original,
+          title: extracted.title,
+          keywords: extracted.keywords,
+          url: "",
+          marks: [],
+          targets: extracted.targets.map((t) => ({
+            kind: (["market", "sector", "theme", "stock", "other"].includes(t.kind)
+              ? t.kind
+              : "other") as ImpactTarget["kind"],
+            code: t.code ?? null,
+            name: t.name,
+          })),
+          meta: {
+            format: "article",
+            ai_extracted: true,
+            summary: extracted.summary,
+            impact_level: extracted.impact_level,
+            freshness: extracted.freshness,
+            effect_status: extracted.effect_status,
+            article_date: extracted.date,
+            stocks: extracted.stocks,
+            sectors: extracted.sectors,
+          },
+        };
+        setArticleExtract(extracted);
+        setDrafts([draft]);
+        notify.success("整篇分析完成，请确认字段后入库");
+        return;
+      }
+
       let parsedItems: Record<string, unknown>[] | undefined;
       if (ingestFormat === "structured" && ingestText.trim()) {
         parsedItems = JSON.parse(ingestText) as Record<string, unknown>[];
@@ -789,10 +847,11 @@ export function MessageAnalysis() {
         items: parsedItems,
         options: { split_mode: "auto" },
       });
+      setArticleExtract(null);
       setDrafts(rows);
       notify.success(`解析成功，共 ${rows.length} 条`);
     } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "解析预览失败");
+      notify.error(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : "解析预览失败"));
     } finally {
       setPreviewLoading(false);
     }
@@ -801,21 +860,24 @@ export function MessageAnalysis() {
   const closeIngest = () => {
     setIngestOpen(false);
     setIngestMetaOpen(false);
+    setArticleExtract(null);
   };
 
   const openIngest = () => {
-    setIngestMetaSourceLabel("手动录入");
+    setIngestMetaSourceLabel(ingestFormat === "article" ? "研报文章" : "手动录入");
     setIngestMetaProducedAt(nowStorageDatetime());
     setIngestMetaOpen(false);
+    setArticleExtract(null);
     setIngestOpen(true);
   };
 
   const applyIngestMeta = (rows: RawMessageDraft[]): RawMessageDraft[] => {
-    const label = ingestMetaSourceLabel.trim() || "手动录入";
+    const label = ingestMetaSourceLabel.trim()
+      || (ingestFormat === "article" ? "研报文章" : "手动录入");
     const produced = fromDatetimeLocal(toDatetimeLocal(ingestMetaProducedAt)) || ingestMetaProducedAt.trim() || nowStorageDatetime();
     return rows.map((d) => ({
       ...d,
-      source_id: "manual",
+      source_id: ingestFormat === "article" ? "article" : "manual",
       source_label: label,
       produced_at: produced,
     }));
@@ -828,11 +890,45 @@ export function MessageAnalysis() {
     try {
       const n = toCommit.length;
       await api.messageIngestCommit(toCommit);
+
+      if (ingestFormat === "article") {
+        try {
+          const articleFiles = toCommit.map((d) => {
+            const meta = d.meta || {};
+            const stocks = Array.isArray(meta.stocks)
+              ? (meta.stocks as { code?: string | null; name?: string | null }[])
+              : [];
+            const sectors = Array.isArray(meta.sectors)
+              ? (meta.sectors as { name: string }[])
+              : d.targets
+                .filter((t) => t.kind === "sector" || t.kind === "theme")
+                .map((t) => ({ name: t.name }));
+            const date = String(meta.article_date || "").trim() || undefined;
+            return {
+              title: d.title || "未命名文章",
+              summary: String(meta.summary || d.title || "").trim() || d.title || "未命名文章",
+              date,
+              original: d.content,
+              stocks,
+              sectors,
+            };
+          });
+          await api.articlesCommit(articleFiles);
+        } catch (e) {
+          notify.error(e instanceof ApiError ? e.message : "消息已入库，但文章库写入失败");
+        }
+      }
+
       setDrafts([]);
       setIngestText("");
+      setArticleExtract(null);
       setIngestMetaOpen(false);
       setIngestOpen(false);
-      notify.success(`已入库 ${n} 条`);
+      notify.success(
+        ingestFormat === "article"
+          ? `已入库 ${n} 条，并写入研报文章库`
+          : `已入库 ${n} 条`,
+      );
       await refreshMessages();
       await loadSources();
     } catch (e) {
@@ -844,8 +940,8 @@ export function MessageAnalysis() {
 
   const requestCommit = () => {
     if (!drafts.length) return;
-    if (ingestFormat === "plain" || ingestFormat === "structured") {
-      setIngestMetaSourceLabel((v) => v.trim() || "手动录入");
+    if (ingestFormat === "plain" || ingestFormat === "structured" || ingestFormat === "article") {
+      setIngestMetaSourceLabel((v) => v.trim() || (ingestFormat === "article" ? "研报文章" : "手动录入"));
       setIngestMetaProducedAt((v) => v.trim() || nowStorageDatetime());
       setIngestMetaOpen(true);
       return;
@@ -1785,7 +1881,7 @@ export function MessageAnalysis() {
 
             <div className="min-h-0 flex-1 space-y-4 overflow-auto">
               <div className="flex flex-wrap gap-2">
-                {(["plain", "structured", "calendar"] as const).map((f) => (
+                {(["plain", "structured", "calendar", "article"] as const).map((f) => (
                   <button
                     key={f}
                     type="button"
@@ -1795,9 +1891,15 @@ export function MessageAnalysis() {
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border bg-background text-muted-foreground hover:text-foreground",
                     )}
-                    onClick={() => setIngestFormat(f)}
+                    onClick={() => {
+                      setIngestFormat(f);
+                      setDrafts([]);
+                      setArticleExtract(null);
+                      if (f === "article") setIngestMetaSourceLabel("研报文章");
+                      else if (f === "plain" || f === "structured") setIngestMetaSourceLabel("手动录入");
+                    }}
                   >
-                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : "财经日历"}
+                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : f === "calendar" ? "财经日历" : "研报文章"}
                   </button>
                 ))}
               </div>
@@ -1808,12 +1910,60 @@ export function MessageAnalysis() {
                     ? "粘贴大段文字，系统将按空行/分隔符拆分…"
                     : ingestFormat === "calendar"
                       ? '{"meta":{"title":"…","month":9,"year":2026,"source":{"name":"…"},"disclaimer":"…"},"legend":[],"events":[{"id":"…","startTime":1759161600000,"title":"…","importanceLevel":4,"category":"必看大事","targets":[{"type":"sector","name":"…","code":""}]}]}'
-                      : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
+                      : ingestFormat === "article"
+                        ? "粘贴整篇研报或文章原文（不拆分）。点「AI 分析整篇」提取标题、摘要、关键词、个股与板块等字段…"
+                        : '[{"title":"…","content":"…","url":"…","keywords":["…"],"marks":["highlight"]}]'
                 }
                 value={ingestText}
                 onChange={(e) => setIngestText(e.target.value)}
               />
-              {drafts.length > 0 && (
+              {ingestFormat === "article" && articleExtract && drafts.length > 0 && (
+                <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-sm">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">标题</div>
+                    <div className="font-medium text-foreground">{articleExtract.title}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">摘要</div>
+                    <div className="text-foreground/90">{articleExtract.summary}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    <span>日期 {articleExtract.date}</span>
+                    <span>影响 {IMPACT_LABEL[articleExtract.impact_level] || articleExtract.impact_level}</span>
+                    <span>新旧 {FRESHNESS_LABEL[articleExtract.freshness] || articleExtract.freshness}</span>
+                    <span>发酵 {EFFECT_LABEL[articleExtract.effect_status] || articleExtract.effect_status}</span>
+                  </div>
+                  {articleExtract.keywords.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {articleExtract.keywords.map((k) => (
+                        <span key={k} className="rounded-md border border-border bg-background px-2 py-0.5 text-xs">
+                          {k}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {articleExtract.targets.length > 0 && (
+                    <div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">关联标的</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {articleExtract.targets.map((t, i) => (
+                          <span
+                            key={`${t.kind}-${t.code}-${t.name}-${i}`}
+                            className="rounded-md border border-border/80 bg-background px-2 py-0.5 text-xs text-foreground"
+                          >
+                            {TARGET_KIND_LABEL[t.kind] || t.kind}·{t.name}
+                            {t.code ? ` ${t.code}` : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    确认入库后：写入消息分析，并同步到研报文章库（保留原文 + 摘要索引，个股/板块经处理器解析）。
+                  </p>
+                </div>
+              )}
+              {drafts.length > 0 && ingestFormat !== "article" && (
                 <div className="max-h-48 overflow-auto rounded-xl border border-border/60">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-muted/80 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
@@ -1857,7 +2007,14 @@ export function MessageAnalysis() {
                 onClick={runPreview}
               >
                 {previewLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}
-                预览拆分
+                {ingestFormat === "article" ? (
+                  <span className="inline-flex items-center gap-1">
+                    {!previewLoading && <Sparkles className="h-3.5 w-3.5" />}
+                    AI 分析整篇
+                  </span>
+                ) : (
+                  "预览拆分"
+                )}
               </button>
               {drafts.length > 0 && (
                 <button
@@ -1898,13 +2055,14 @@ export function MessageAnalysis() {
             </div>
             <p className="mb-4 text-sm text-muted-foreground">
               为本次入库的 {drafts.length} 条消息统一设置来源与产生时间（选填）。
+              {ingestFormat === "article" && " 研报文章将同时写入文章库。"}
             </p>
             <div className="space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-semibold text-muted-foreground">数据来源</label>
                 <input
                   className={inputCls}
-                  placeholder="手动录入"
+                  placeholder={ingestFormat === "article" ? "研报文章" : "手动录入"}
                   value={ingestMetaSourceLabel}
                   onChange={(e) => setIngestMetaSourceLabel(e.target.value)}
                 />

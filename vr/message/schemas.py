@@ -20,7 +20,7 @@ TargetKind = Literal["market", "sector", "theme", "stock", "other"]
 EffectiveMode = Literal["immediate", "scheduled"]
 AnalyzedStatus = Literal["draft", "confirmed", "archived"]
 AnalyzedBy = Literal["ai", "human", "rule"]
-IngestFormat = Literal["plain", "structured", "calendar"]
+IngestFormat = Literal["plain", "structured", "calendar", "article"]
 
 
 class ImpactTarget(BaseModel):

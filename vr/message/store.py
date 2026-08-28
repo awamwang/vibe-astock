@@ -34,6 +34,7 @@ _INITED = False
 
 DEFAULT_SOURCES = [
     ("manual", "手动录入", "manual", 1, None),
+    ("article", "研报文章", "manual", 1, None),
     ("calendar", "财经大事日历", "manual", 1, None),
     ("cls_telegraph", "财联社电报", "poll", 1, 5),
     ("xgb_msgs", "选股宝快讯", "poll", 0, None),
