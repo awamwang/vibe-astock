@@ -640,6 +640,29 @@ END)
 """
 
 
+def _effective_end_sql(default_days: int) -> str:
+    """结束时间：有 end_at 用 end_at，否则生效时间 + default_days。"""
+    from .dates import DEFAULT_END_DAYS
+
+    days = int(default_days) if default_days is not None else DEFAULT_END_DAYS
+    days = max(1, min(15, days))
+    return f"""
+(CASE
+  WHEN end_at IS NOT NULL AND TRIM(end_at) != '' THEN end_at
+  ELSE datetime({_EFFECTIVE_DT_SQL}, '+{days} days')
+END)
+"""
+
+
+def _parse_truthy_flag(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if not value:
+        return False
+    selected = {x.strip().lower() for x in str(value).split(",") if x.strip()}
+    return bool(selected & {"yes", "1", "true", "on"})
+
+
 def _collect_stock_match_ids(conn: sqlite3.Connection, stock_code: str) -> set[str]:
     """直接股票标的或板块成分股包含该代码的分析消息 id。"""
     from ths_block import match as block_match
@@ -715,6 +738,15 @@ def _build_analyzed_where(
                 placeholders = ",".join("?" * len(stock_match_ids))
                 parts.append(f"analyzed_message.id IN ({placeholders})")
                 args.extend(sorted(stock_match_ids))
+    if not _parse_truthy_flag(q.include_history):
+        from datetime import datetime
+
+        from .dates import DEFAULT_END_DAYS
+
+        as_of = (q.as_of or "").strip() or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        days = q.default_end_days if q.default_end_days is not None else DEFAULT_END_DAYS
+        parts.append(f"{_effective_end_sql(days)} >= ?")
+        args.append(as_of)
     return " AND ".join(parts), args
 
 

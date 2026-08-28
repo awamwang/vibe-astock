@@ -779,6 +779,9 @@ export const api = {
     favorited?: string | string[];
     followed?: string | string[];
     match_current_stock?: string | string[];
+    include_history?: string;
+    default_end_days?: number;
+    as_of?: string;
     sort?: string;
     order?: string;
     limit?: number;

@@ -309,14 +309,23 @@ def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
             updated_at="2026-08-27 10:00:00",
         ),
     )
+    def _ids_with_stock(conn, code):
+        return {an.id} if code == "600519" else set()
+
+    def _name_has_stock(name, code):
+        return name == "华为概念" and code == "600519"
+
+    # PYTHONPATH 含 vr/ 时 ths_block 与 vr.ths_block 是两套模块，需同时 patch
     monkeypatch.setattr(
         "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
-        lambda conn, code: {an.id} if code == "600519" else set(),
+        _ids_with_stock,
     )
     monkeypatch.setattr(
-        "vr.ths_block.match.target_name_contains_stock",
-        lambda name, code: name == "华为概念" and code == "600519",
+        "ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        _ids_with_stock,
     )
+    monkeypatch.setattr("vr.ths_block.match.target_name_contains_stock", _name_has_stock)
+    monkeypatch.setattr("ths_block.match.target_name_contains_stock", _name_has_stock)
 
     matched, matched_total = store.list_analyzed(
         store.ListQuery(match_current_stock="yes"),
@@ -658,7 +667,10 @@ def test_cls_fetch_telegraph_backfill_today(msg_db, monkeypatch):
     assert r["inserted"] == 2
     assert r["tail_mark"] == "102"
 
-    rows, total = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
+    rows, total = store.list_analyzed(
+        store.ListQuery(source="cls_telegraph", include_history=True),
+        path=msg_db,
+    )
     assert total == 2
     titles = {row.title for row in rows}
     assert titles == {"新", "漏"}
@@ -851,4 +863,78 @@ def test_effective_end_at_scheduled(msg_db):
     )
     assert effective_at_dt(msg) == "2026-08-05 09:00:00"
     assert effective_end_at(msg, default_days=5) == "2026-08-10 09:00:00"
+
+
+def test_list_analyzed_excludes_expired_unless_include_history(msg_db):
+    """默认排除结束时间早于 as_of 的未归档消息；勾选后才纳入（与归档库无关）。"""
+    recent = "2026-08-27 10:00:00"
+    expired_draft = RawMessageDraft(
+        draft_key="hist-old",
+        source_id="manual",
+        source_label="粘贴",
+        content="已过期",
+        title="已过期",
+        produced_at=recent,
+    )
+    active_draft = RawMessageDraft(
+        draft_key="hist-new",
+        source_id="manual",
+        source_label="粘贴",
+        content="仍有效",
+        title="仍有效",
+        produced_at=recent,
+    )
+    raw_old = store.insert_raw_batch([expired_draft], path=msg_db)[0]
+    raw_new = store.insert_raw_batch([active_draft], path=msg_db)[0]
+    old_msg = store.upsert_analyzed_from_raw(raw_old, path=msg_db)
+    new_msg = store.upsert_analyzed_from_raw(raw_new, path=msg_db)
+    store.update_analyzed(old_msg.id, {"end_at": "2026-08-27 18:00:00"}, path=msg_db)
+    store.update_analyzed(new_msg.id, {"end_at": "2026-08-30 18:00:00"}, path=msg_db)
+
+    as_of = "2026-08-28 12:00:00"
+    active_only, active_total = store.list_analyzed(
+        store.ListQuery(as_of=as_of, default_end_days=5),
+        path=msg_db,
+    )
+    assert active_total == 1
+    assert active_only[0].title == "仍有效"
+
+    with_hist, hist_total = store.list_analyzed(
+        store.ListQuery(include_history=True, as_of=as_of, default_end_days=5),
+        path=msg_db,
+    )
+    assert hist_total == 2
+    assert {r.title for r in with_hist} == {"已过期", "仍有效"}
+
+    # 无显式 end_at 时，拉长默认有效期会把「按默认天数已过期」的消息重新纳入
+    bare = RawMessageDraft(
+        draft_key="hist-bare",
+        source_id="manual",
+        source_label="粘贴",
+        content="默认有效期",
+        title="默认有效期",
+        produced_at="2026-08-01 10:00:00",
+    )
+    bare_raw = store.insert_raw_batch([bare], path=msg_db)[0]
+    bare_msg = store.upsert_analyzed_from_raw(
+        bare_raw,
+        patch={"effective_mode": "scheduled", "effective_at": "2026-08-27 10:00:00"},
+        path=msg_db,
+    )
+    # scheduled 生效，避免 archive_immediate_expired 清掉
+    assert bare_msg.effective_mode == "scheduled"
+
+    short_days, short_total = store.list_analyzed(
+        store.ListQuery(as_of=as_of, default_end_days=1, q="默认有效期"),
+        path=msg_db,
+    )
+    assert short_total == 0
+    assert short_days == []
+
+    long_days, long_total = store.list_analyzed(
+        store.ListQuery(as_of=as_of, default_end_days=5, q="默认有效期"),
+        path=msg_db,
+    )
+    assert long_total == 1
+    assert long_days[0].title == "默认有效期"
 

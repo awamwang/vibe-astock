@@ -795,11 +795,17 @@ def _list_query(
     favorited: str = "",
     followed: str = "",
     match_current_stock: str = "",
+    include_history: str = "",
+    default_end_days: int = 5,
+    as_of: str = "",
     sort: str = "produced_at",
     order: str = "desc",
     limit: int = 50,
     offset: int = 0,
 ) -> msg_layer.ListQuery:
+    hist = {x.strip().lower() for x in include_history.split(",") if x.strip()}
+    want_history = bool(hist & {"yes", "1", "true", "on"})
+    days = max(1, min(15, int(default_end_days or 5)))
     return msg_layer.ListQuery(
         source=source or None,
         q=q or None,
@@ -811,6 +817,9 @@ def _list_query(
         favorited=favorited or None,
         followed=followed or None,
         match_current_stock=match_current_stock or None,
+        include_history=want_history,
+        default_end_days=days,
+        as_of=as_of or None,
         sort=sort if sort in ("produced_at", "ingested_at", "impact_level", "title") else "produced_at",
         order=order if order in ("asc", "desc") else "desc",
         limit=limit,
@@ -916,6 +925,9 @@ def messages_analyzed_list(
     favorited: str = "",
     followed: str = "",
     match_current_stock: str = "",
+    include_history: str = "",
+    default_end_days: int = 5,
+    as_of: str = "",
     sort: str = "produced_at",
     order: str = "desc",
     limit: int = 50,
@@ -932,6 +944,9 @@ def messages_analyzed_list(
         favorited=favorited,
         followed=followed,
         match_current_stock=match_current_stock,
+        include_history=include_history,
+        default_end_days=default_end_days,
+        as_of=as_of,
         sort=sort,
         order=order,
         limit=limit,

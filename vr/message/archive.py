@@ -20,7 +20,7 @@ from .store import (
 )
 
 ARCHIVE_DB_PATH = os.path.join(MSG_DIR, "messages_archive.db")
-ARCHIVE_DAYS = int(os.environ.get("MSG_ARCHIVE_DAYS", "7"))
+ARCHIVE_DAYS = int(os.environ.get("MSG_ARCHIVE_DAYS", "30"))
 
 
 def archive_path_for_main(main_path: str | None) -> str:

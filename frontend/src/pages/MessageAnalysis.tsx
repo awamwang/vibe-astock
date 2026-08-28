@@ -588,6 +588,7 @@ export function MessageAnalysis() {
   const [followedFilter, setFollowedFilter] = useState<string[]>([]);
   const [favoritedFilter, setFavoritedFilter] = useState<string[]>([]);
   const [followStockChange, setFollowStockChange] = useState(false);
+  const [includeHistory, setIncludeHistory] = useState(false);
   const { code: currentStockCode, status: currentStockStatus, error: currentStockError } =
     usePluginCurrentStock(followStockChange);
   const [sort, setSort] = useState("produced_at");
@@ -642,8 +643,9 @@ export function MessageAnalysis() {
       effectStatuses.length > 0 ||
       followedFilter.length > 0 ||
       favoritedFilter.length > 0 ||
-      followStockChange,
-    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange],
+      followStockChange ||
+      includeHistory,
+    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory],
   );
 
   const resetFilters = () => {
@@ -655,6 +657,7 @@ export function MessageAnalysis() {
     setFollowedFilter([]);
     setFavoritedFilter([]);
     setFollowStockChange(false);
+    setIncludeHistory(false);
   };
 
   const onDefaultEndDaysChange = (days: number) => {
@@ -673,6 +676,8 @@ export function MessageAnalysis() {
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
         match_current_stock: followStockChange ? "yes" : undefined,
+        include_history: includeHistory ? "yes" : undefined,
+        default_end_days: defaultEndDays,
         sort,
         order,
         limit: PAGE_SIZE,
@@ -685,7 +690,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, currentStockCode, sort, order, page]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode, sort, order, page]);
 
   const loadCalendar = useCallback(async () => {
     setCalendarLoading(true);
@@ -699,6 +704,8 @@ export function MessageAnalysis() {
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
         match_current_stock: followStockChange ? "yes" : undefined,
+        include_history: includeHistory ? "yes" : undefined,
+        default_end_days: defaultEndDays,
         from_dt: range.from_dt,
         to_dt: range.to_dt,
         sort: "produced_at",
@@ -713,7 +720,7 @@ export function MessageAnalysis() {
     } finally {
       setCalendarLoading(false);
     }
-  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, currentStockCode]);
+  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1372,6 +1379,26 @@ export function MessageAnalysis() {
                   error={currentStockError}
                 />
               )}
+            </label>
+            <label
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",
+                includeHistory
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+              )}
+              title="默认只显示结束时间≥当前的未归档消息；勾选后才包含结束时间已过、但仍未归档的消息（不包含归档库）"
+            >
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+                checked={includeHistory}
+                onChange={(e) => {
+                  setPage(1);
+                  setIncludeHistory(e.target.checked);
+                }}
+              />
+              <span>包含历史消息</span>
             </label>
             <button
               type="button"

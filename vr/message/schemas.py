@@ -133,6 +133,12 @@ class ListQuery(BaseModel):
     followed: str | None = None
     match_current_stock: str | None = None
     stock_code: str | None = None
+    # 勾选后才包含结束时间早于 as_of 的未归档消息；已归档消息不在主库，永远搜不到
+    include_history: bool = False
+    # 未设 end_at 时按生效时间 + N 天计算结束时间（与前端默认有效期一致）
+    default_end_days: int = 5
+    # 筛选「是否已结束」的参照时间（搜索时间）；空则用查询时的当前时间
+    as_of: str | None = None
     sort: Literal[
         "produced_at", "ingested_at", "impact_level", "effect_status", "freshness", "status", "title"
     ] = "produced_at"
