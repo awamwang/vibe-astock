@@ -148,6 +148,27 @@ function VerificationResults({ reflection }: { reflection?: Reflection | null })
 const DISCLAIMER =
   "本页由多 agent AI 基于公开盘面数据（涨跌停/龙虎榜/资金流/题材）现场生成，结论为 AI 判断，仅供参考，不构成投资建议；市场有风险，决策与盈亏自负。";
 
+interface ReviewDatesMeta {
+  dates: string[];
+  today?: string;
+  prev_trade_date?: string | null;
+  latest_session?: string | null;
+  today_settled?: boolean;
+}
+
+function hasReviewPayload(r: ReviewData | null | undefined): r is ReviewData {
+  return Boolean(r && (r.target_date || r.trade_date));
+}
+
+/** 选中日尚无存档、且盘面未到可复盘时间 → 展示上一份 */
+function shouldFallbackToPrev(selected: string, meta: ReviewDatesMeta): boolean {
+  if (!selected || !meta.today) return false;
+  if (selected !== meta.today) return false;
+  if (meta.today_settled) return false;
+  const prev = meta.prev_trade_date || "";
+  return Boolean(prev && meta.dates.includes(prev));
+}
+
 interface MetricOption {
   key: string; label: string; hint: string; unit: string; higher_is_hotter: boolean;
 }
@@ -251,6 +272,9 @@ export function AgentReview() {
   const [err, setErr] = useState("");
   // 「已复盘/还没收盘」这类不是错误、是正常告知，跟 err 分开显示
   const [notice, setNotice] = useState("");
+  // 日历指着今天、内容却是上一份（盘前/盘中/非交易日还没法跑今日复盘）
+  const [fallback, setFallback] = useState(false);
+  const datesMeta = useRef<ReviewDatesMeta | null>(null);
   const [tradeBudget, setTradeBudget] = useState<TradeBudget | null>(null);
   // polling: 防重入（React state 在同一轮渲染里读到的是旧值，双击能穿过去）
   // timer / alive: 卸载后停掉轮询，别再 setState
@@ -279,20 +303,34 @@ export function AgentReview() {
   }
 
   /** 读复盘：不传 d 读最近一份；传 d 读那天的历史存档。 */
-  async function loadLatest(d?: string) {
+  async function loadLatest(d?: string, meta?: ReviewDatesMeta | null) {
     const my = ++reqId.current;
+    const m = meta ?? datesMeta.current;
     try {
       const r = await agentFetch<ReviewData>(`/api/review/latest${d ? `?date=${d}` : ""}`);
       if (!alive.current || my !== reqId.current) return;   // 已卸载 / 有更新的请求 → 丢弃
-      if (r && (r.target_date || r.trade_date)) {
-        setData(r); setMissing("");
+      if (hasReviewPayload(r)) {
+        setData(r); setMissing(""); setFallback(false);
         // 没指定日期时（首次加载）把日期框对到真正载入的那一场 ——
         // 默认值是本机今天，而复盘的对象是「最近已收盘那一场」，盘前会差一天
         const day = r.target_date || r.trade_date || "";
         if (!d) setDate(day);
         void loadTradeBudget(day);
+        return;
       }
-      else if (d) { setData(null); setMissing(d); setTradeBudget(null); }         // 这天没跑过 —— 要说出来，不能默默留着上一天的
+      if (d && m && shouldFallbackToPrev(d, m)) {
+        const prev = m.prev_trade_date || "";
+        const prevR = await agentFetch<ReviewData>(`/api/review/latest?date=${prev}`);
+        if (!alive.current || my !== reqId.current) return;
+        if (hasReviewPayload(prevR)) {
+          setData(prevR); setMissing(""); setFallback(true);
+          void loadTradeBudget(prevR.target_date || prevR.trade_date || prev);
+          return;
+        }
+      }
+      if (d) {
+        setData(null); setMissing(d); setFallback(false); setTradeBudget(null);
+      }
     } catch {
       if (alive.current && my === reqId.current) setErr("读取历史复盘失败，仍可尝试重新生成");
     }
@@ -301,8 +339,10 @@ export function AgentReview() {
   // 哪些交易日跑过（历史入口）；日期框旁边列出来，免得靠猜
   async function loadDates() {
     try {
-      const r = await agentFetch<{ dates: string[]; today?: string; prev_trade_date?: string | null }>("/api/review/dates");
-      if (alive.current) setDates(r.dates || []);
+      const r = await agentFetch<ReviewDatesMeta>("/api/review/dates");
+      if (!alive.current) return;
+      datesMeta.current = r;
+      setDates(r.dates || []);
     } catch { /* 拿不到就不显示历史列表，不影响主流程 */ }
   }
 
@@ -313,10 +353,11 @@ export function AgentReview() {
       try {
         const [r, datesR] = await Promise.all([
           agentFetch<ReviewData>("/api/review/latest"),
-          agentFetch<{ dates: string[]; today?: string; prev_trade_date?: string | null }>("/api/review/dates"),
+          agentFetch<ReviewDatesMeta>("/api/review/dates"),
         ]);
         if (!alive.current || my !== reqId.current) return;
 
+        datesMeta.current = datesR;
         const archived = datesR.dates || [];
         setDates(archived);
 
@@ -326,23 +367,28 @@ export function AgentReview() {
 
         const latestDay = r?.target_date || r?.trade_date || "";
         if (prevDone) {
-          // 上一交易日已落盘 → 日期框推到今天；今日已有存档则加载，否则只展示骨架
+          // 上一交易日已落盘 → 日期框推到今天；今日已有存档则加载，未到复盘时间则展示上一份
           setDate(today);
           if (archived.includes(today) && latestDay === today) {
             setData(r);
             setMissing("");
+            setFallback(false);
             void loadTradeBudget(today);
           } else if (archived.includes(today)) {
             // 存档列表有今天但 latest 不是今天（少见）→ 按日期拉当日缓存
-            void loadLatest(today);
+            void loadLatest(today, datesR);
+          } else if (shouldFallbackToPrev(today, datesR)) {
+            void loadLatest(today, datesR);
           } else {
             setData(null);
             setMissing(today);
+            setFallback(false);
             setTradeBudget(null);
           }
         } else if (latestDay) {
           setData(r);
           setMissing("");
+          setFallback(false);
           setDate(latestDay);
           void loadTradeBudget(latestDay);
         }
@@ -417,8 +463,8 @@ export function AgentReview() {
   }
 
   const loadedDay = data?.target_date || data?.trade_date || "";
-  // 日历选中日必须与载入的那份复盘一致，否则只展示骨架（避免「选今天、看昨天」）
-  const showContent = Boolean(data) && Boolean(date) && loadedDay === date;
+  // 日历选中日必须与载入的那份复盘一致；fallback 时允许「选今天、看上一份」
+  const showContent = Boolean(data) && Boolean(date) && (loadedDay === date || fallback);
 
   const focus = showContent ? data?.focus : undefined;
   // 页面按"用户复盘的顺序"重排后，各卡片散在不同区块里，这里统一取一次
@@ -447,7 +493,11 @@ export function AgentReview() {
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
             情绪温度 · 上期验证 · 明日验证条件
-            {showContent && ` · 交易日 ${loadedDay} · 生成于 ${data?.generated_at}`}
+            {showContent && (
+              fallback
+                ? ` · 展示 ${loadedDay} 复盘（${date} 收盘后可生成） · 生成于 ${data?.generated_at}`
+                : ` · 交易日 ${loadedDay} · 生成于 ${data?.generated_at}`
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -480,6 +530,11 @@ export function AgentReview() {
 
       {err && <div className="glass rounded-xl border-danger/30 px-4 py-3 text-sm text-danger">出错：{err}</div>}
       {notice && <div className="glass rounded-xl border-primary/30 px-4 py-3 text-sm text-muted-foreground">{notice}</div>}
+      {fallback && showContent && (
+        <div className="glass rounded-xl border-primary/30 px-4 py-3 text-sm text-muted-foreground">
+          {date} 复盘尚未生成（需等该场收盘定稿），当前展示上一份 {loadedDay} 的复盘数据。
+        </div>
+      )}
       {showContent && data?.warnings?.length ? (
         <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-[13px] text-warning">
           ⚠ 部分数据降级：{data.warnings.join("；")}
