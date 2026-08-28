@@ -4831,3 +4831,75 @@ class TestExperienceMemory:
         assert topics == [{"filename": "仓位管理.md", "title": "仓位", "summary": "半仓纪律"}]
 
 
+class TestArticles:
+    """研报文章库：原文落盘、日期文件名、索引检索。"""
+
+    def test_dated_filename_and_commit_keeps_original(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [
+            {"key": "c:600519", "code": "600519", "name": "贵州茅台", "status": "matched",
+             "stock": {"code": "600519", "name": "贵州茅台", "market": "sh", "types": []}},
+        ])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [
+            {"raw": "白酒", "mapped": "白酒", "status": "matched",
+             "block": {"kind": "conception", "kind_label": "概念", "id": "1", "name": "白酒"},
+             "candidates": []},
+        ])
+
+        root = str(tmp_path / "articles")
+        out = arts.commit_files(
+            [{
+                "title": "白酒景气跟踪",
+                "date": "2026-08-28",
+                "summary": "龙头份额提升",
+                "original": "贵州茅台份额提升，白酒板块景气回升。\n",
+                "stocks": [{"code": "600519", "name": "贵州茅台"}],
+                "sectors": [{"name": "白酒"}],
+            }],
+            root,
+        )
+        assert out["ok"]
+        assert out["written"][0]["filename"] == "白酒景气跟踪-2026-08-28.md"
+        body = (tmp_path / "articles" / "白酒景气跟踪-2026-08-28.md").read_text(encoding="utf-8")
+        assert "## 原文" in body
+        assert "贵州茅台份额提升" in body
+        assert "600519" in body
+        assert "白酒" in body
+        idx = (tmp_path / "articles" / "index.md").read_text(encoding="utf-8")
+        assert "白酒景气跟踪-2026-08-28.md" in idx
+        assert "龙头份额提升" in idx
+
+    def test_retrieve_and_format_context(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [])
+        root = str(tmp_path / "articles")
+        arts.commit_files([
+            {"title": "算力", "date": "2026-08-01", "summary": "光模块",
+             "original": "中际旭创受益于算力需求\n"},
+            {"title": "医药", "date": "2026-08-02", "summary": "创新药",
+             "original": "创新药临床进展\n"},
+        ], root)
+        hits = arts.retrieve("算力光模块", k=3, root=root)
+        assert hits
+        assert hits[0]["filename"].startswith("算力-")
+        ctx = arts.format_context(hits)
+        assert "研报文章" in ctx
+        assert "算力" in ctx
+
+    def test_reject_index_as_article(self, tmp_path):
+        from duanxian import articles as arts
+
+        root = str(tmp_path / "articles")
+        with pytest.raises((ValueError, FileNotFoundError)):
+            arts.read_article("index.md", root)
+
+    def test_parse_index_lines(self):
+        from duanxian import articles as arts
+
+        text = "# 索引\n\n- **白酒** | `白酒-2026-08-28.md` — 景气回升\n"
+        rows = arts.parse_index(text)
+        assert rows == [{"filename": "白酒-2026-08-28.md", "title": "白酒", "summary": "景气回升"}]
+

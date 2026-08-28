@@ -163,6 +163,7 @@ hooks.RUNNER.emit_after_review（插件推送）
 | `duanxian/theme_normalize.py` | `_LOCK` | `Lock` | 题材别名表 | 别名映射缓存 |
 | `duanxian/message_follow_keywords.py` | `_LOCK` | `Lock` | 消息关注词 | 关键词配置 |
 | `duanxian/experience.py` | `_LOCK` | `Lock` | 经验库索引 | 笔记 CRUD |
+| `duanxian/articles.py` | `_LOCK` | `Lock` | 研报文章索引 | 文章落盘与 index 刷新 |
 | `duanxian/sentiment_score.py` | `_LOCK` | `Lock` | 情绪分缓存 | 计算结果 memo |
 | `duanxian/current_stock.py` | `_lock` | `Lock` | `_current`、SSE 监听列表 | 当前看盘标的切换与推送 |
 | `vr/message/store.py` | `_LOCK` | `RLock` | SQLite + 复合事务 | 消息入库、分析结果、列表查询 |

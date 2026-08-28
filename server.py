@@ -1495,6 +1495,65 @@ def api_experience_commit(request: Request, body: dict = Body(...)):
     return {"data": result}
 
 
+@app.get("/api/articles/meta")
+def api_articles_meta():
+    """研报文章库根路径与文章列表。"""
+    from duanxian import articles as arts
+
+    return {"data": arts.get_meta()}
+
+
+@app.get("/api/articles/item")
+def api_articles_item(name: str = ""):
+    """读取单篇文章 Markdown。"""
+    from duanxian import articles as arts
+
+    filename = (name or "").strip()
+    if not filename:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    try:
+        return {"data": arts.read_article(filename)}
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/articles/retrieve")
+def api_articles_retrieve(body: dict = Body(...)):
+    """按问题关键词检索 Top-K 文章，供问答注入。"""
+    from duanxian import articles as arts
+
+    query = str((body or {}).get("query") or "").strip()
+    try:
+        k = int((body or {}).get("k") or 3)
+    except (TypeError, ValueError):
+        k = 3
+    hits = arts.retrieve(query, k=k)
+    return {"data": {
+        "hits": hits,
+        "context": arts.format_context(hits),
+        "k": k,
+    }}
+
+
+@app.post("/api/articles/commit")
+def api_articles_commit(request: Request, body: dict = Body(...)):
+    """确认写入文章（保留原文 + 摘要索引），并用个股/板块处理器解析标的。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import articles as arts
+
+    files = (body or {}).get("files")
+    try:
+        result = arts.commit_files(files if isinstance(files, list) else [])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": result}
+
+
 def _plugin_row(rec) -> dict:
     from pathlib import Path
 

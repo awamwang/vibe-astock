@@ -733,6 +733,13 @@ export const api = {
     request<ExperienceRetrieveResult>("/experience/retrieve", "POST", { query, k }),
   experienceCommit: (files: ExperienceDraftFile[]) =>
     request<ExperienceCommitResult>("/experience/commit", "POST", { files }),
+  articlesMeta: () => get<ArticlesMeta>("/articles/meta"),
+  articlesItem: (name: string) =>
+    get<ArticleItem>(`/articles/item?name=${encodeURIComponent(name)}`),
+  articlesRetrieve: (query: string, k = 3) =>
+    request<ArticlesRetrieveResult>("/articles/retrieve", "POST", { query, k }),
+  articlesCommit: (files: ArticleDraftPayload[]) =>
+    request<ArticlesCommitResult>("/articles/commit", "POST", { files }),
   pluginsList: () => get<PluginsListResult>("/plugins"),
   pluginsPick: (initialDir?: string) =>
     request<PluginPickResult>("/plugins/pick", "POST", { initial_dir: initialDir || "" }),
@@ -1186,6 +1193,69 @@ export interface ExperienceCommitResult {
   root: string;
   written: (ExperienceTopicMeta & { path: string })[];
   topics: ExperienceTopicMeta[];
+}
+
+export interface ArticleMeta {
+  filename: string;
+  title: string;
+  summary: string;
+}
+export interface ArticlesMeta {
+  root: string;
+  index_path: string;
+  articles: ArticleMeta[];
+}
+export interface ArticleStockRef {
+  key?: string;
+  code?: string | null;
+  name?: string | null;
+  status?: string;
+  stock?: { code?: string; name?: string; market?: string } | null;
+}
+export interface ArticleSectorRef {
+  raw?: string;
+  mapped?: string;
+  name?: string;
+  status?: string;
+  block?: { kind?: string; kind_label?: string; id?: string; name?: string } | null;
+  candidates?: unknown[];
+}
+export interface ArticleItem extends ArticleMeta {
+  content: string;
+  path: string;
+  date?: string;
+  stocks?: ArticleStockRef[];
+  sectors?: ArticleSectorRef[];
+}
+export interface ArticleHit extends ArticleMeta {
+  content: string;
+  score: number;
+}
+export interface ArticlesRetrieveResult {
+  hits: ArticleHit[];
+  context: string;
+  k: number;
+}
+export interface ArticleDraftPayload {
+  filename?: string;
+  title: string;
+  summary: string;
+  date?: string;
+  original?: string;
+  content?: string;
+  stocks?: { code?: string | null; name?: string | null }[];
+  sectors?: { name: string }[];
+}
+export interface ArticlesCommitResult {
+  ok: boolean;
+  root: string;
+  written: (ArticleMeta & {
+    path: string;
+    date?: string;
+    stocks?: ArticleStockRef[];
+    sectors?: ArticleSectorRef[];
+  })[];
+  articles: ArticleMeta[];
 }
 
 export interface BackupFolder {

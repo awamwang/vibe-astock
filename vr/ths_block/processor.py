@@ -22,6 +22,7 @@ _SOURCE_SORT: dict[str, int] = {
     "review_theme_structure": 60,
     "firstboard_theme": 70,
     "firstboard_industry": 80,
+    "article": 90,
     "message_target": 100,
 }
 
@@ -35,6 +36,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "review_theme_structure": "复盘·题材结构",
     "firstboard_theme": "涨停分析·题材",
     "firstboard_industry": "涨停分析·行业",
+    "article": "研报文章",
     "message_target": "消息分析·关联标的",
 }
 
