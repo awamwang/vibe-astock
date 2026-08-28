@@ -15,7 +15,7 @@ from typing import Any, Optional
 from duanxian.message_follow_keywords import build_follow_sql, load_keywords
 
 from .current_stock_match import enrich_current_stock
-from .follow import enrich_follow
+from .follow import enrich_follow, initial_impact_with_follow
 from .schemas import (
     AnalyzedMessage,
     ImpactTarget,
@@ -841,7 +841,18 @@ def upsert_analyzed_from_raw(
                 _sync_impact_targets(conn, aid, _resolve_targets(raw, patch))
             else:
                 aid = new_id("an")
+                title = patch.get("title", raw.title)
                 summary = patch.get("summary") or (raw.title[:120] if raw.title else raw.content[:120])
+                detail = patch.get("detail", raw.content)
+                keywords = patch.get("keywords", raw.keywords)
+                # 仅新建（导入/转换）时按关注词升档并落库；后续手动改等级不再被覆盖
+                impact_level = initial_impact_with_follow(
+                    patch.get("impact_level", "medium"),
+                    title=title or "",
+                    summary=summary or "",
+                    detail=detail or "",
+                    keywords=list(keywords or []),
+                )
                 conn.execute(
                     """
                     INSERT INTO analyzed_message (
@@ -854,16 +865,16 @@ def upsert_analyzed_from_raw(
                         aid,
                         raw.source_id,
                         raw.source_label,
-                        patch.get("title", raw.title),
-                        _json_dumps(patch.get("keywords", raw.keywords)),
+                        title,
+                        _json_dumps(keywords),
                         patch.get("url", raw.url),
                         _json_dumps(patch.get("marks", raw.marks)),
                         summary,
-                        patch.get("detail", raw.content),
+                        detail,
                         patch.get("effective_mode", "immediate"),
                         patch.get("effective_at"),
                         raw.produced_at,
-                        patch.get("impact_level", "medium"),
+                        impact_level,
                         patch.get("freshness", "new"),
                         patch.get("effect_status", "not_erupted"),
                         now,

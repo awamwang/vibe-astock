@@ -489,16 +489,29 @@ def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
         title="半导体板块走强",
     )
     raw = store.insert_raw_batch([d], path=msg_db)[0]
-    store.upsert_analyzed_from_raw(
+    an = store.upsert_analyzed_from_raw(
         raw,
         patch={"impact_level": "medium", "summary": "半导体板块走强"},
         path=msg_db,
     )
+    # 新建导入时升档并落库
+    assert an.followed is True
+    assert an.impact_level == "high"
     rows, _ = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
     assert len(rows) == 1
     assert rows[0].followed is True
     assert rows[0].impact_level == "high"
     assert follow.boost_impact_level("critical") == "critical"
+
+    # 手动降级后保存：读取不再二次升档
+    updated = store.update_analyzed(an.id, {"impact_level": "medium"}, path=msg_db)
+    assert updated is not None
+    assert updated.impact_level == "medium"
+    assert updated.followed is True
+    again = store.get_analyzed(an.id, path=msg_db)
+    assert again is not None
+    assert again.impact_level == "medium"
+    assert again.followed is True
 
 
 def test_cls_fetch_incremental(msg_db, monkeypatch):
