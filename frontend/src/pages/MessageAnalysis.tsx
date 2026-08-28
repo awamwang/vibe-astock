@@ -85,6 +85,12 @@ const IMPACT_BADGE: Record<string, string> = {
   noise: "bg-muted/40 text-muted-foreground border-border/40",
 };
 
+/** 高/重大级别标题着色，与级别徽章文字色一致 */
+const IMPACT_TITLE: Record<string, string> = {
+  critical: "text-danger",
+  high: "text-primary",
+};
+
 const EFFECT_BADGE: Record<string, string> = {
   not_erupted: "bg-sky-500/12 text-sky-800 border-sky-500/35 dark:text-sky-200",
   pending_verify: "bg-amber-500/12 text-amber-800 border-amber-500/35 dark:text-amber-200",
@@ -262,6 +268,23 @@ function EffectBadge({ status }: { status: string }) {
       {EFFECT_LABEL[status] || status}
     </Badge>
   );
+}
+
+/** 生成可点击页号序列，两端固定、中间窗口，超出用 gap 省略 */
+function buildPageItems(current: number, total: number, radius = 2): Array<number | "gap"> {
+  if (total <= 1) return [1];
+  if (total <= 9) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages = new Set<number>([1, total]);
+  for (let p = current - radius; p <= current + radius; p += 1) {
+    if (p >= 1 && p <= total) pages.add(p);
+  }
+  const sorted = Array.from(pages).sort((a, b) => a - b);
+  const out: Array<number | "gap"> = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (i > 0 && sorted[i]! - sorted[i - 1]! > 1) out.push("gap");
+    out.push(sorted[i]!);
+  }
+  return out;
 }
 
 function MessageKeywords({ item }: { item: AnalyzedMessage }) {
@@ -570,6 +593,7 @@ export function MessageAnalysis() {
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
+  const listScrollRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const nowInit = useMemo(() => new Date(), []);
   const [calendarYear, setCalendarYear] = useState(nowInit.getFullYear());
@@ -602,8 +626,13 @@ export function MessageAnalysis() {
   const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageItems = useMemo(() => buildPageItems(page, totalPages), [page, totalPages]);
   const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageTo = Math.min(page * PAGE_SIZE, total);
+
+  useEffect(() => {
+    listScrollRef.current?.scrollTo({ top: 0 });
+  }, [page]);
 
   const hasActiveFilters = useMemo(
     () =>
@@ -1117,14 +1146,30 @@ export function MessageAnalysis() {
 
   const queueAnalyze = () => runAnalyze(Array.from(selectedIds));
 
+  const applyMessagePatch = (updated: AnalyzedMessage) => {
+    setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+    setCalendarItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+    if (selected?.id === updated.id) {
+      setSelected(updated);
+      void loadDetail(updated);
+    }
+  };
+
   const confirmItem = async (item: AnalyzedMessage) => {
     try {
       const updated = await api.messageAnalyzedPatch(item.id, { status: "confirmed" });
-      setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-      if (selected?.id === updated.id) {
-        setSelected(updated);
-        void loadDetail(updated);
-      }
+      applyMessagePatch(updated);
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "更新失败");
+    }
+  };
+
+  const setPendingVerify = async (item: AnalyzedMessage) => {
+    if (item.effect_status === "pending_verify") return;
+    try {
+      const updated = await api.messageAnalyzedPatch(item.id, { effect_status: "pending_verify" });
+      applyMessagePatch(updated);
+      notify.success("已标为待验证");
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "更新失败");
     }
@@ -1481,7 +1526,7 @@ export function MessageAnalysis() {
               </div>
             ) : (
             <>
-            <div className="max-h-[calc(100vh-220px)] overflow-auto">
+            <div ref={listScrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
               {items.length === 0 && !loading && (
                 <p className="p-8 text-center text-sm text-muted-foreground">
                   暂无消息，可点击「录入消息」或拉取财联社
@@ -1551,7 +1596,12 @@ export function MessageAnalysis() {
                             {item.marks.includes("highlight") && (
                               <Badge className="border-danger/40 bg-danger/15 text-danger">标红</Badge>
                             )}
-                            <span className="font-semibold leading-snug text-foreground line-clamp-2">
+                            <span
+                              className={cn(
+                                "font-semibold leading-snug line-clamp-2",
+                                IMPACT_TITLE[item.impact_level] || "text-foreground",
+                              )}
+                            >
                               {item.title || "—"}
                             </span>
                           </div>
@@ -1621,7 +1671,7 @@ export function MessageAnalysis() {
                 <span className="text-xs text-muted-foreground">
                   第 {page} / {totalPages} 页 · 每页 {PAGE_SIZE} 条
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     disabled={page <= 1 || loading}
@@ -1630,6 +1680,29 @@ export function MessageAnalysis() {
                   >
                     上一页
                   </button>
+                  {pageItems.map((item, idx) =>
+                    item === "gap" ? (
+                      <span key={`gap-${idx}`} className="px-1 text-xs text-muted-foreground">
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        disabled={loading || item === page}
+                        aria-current={item === page ? "page" : undefined}
+                        className={cn(
+                          "min-w-8 rounded-lg border px-2.5 py-1.5 text-xs font-semibold tabular-nums transition-colors disabled:opacity-100",
+                          item === page
+                            ? "border-primary/40 bg-primary/15 text-primary"
+                            : "border-border bg-background text-foreground hover:bg-muted/50 disabled:opacity-40",
+                        )}
+                        onClick={() => setPage(item)}
+                      >
+                        {item}
+                      </button>
+                    ),
+                  )}
                   <button
                     type="button"
                     disabled={page >= totalPages || loading}
@@ -1652,7 +1725,12 @@ export function MessageAnalysis() {
               <div className="space-y-4">
                 <div className="space-y-3 border-b border-border/60 pb-4">
                   <div className="min-w-0">
-                    <h2 className="text-base font-bold leading-snug text-foreground">
+                    <h2
+                      className={cn(
+                        "text-base font-bold leading-snug",
+                        IMPACT_TITLE[selected.impact_level] || "text-foreground",
+                      )}
+                    >
                       {selected.title || "—"}
                     </h2>
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -1669,6 +1747,19 @@ export function MessageAnalysis() {
                         <Check className="h-3.5 w-3.5" /> 确认
                       </button>
                     )}
+                    <button
+                      type="button"
+                      disabled={editing || selected.effect_status === "pending_verify"}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold",
+                        selected.effect_status === "pending_verify"
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 disabled:opacity-100 dark:text-amber-200"
+                          : "border-amber-500/35 bg-background text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-200",
+                      )}
+                      onClick={() => void setPendingVerify(selected)}
+                    >
+                      待验证
+                    </button>
                     <button
                       type="button"
                       disabled={batchBusy}
