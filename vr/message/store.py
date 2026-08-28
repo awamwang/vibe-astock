@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from duanxian.message_follow_keywords import build_follow_sql, load_keywords
 
-from .current_stock_match import enrich_current_stock
+from .current_stock_match import CurrentStockMatchIds, collect_match_ids, enrich_current_stock
 from .follow import enrich_follow, initial_impact_with_follow
 from .schemas import (
     AnalyzedMessage,
@@ -663,21 +663,27 @@ def _parse_truthy_flag(value: str | bool | None) -> bool:
     return bool(selected & {"yes", "1", "true", "on"})
 
 
-def _collect_stock_match_ids(conn: sqlite3.Connection, stock_code: str) -> set[str]:
-    """直接股票标的或板块成分股包含该代码的分析消息 id。"""
-    from ths_block import match as block_match
-
-    code = (stock_code or "").strip().zfill(6)
-    if not code.isdigit() or len(code) != 6:
-        return set()
-    ids: set[str] = set()
-    for row in conn.execute(
-        "SELECT DISTINCT analyzed_id FROM impact_target WHERE code = ?",
-        (code,),
+def _stock_match_priority_order(
+    buckets: CurrentStockMatchIds | None,
+) -> tuple[str, list[Any]]:
+    """跟随股票时：标的命中 → 内容/摘要含名称 → 板块成分，再接原有排序列。"""
+    if buckets is None:
+        return "", []
+    whens: list[str] = []
+    args: list[Any] = []
+    for ids, rank in (
+        (buckets.target, 0),
+        (buckets.content, 1),
+        (buckets.block, 2),
     ):
-        ids.add(str(row["analyzed_id"]))
-    ids.update(block_match.analyzed_ids_with_stock_in_block_targets(conn, code))
-    return ids
+        if not ids:
+            continue
+        placeholders = ",".join("?" * len(ids))
+        whens.append(f"WHEN analyzed_message.id IN ({placeholders}) THEN {rank}")
+        args.extend(sorted(ids))
+    if not whens:
+        return "", []
+    return f"CASE {' '.join(whens)} ELSE 3 END ASC", args
 
 
 def _build_analyzed_where(
@@ -758,6 +764,7 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     db = path or DB_PATH
     current_stock_code: str | None = None
     stock_match_ids: set[str] | None = None
+    stock_match_buckets: CurrentStockMatchIds | None = None
     if q.match_current_stock:
         selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
         want_yes = "yes" in selected or "1" in selected or "true" in selected
@@ -768,7 +775,8 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
             if rec and rec.code:
                 current_stock_code = rec.code
                 with closing(_connect(db)) as conn:
-                    stock_match_ids = _collect_stock_match_ids(conn, rec.code)
+                    stock_match_buckets = collect_match_ids(conn, rec.code)
+                    stock_match_ids = stock_match_buckets.all_ids()
             else:
                 stock_match_ids = set()
     where, args = _build_analyzed_where(q, stock_match_ids=stock_match_ids)
@@ -783,6 +791,10 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     }
     sort_col = sort_map.get(q.sort, "produced_at")
     order = "ASC" if q.order == "asc" else "DESC"
+    priority_sql, priority_args = _stock_match_priority_order(stock_match_buckets)
+    order_by = (
+        f"{priority_sql}, {sort_col} {order}" if priority_sql else f"{sort_col} {order}"
+    )
     cap = 1000 if q.from_dt and q.to_dt else 200
     limit = max(1, min(q.limit, cap))
     offset = max(0, q.offset)
@@ -794,9 +806,9 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
             rows = conn.execute(
                 f"""
                 SELECT * FROM analyzed_message WHERE {where}
-                ORDER BY {sort_col} {order} LIMIT ? OFFSET ?
+                ORDER BY {order_by} LIMIT ? OFFSET ?
                 """,
-                [*args, limit, offset],
+                [*args, *priority_args, limit, offset],
             ).fetchall()
             follow_kws = load_keywords()
             out: list[AnalyzedMessage] = []

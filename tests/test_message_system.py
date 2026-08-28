@@ -272,12 +272,166 @@ def test_list_analyzed_match_current_stock(msg_db, monkeypatch):
             updated_at="2026-08-27 10:00:00",
         ),
     )
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "贵州茅台" if code == "600519" else "",
+    )
     matched, matched_total = store.list_analyzed(
         store.ListQuery(match_current_stock="yes"),
         path=msg_db,
     )
     assert matched_total == 1
     assert matched[0].title == "茅台消息"
+
+
+def test_list_analyzed_match_current_stock_via_content(msg_db, monkeypatch):
+    from duanxian import current_stock as cs
+
+    d = RawMessageDraft(
+        draft_key="content-mt",
+        source_id="manual",
+        source_label="手动",
+        content="市场传闻贵州茅台提价",
+        title="提价传闻",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(
+        raw,
+        patch={
+            "summary": "贵州茅台或将提价",
+            "detail": "市场传闻贵州茅台提价",
+            "targets": [],
+        },
+        path=msg_db,
+    )
+    # 无关消息：摘要/内容不含名称、也无标的
+    other = RawMessageDraft(
+        draft_key="content-other",
+        source_id="manual",
+        source_label="手动",
+        content="大盘震荡",
+        title="大盘震荡",
+    )
+    other_raw = store.insert_raw_batch([other], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(other_raw, patch={"targets": []}, path=msg_db)
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="600519",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-08-27 10:00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "贵州茅台" if code == "600519" else "",
+    )
+    monkeypatch.setattr(
+        "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        lambda conn, code: set(),
+    )
+    monkeypatch.setattr(
+        "ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        lambda conn, code: set(),
+    )
+
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes"),
+        path=msg_db,
+    )
+    assert matched_total == 1
+    assert matched[0].title == "提价传闻"
+
+
+def test_list_analyzed_match_current_stock_sort_priority(msg_db, monkeypatch):
+    from duanxian import current_stock as cs
+
+    def _make(title: str, *, produced_at: str, targets=None, summary="", detail=""):
+        d = RawMessageDraft(
+            draft_key=f"prio-{title}",
+            source_id="manual",
+            source_label="手动",
+            content=detail or title,
+            title=title,
+            produced_at=produced_at,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        return store.upsert_analyzed_from_raw(
+            raw,
+            patch={
+                "targets": targets or [],
+                "summary": summary,
+                "detail": detail or title,
+                "produced_at": produced_at,
+            },
+            path=msg_db,
+        )
+
+    # produced_at 故意让板块最新、标的最旧，验证分层排序压过时间倒序
+    block_msg = _make(
+        "板块命中",
+        produced_at="2026-08-27 12:00:00",
+        targets=[{"kind": "sector", "name": "华为概念"}],
+    )
+    content_msg = _make(
+        "内容命中",
+        produced_at="2026-08-27 11:00:00",
+        summary="贵州茅台提价",
+        detail="贵州茅台提价传闻",
+    )
+    target_msg = _make(
+        "标的命中",
+        produced_at="2026-08-27 10:00:00",
+        targets=[{"kind": "stock", "code": "600519", "name": "贵州茅台"}],
+    )
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="600519",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-08-27 10:00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "贵州茅台" if code == "600519" else "",
+    )
+
+    def _ids_with_stock(conn, code):
+        return {block_msg.id} if code == "600519" else set()
+
+    monkeypatch.setattr(
+        "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        _ids_with_stock,
+    )
+    monkeypatch.setattr(
+        "ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        _ids_with_stock,
+    )
+    monkeypatch.setattr(
+        "vr.ths_block.match.target_name_contains_stock",
+        lambda name, code: name == "华为概念" and code == "600519",
+    )
+    monkeypatch.setattr(
+        "ths_block.match.target_name_contains_stock",
+        lambda name, code: name == "华为概念" and code == "600519",
+    )
+
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes", sort="produced_at", order="desc"),
+        path=msg_db,
+    )
+    assert matched_total == 3
+    assert [m.title for m in matched] == ["标的命中", "内容命中", "板块命中"]
+    assert {target_msg.id, content_msg.id, block_msg.id} == {m.id for m in matched}
 
 
 def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
@@ -326,6 +480,10 @@ def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
     )
     monkeypatch.setattr("vr.ths_block.match.target_name_contains_stock", _name_has_stock)
     monkeypatch.setattr("ths_block.match.target_name_contains_stock", _name_has_stock)
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "",
+    )
 
     matched, matched_total = store.list_analyzed(
         store.ListQuery(match_current_stock="yes"),

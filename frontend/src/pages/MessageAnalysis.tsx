@@ -1360,7 +1360,7 @@ export function MessageAnalysis() {
                   ? "border-primary/50 bg-primary/10 text-primary"
                   : "border-border bg-background text-muted-foreground hover:text-foreground",
               )}
-              title="勾选后仅显示关联标的包含插件上报的同花顺焦点股；需启用 vibe-ths-linker"
+              title="勾选后仅显示与插件上报焦点股相关的消息（标的含该股、摘要/内容含股票名、或板块成分含该股）；排序优先标的→内容→板块；需启用 vibe-ths-linker"
             >
               <input
                 type="checkbox"
