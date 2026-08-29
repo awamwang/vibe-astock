@@ -626,6 +626,14 @@ export const api = {
       market_value,
       ...(extra || {}),
     }),
+  /** 删除日快照，并连带删除当日预算落盘 */
+  deleteTradeSnapshot: (date: string) =>
+    request<{
+      account: TradeAccount;
+      date: string;
+      removed_snapshot: boolean;
+      removed_budget: boolean;
+    }>(`/trade/account/snapshot?date=${encodeURIComponent(date)}`, "DELETE"),
   tradeGuard: (date?: string) =>
     get<TradeGuard>(`/trade/guard${date ? `?date=${date}` : ""}`),
   tradeSize: (body: { date?: string; stop_pct: number; boards?: number | null }) =>

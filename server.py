@@ -829,6 +829,21 @@ def api_trade_snapshot(request: Request, date: str | None = None, body: dict | N
         return JSONResponse({"error": str(exc)}, status_code=400)
 
 
+@app.delete("/api/trade/account/snapshot")
+def api_trade_snapshot_delete(request: Request, date: str):
+    """删除日快照，并连带删除当日预算落盘。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        date = validate_trade_date(date)
+        result = trade_store.delete_snapshot(date)
+        if not result["removed_snapshot"] and not result["removed_budget"]:
+            return JSONResponse({"error": f"无 {date} 的日快照或预算"}, status_code=404)
+        return result
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
 @app.get("/api/watchlist")
 def api_watchlist_get():
     """读取服务端自选股（插件写入或前端同步）。"""

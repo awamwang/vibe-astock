@@ -69,3 +69,39 @@ class TestSnapshotOverwrite:
         ts.snapshot_equity("2026-08-18", 80000, {"available": 500})
         assert "2026-08-18" in ts.load_account()["snapshots"]
         assert ts.load_account()["snapshots"]["2026-08-19"]["available"] == 3404.15
+
+
+class TestDeleteSnapshot:
+    def test_deletes_snapshot_and_day_budget(self, account_home, tmp_path, monkeypatch):
+        trade_dir = tmp_path / "trade"
+        trade_dir.mkdir()
+        monkeypatch.setattr(ts, "_TRADE_DIR", str(trade_dir))
+
+        ts.set_equity(100000, fields={"available": 1000})
+        ts.snapshot_equity("2026-08-19", 90000)
+        ts.snapshot_equity("2026-08-18", 80000)
+
+        day_path = trade_dir / "2026-08-19.json"
+        day_path.write_text(
+            '{"schema": 1, "date": "2026-08-19", "phase": "正常"}',
+            encoding="utf-8",
+        )
+        keep_path = trade_dir / "2026-08-18.json"
+        keep_path.write_text(
+            '{"schema": 1, "date": "2026-08-18", "phase": "正常"}',
+            encoding="utf-8",
+        )
+
+        result = ts.delete_snapshot("2026-08-19")
+        assert result["removed_snapshot"] is True
+        assert result["removed_budget"] is True
+        assert "2026-08-19" not in result["account"]["snapshots"]
+        assert "2026-08-18" in result["account"]["snapshots"]
+        assert not day_path.exists()
+        assert keep_path.exists()
+
+    def test_delete_missing_is_noop_flags(self, account_home, tmp_path, monkeypatch):
+        monkeypatch.setattr(ts, "_TRADE_DIR", str(tmp_path / "trade"))
+        result = ts.delete_snapshot("2026-01-01")
+        assert result["removed_snapshot"] is False
+        assert result["removed_budget"] is False

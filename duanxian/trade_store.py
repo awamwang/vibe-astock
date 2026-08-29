@@ -267,6 +267,43 @@ def snapshot_equity(
         return save_account(d)
 
 
+def delete_day(date: str) -> bool:
+    """删除当日预算落盘；文件不存在返回 False。"""
+    path = _trade_path(str(date))
+    try:
+        os.remove(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def delete_snapshot(date: str) -> dict:
+    """删除账户日快照，并连带删除当日预算落盘。
+
+    返回：`account` 为更新后账户；`removed_snapshot` / `removed_budget` 表示是否删到对应项。
+    """
+    date = str(date)
+    with _LOCK:
+        d = load_account()
+        snaps = dict(d.get("snapshots") or {})
+        removed_snapshot = date in snaps
+        if removed_snapshot:
+            snaps.pop(date, None)
+            d["snapshots"] = snaps
+            account = save_account(d)
+        else:
+            account = d
+    removed_budget = delete_day(date)
+    return {
+        "account": account,
+        "date": date,
+        "removed_snapshot": removed_snapshot,
+        "removed_budget": removed_budget,
+    }
+
+
 def load_day(date: str) -> Optional[dict]:
     path = _trade_path(date)
     try:

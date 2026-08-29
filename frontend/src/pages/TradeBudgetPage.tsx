@@ -213,6 +213,20 @@ export function TradeBudgetPage() {
     }
   }
 
+  async function removeSnapshot(snapDate: string) {
+    if (!window.confirm(`删除 ${snapDate} 的日快照？将同时删除当日预算落盘。`)) return;
+    setBusy(true);
+    try {
+      const r = await api.deleteTradeSnapshot(snapDate);
+      setAccount(r.account);
+      await load(date || undefined);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "删除日快照失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const blocks = useMemo(() => guard?.block_new_long_reasons || [], [guard]);
 
   return (
@@ -292,7 +306,7 @@ export function TradeBudgetPage() {
         <div className="glass rounded-2xl p-5">
           <h3 className="mb-2 text-sm font-bold">日快照（按日覆盖）</h3>
           <p className="mb-3 text-[11px] text-muted-foreground">
-            同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。
+            同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。删除会连带清除当日预算落盘。
           </p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[48rem] text-left text-[12px]">
@@ -306,7 +320,8 @@ export function TradeBudgetPage() {
                   <th className="pr-2">当日盈亏</th>
                   <th className="pr-2">盈亏比</th>
                   <th className="pr-2">账户</th>
-                  <th>摘要</th>
+                  <th className="pr-2">摘要</th>
+                  <th className="w-10" />
                 </tr>
               </thead>
               <tbody>
@@ -326,8 +341,19 @@ export function TradeBudgetPage() {
                     <td className="pr-2 max-w-[8rem] truncate" title={s.account_name || s.account_display || ""}>
                       {s.account_display || s.account_name || "—"}
                     </td>
-                    <td className="max-w-[16rem] truncate text-muted-foreground" title={s.summary || ""}>
+                    <td className="pr-2 max-w-[16rem] truncate text-muted-foreground" title={s.summary || ""}>
                       {s.summary || "—"}
+                    </td>
+                    <td className="py-1.5">
+                      <button
+                        type="button"
+                        title={`删除 ${s.date} 日快照与当日预算`}
+                        disabled={busy}
+                        onClick={() => void removeSnapshot(s.date)}
+                        className="rounded p-1 text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
