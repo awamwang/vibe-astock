@@ -109,7 +109,7 @@ function PipTargets({
   );
 }
 
-/** 顶部焦点股：直接按代码解析名称，不依赖外层 StockResolveScope */
+/** 顶部焦点股：跟随 code 响应式展示名称 */
 function StockCodeHint({
   code,
   status,
@@ -127,7 +127,6 @@ function StockCodeHint({
       return;
     }
     let cancelled = false;
-    setName("");
     api
       .stocksResolve([{ code }])
       .then((data) => {
@@ -185,7 +184,7 @@ export function MessageStockLinkPanel({
         <PictureInPicture2 className="h-3.5 w-3.5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold text-foreground">{title}</p>
-          <p className="truncate text-[11px] tabular-nums text-muted-foreground">
+          <p className="truncate text-[11px] text-muted-foreground">
             <StockCodeHint code={code} status={status} error={error} />
             {total > 0 ? ` · ${total} 条` : ""}
           </p>
@@ -252,31 +251,23 @@ export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: numbe
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  /** 与列表同源：每次拉列表时同步 GET /plugins/current-stock，避免弹窗 SSE 卡住导致顶部代码不更新 */
-  const [code, setCode] = useState<string | null>(null);
-  const { code: streamCode, status, error } = usePluginCurrentStock(enabled);
+  const { code, status, error } = usePluginCurrentStock(enabled);
   const days = defaultEndDays ?? getDefaultEndDays();
-  const streamCodeRef = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
     if (!enabled) return;
     setLoading(true);
     try {
-      const [data, current] = await Promise.all([
-        api.messageAnalyzedList({
-          match_current_stock: "yes",
-          default_end_days: days,
-          sort: "produced_at",
-          order: "desc",
-          limit: LIST_LIMIT,
-          offset: 0,
-        }),
-        api.pluginsCurrentStock().catch(() => undefined),
-      ]);
+      const data = await api.messageAnalyzedList({
+        match_current_stock: "yes",
+        default_end_days: days,
+        sort: "produced_at",
+        order: "desc",
+        limit: LIST_LIMIT,
+        offset: 0,
+      });
       setItems(data.items || []);
       setTotal(data.total || 0);
-      // undefined = 拉取失败，保留现有 code；null/有值 = 与列表过滤同源
-      if (current !== undefined) setCode(current?.code ?? null);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "联动消息加载失败", {
         position: "top-center",
@@ -285,27 +276,16 @@ export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: numbe
     } finally {
       setLoading(false);
     }
-  }, [enabled, days]);
+  }, [enabled, days, code]);
 
   useEffect(() => {
     if (!enabled) {
       setItems([]);
       setTotal(0);
-      setCode(null);
-      streamCodeRef.current = null;
       return;
     }
     void loadList();
   }, [enabled, loadList]);
-
-  // SSE 推送焦点股变化时立即刷新列表与顶部代码
-  useEffect(() => {
-    if (!enabled || !streamCode) return;
-    if (streamCodeRef.current === streamCode) return;
-    streamCodeRef.current = streamCode;
-    setCode(streamCode);
-    void loadList();
-  }, [enabled, streamCode, loadList]);
 
   useEffect(() => {
     if (!enabled) return;

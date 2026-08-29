@@ -316,6 +316,10 @@ export interface AnalyzedMessageDetail extends AnalyzedMessage {
 export interface MessageListResult {
   items: AnalyzedMessage[];
   total: number;
+  /** 请求 match_current_stock 时由后端回传的焦点股代码 */
+  current_stock_code?: string | null;
+  /** 请求 match_current_stock 时由后端回传的焦点股名称 */
+  current_stock_name?: string | null;
 }
 
 export interface XgbPollResult {

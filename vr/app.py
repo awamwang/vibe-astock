@@ -958,7 +958,17 @@ def messages_analyzed_list(
         ths_block_layer.feed_message_targets(items)
     except Exception:  # noqa: BLE001
         pass
-    return {"data": {"items": items, "total": total}}
+    payload: dict = {"items": items, "total": total}
+    # 跟随焦点股时回传当前代码/名称，供弹窗与列表同源展示（避免仅靠 SSE）
+    if query.match_current_stock:
+        from duanxian import current_stock as cs
+        from message.current_stock_match import resolve_stock_name
+
+        rec = cs.get_current()
+        code = rec.code if rec and rec.code else None
+        payload["current_stock_code"] = code
+        payload["current_stock_name"] = resolve_stock_name(code) if code else ""
+    return {"data": payload}
 
 
 @app.get("/api/messages/analyzed/{analyzed_id}")

@@ -10,8 +10,8 @@ export function MessageStockPopup() {
   const { items, total, loading, code, status, error } = useMessageStockLinkList(true, defaultEndDays);
 
   useEffect(() => {
-    document.title = "消息联动";
-  }, []);
+    document.title = code ? `${code} · 消息联动` : "消息联动";
+  }, [code]);
 
   return (
     <MessageStockLinkPanel

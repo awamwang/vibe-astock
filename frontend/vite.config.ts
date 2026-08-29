@@ -18,7 +18,22 @@ export default defineConfig(({ mode }) => {
       port: 5910,
       proxy: {
         // 全部 /api → 本仓库后端（8910）。见上面注释：不再需要逐条列举。
-        "/api": { target: agentTarget, changeOrigin: true },
+        "/api": {
+          target: agentTarget,
+          changeOrigin: true,
+          // SSE 必须禁止代理缓冲，否则 current-stock/stream 往往只收到连接时的首包
+          configure: (proxy) => {
+            proxy.on("proxyRes", (proxyRes, _req, res) => {
+              const ct = String(proxyRes.headers["content-type"] || "");
+              if (!ct.includes("text/event-stream")) return;
+              res.setHeader("Cache-Control", "no-cache, no-transform");
+              res.setHeader("X-Accel-Buffering", "no");
+              if (typeof (res as { flushHeaders?: () => void }).flushHeaders === "function") {
+                (res as { flushHeaders: () => void }).flushHeaders();
+              }
+            });
+          },
+        },
       },
     },
     build: {

@@ -1,12 +1,14 @@
-/** 插件当前股票 SSE —— 订阅 /api/plugins/current-stock/stream */
+/** 插件当前股票 —— SSE 推送 + 短轮询兜底（Vite 代理下 SSE 常只收到首包） */
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "./base";
-import { authHeaders, type CurrentStockInfo } from "./api";
+import { api, authHeaders, type CurrentStockInfo } from "./api";
 
 export type CurrentStockStreamStatus = "idle" | "connecting" | "connected" | "error";
 
 const RECONNECT_MS = 3000;
+/** 与后端 get_current 对齐；弹窗/代理下 SSE 不可靠时靠此驱动界面 */
+const POLL_MS = 1500;
 
 function parseSseData(block: string): CurrentStockInfo | null {
   for (const line of block.split("\n")) {
@@ -37,6 +39,15 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+function applyStock(
+  prev: CurrentStockInfo | null,
+  next: CurrentStockInfo | null,
+): CurrentStockInfo | null {
+  if (!next?.code) return next;
+  if (prev?.code === next.code && prev?.updated_at === next.updated_at) return prev;
+  return next;
+}
+
 /** 订阅插件推送的当前股票变化（经系统 SSE，不直连 ths-linker） */
 export function usePluginCurrentStock(enabled: boolean): {
   stock: CurrentStockInfo | null;
@@ -48,6 +59,7 @@ export function usePluginCurrentStock(enabled: boolean): {
   const [status, setStatus] = useState<CurrentStockStreamStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
+  // 短轮询：保证 code 与后端焦点股一致，界面可响应式跟随
   useEffect(() => {
     if (!enabled) {
       setStock(null);
@@ -55,6 +67,33 @@ export function usePluginCurrentStock(enabled: boolean): {
       setError(null);
       return;
     }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const cur = await api.pluginsCurrentStock();
+        if (cancelled) return;
+        setStock((prev) => applyStock(prev, cur));
+        setStatus((s) => (s === "idle" || s === "error" ? "connected" : s));
+        setError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setStatus("error");
+        setError(e instanceof Error ? e.message : "读取焦点股失败");
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [enabled]);
+
+  // SSE：有推送时更快更新（失败不影响轮询）
+  useEffect(() => {
+    if (!enabled) return;
 
     const ac = new AbortController();
     let cancelled = false;
@@ -73,15 +112,16 @@ export function usePluginCurrentStock(enabled: boolean): {
         for (const block of parts) {
           if (!block.trim() || block.trim().startsWith(":")) continue;
           const parsed = parseSseData(block);
-          if (parsed?.code && !cancelled) setStock(parsed);
+          if (parsed?.code && !cancelled) {
+            setStock((prev) => applyStock(prev, parsed));
+            setStatus("connected");
+          }
         }
       }
     };
 
     const run = async () => {
       while (!cancelled) {
-        setStatus("connecting");
-        setError(null);
         try {
           const resp = await fetch(apiUrl("/api/plugins/current-stock/stream"), {
             headers: { ...authHeaders(), Accept: "text/event-stream" },
@@ -92,13 +132,8 @@ export function usePluginCurrentStock(enabled: boolean): {
           }
           setStatus("connected");
           await consumeStream(resp);
-          if (cancelled) return;
-          setStatus("error");
-          setError("推送流已断开，重连中…");
         } catch (e) {
           if (cancelled || (e instanceof DOMException && e.name === "AbortError")) return;
-          setStatus("error");
-          setError(e instanceof Error ? e.message : "订阅失败");
         }
         if (cancelled) return;
         try {
