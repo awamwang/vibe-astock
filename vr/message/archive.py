@@ -92,7 +92,10 @@ def archive_immediate_expired(
     main_path: str | None = None,
     archive_path: str | None = None,
 ) -> dict[str, Any]:
-    """将生效方式为立即、产生时间早于保留期的消息 raw 移入归档库，并清理主库分析记录。"""
+    """将生效方式为立即、产生时间早于保留期的消息 raw 移入归档库，并清理主库分析记录。
+
+    待验证（effect_status=pending_verify）消息不归档，留在主库直至改状态。
+    """
     init_db(main_path)
     arc_db = archive_path or archive_path_for_main(main_path)
     init_archive_db(arc_db)
@@ -108,7 +111,9 @@ def archive_immediate_expired(
                 rows = main_conn.execute(
                     """
                     SELECT id FROM analyzed_message
-                    WHERE effective_mode = 'immediate' AND produced_at < ?
+                    WHERE effective_mode = 'immediate'
+                      AND produced_at < ?
+                      AND effect_status != 'pending_verify'
                     """,
                     (cutoff,),
                 ).fetchall()

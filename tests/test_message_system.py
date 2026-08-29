@@ -847,6 +847,14 @@ def test_archive_immediate_expired(msg_db, tmp_path):
         title="旧消息",
         produced_at=old_time,
     )
+    d_pending = RawMessageDraft(
+        draft_key="pending",
+        source_id="manual",
+        source_label="粘贴",
+        content="待验证旧消息",
+        title="待验证旧消息",
+        produced_at=old_time,
+    )
     d_new = RawMessageDraft(
         draft_key="new",
         source_id="manual",
@@ -856,8 +864,14 @@ def test_archive_immediate_expired(msg_db, tmp_path):
         produced_at=recent_time,
     )
     raw_old = store.insert_raw_batch([d_old], path=msg_db)[0]
+    raw_pending = store.insert_raw_batch([d_pending], path=msg_db)[0]
     raw_new = store.insert_raw_batch([d_new], path=msg_db)[0]
     store.upsert_analyzed_from_raw(raw_old, patch={"effective_mode": "immediate"}, path=msg_db)
+    store.upsert_analyzed_from_raw(
+        raw_pending,
+        patch={"effective_mode": "immediate", "effect_status": "pending_verify"},
+        path=msg_db,
+    )
     store.upsert_analyzed_from_raw(
         raw_new,
         patch={"effective_mode": "scheduled", "effective_at": "2099-01-01 09:00:00"},
@@ -868,9 +882,13 @@ def test_archive_immediate_expired(msg_db, tmp_path):
     assert stats["archived"] == 1
     assert stats["deleted_analyzed"] == 1
 
-    active, active_total = store.list_analyzed(store.ListQuery(), path=msg_db)
-    assert active_total == 1
-    assert active[0].title == "新消息"
+    active, active_total = store.list_analyzed(
+        store.ListQuery(include_history=True),
+        path=msg_db,
+    )
+    assert active_total == 2
+    titles = {row.title for row in active}
+    assert titles == {"新消息", "待验证旧消息"}
 
     archived_rows, archived_total = archive.list_raw_archive(store.ListQuery(), path=arc_path)
     assert archived_total == 1
