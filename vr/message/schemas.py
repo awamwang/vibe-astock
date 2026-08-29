@@ -21,6 +21,7 @@ EffectiveMode = Literal["immediate", "scheduled"]
 AnalyzedStatus = Literal["draft", "confirmed", "archived"]
 AnalyzedBy = Literal["ai", "human", "rule"]
 IngestFormat = Literal["plain", "structured", "calendar", "article"]
+SourceAdapterType = Literal["manual", "poll", "plugin"]
 
 
 class ImpactTarget(BaseModel):
@@ -109,7 +110,7 @@ class IngestAdjustPayload(BaseModel):
 class MessageSourceInfo(BaseModel):
     id: str
     label: str
-    adapter_type: Literal["manual", "poll"]
+    adapter_type: SourceAdapterType
     enabled: bool = True
     poll_interval_s: int | None = None
     last_poll_at: str | None = None

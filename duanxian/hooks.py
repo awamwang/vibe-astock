@@ -214,6 +214,181 @@ class HookRegistry:
         wt.poke()
         return ImportResult(True, "watchlist", f"{len(codes)} 只")
 
+    def register_message_source(self, source_id: str, label: str = "") -> ImportResult:
+        """登记插件消息源（进程内）；停用插件时自动注销。"""
+        from . import message_sources as ms
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("register_message_source 需在 on_enable 内调用，或先 bind_plugin")
+        try:
+            rec = ms.register(pid, source_id, label)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return ImportResult(True, "message_source", rec.source_id)
+
+    def push_messages(self, payload: dict) -> ImportResult:
+        """按标准格式推送消息入库；默认仅 raw，auto_analyze=true 时顺带生成 analyzed。"""
+        from . import hook_schemas as hs
+        from . import message_sources as ms
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("push_messages 需在 on_enable 内调用，或先 bind_plugin")
+
+        body = dict(payload or {})
+        schema = str(body.get("$schema") or "").strip()
+        if schema and schema != hs.MESSAGE_PUSH and not schema.endswith("/message-push/1.0.0"):
+            raise ValueError(f"不支持的消息推送 schema: {schema}")
+
+        source_id = str(body.get("source_id") or "").strip()
+        if not source_id:
+            raise ValueError("source_id 不能为空")
+        rec = ms.require_owned(source_id, pid)
+
+        raw_msgs = body.get("messages")
+        if not isinstance(raw_msgs, list) or not raw_msgs:
+            raise ValueError("messages 须为非空列表")
+
+        auto_analyze = bool(body.get("auto_analyze"))
+        _ensure_vr_path()
+        drafts, analyze_items = _parse_message_push_items(
+            raw_msgs,
+            source_id=rec.source_id,
+            source_label=rec.label,
+        )
+        if not drafts:
+            raise ValueError("messages 中无有效条目（content 不能为空）")
+
+        from message import store as msg_store  # noqa: PLC0415
+
+        inserted = msg_store.insert_raw_batch(drafts)
+        analyzed_n = 0
+        if auto_analyze and inserted:
+            by_ext: dict[str, dict] = {}
+            by_content: dict[str, dict] = {}
+            for item in analyze_items:
+                ext = str(item.get("external_ref") or "").strip()
+                content = str(item.get("content") or "").strip()
+                if ext:
+                    by_ext[ext] = item
+                if content and content not in by_content:
+                    by_content[content] = item
+            for raw in inserted:
+                item = None
+                if raw.external_ref and raw.external_ref in by_ext:
+                    item = by_ext[raw.external_ref]
+                else:
+                    item = by_content.get(raw.content)
+                patch = _analyze_patch_from_push_item(item or {}, raw)
+                msg_store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by="rule")
+                analyzed_n += 1
+
+        return ImportResult(
+            True,
+            "message_push",
+            f"inserted={len(inserted)} analyzed={analyzed_n}",
+        )
+
+
+def _parse_message_push_items(
+    items: list[Any],
+    *,
+    source_id: str,
+    source_label: str,
+) -> tuple[list[Any], list[dict]]:
+    """将标准推送条目转为 RawMessageDraft 列表，并保留原 dict 供 auto_analyze。"""
+    import uuid
+
+    from message.schemas import ImpactTarget, RawMessageDraft  # noqa: PLC0415
+
+    drafts: list[Any] = []
+    kept: list[dict] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        content = str(raw.get("content") or "").strip()
+        if not content:
+            continue
+        title = str(raw.get("title") or "").strip()
+        kw_raw = raw.get("keywords")
+        keywords = kw_raw if isinstance(kw_raw, list) else ([str(kw_raw)] if kw_raw else [])
+        marks_raw = raw.get("marks")
+        marks = marks_raw if isinstance(marks_raw, list) else ([str(marks_raw)] if marks_raw else [])
+        ext = str(raw.get("external_ref") or "").strip() or None
+        produced = str(raw.get("produced_at") or "").strip() or None
+        eff_mode = str(raw.get("effective_mode") or "immediate").strip() or "immediate"
+        if eff_mode not in ("immediate", "scheduled"):
+            eff_mode = "immediate"
+        eff_at = str(raw.get("effective_at") or "").strip() or None
+        meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+        targets: list[Any] = []
+        _valid_kinds = {"market", "sector", "theme", "stock", "other"}
+        for t in raw.get("targets") or []:
+            if isinstance(t, dict) and str(t.get("name") or "").strip():
+                kind = str(t.get("kind") or "other")
+                if kind not in _valid_kinds:
+                    kind = "other"
+                targets.append(
+                    ImpactTarget(
+                        kind=kind,  # type: ignore[arg-type]
+                        code=t.get("code"),
+                        name=str(t.get("name") or ""),
+                    )
+                )
+        drafts.append(
+            RawMessageDraft(
+                draft_key=f"draft_{uuid.uuid4().hex[:8]}",
+                source_id=source_id,
+                source_label=source_label,
+                content=content,
+                title=title or content.split("\n", 1)[0][:120],
+                keywords=[str(k) for k in keywords],
+                url=str(raw.get("url") or ""),
+                marks=[str(m) for m in marks],
+                external_ref=ext,
+                produced_at=produced,
+                effective_mode=eff_mode,  # type: ignore[arg-type]
+                effective_at=eff_at,
+                targets=targets,
+                meta={**meta, "format": "plugin_push"},
+            )
+        )
+        kept.append(raw)
+    return drafts, kept
+
+
+def _analyze_patch_from_push_item(item: dict, raw: Any) -> dict[str, Any]:
+    patch: dict[str, Any] = {
+        "title": str(item.get("title") or raw.title or ""),
+        "summary": str(item.get("summary") or "").strip()
+        or (raw.title[:120] if raw.title else raw.content[:120]),
+        "detail": str(item.get("detail") or "").strip() or raw.content,
+        "keywords": item.get("keywords") if isinstance(item.get("keywords"), list) else list(raw.keywords),
+        "url": str(item.get("url") or raw.url or ""),
+        "marks": item.get("marks") if isinstance(item.get("marks"), list) else list(raw.marks),
+    }
+    if item.get("impact_level"):
+        patch["impact_level"] = str(item["impact_level"])
+    if item.get("effective_mode") in ("immediate", "scheduled"):
+        patch["effective_mode"] = item["effective_mode"]
+    if item.get("effective_at"):
+        patch["effective_at"] = str(item["effective_at"])
+    targets = item.get("targets")
+    if isinstance(targets, list):
+        patch["targets"] = [
+            {
+                "kind": t.get("kind") or "other",
+                "code": t.get("code"),
+                "name": str(t.get("name") or ""),
+            }
+            for t in targets
+            if isinstance(t, dict) and str(t.get("name") or "").strip()
+        ]
+    elif raw.meta.get("_targets_json"):
+        patch["targets"] = raw.meta["_targets_json"]
+    return patch
+
 
 def _ensure_vr_path() -> None:
     import os
@@ -623,8 +798,10 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
 
 
 def _deactivate_plugin(lp: LoadedPlugin) -> None:
+    from . import message_sources as ms
     from . import plugin_status as ps
 
+    ms.unregister_plugin(lp.id)
     _safe_call(lp.pack.on_disable, lp)
     ps.set_status(lp.id, "off", "已停用")
 

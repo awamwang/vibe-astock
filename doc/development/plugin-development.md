@@ -33,6 +33,8 @@
 | `import_watchlist` | [附录 B.4](#b4-import_watchlist) |
 | `report_status` | [附录 B.5](#b5-report_status) |
 | `report_current_stock` | [附录 B.6](#b6-report_current_stock) |
+| `register_message_source` | [附录 B.7](#b7-register_message_source) |
+| `push_messages` | [附录 B.8](#b8-push_messages) |
 
 ### 扩展指标
 
@@ -174,6 +176,7 @@ python -m duanxian.plugin_cli list
 |---|---|
 | `duanxian/hooks.py` | `HookPack`、`HookRunner`、`HookRegistry`、payload 构建 |
 | `duanxian/hook_schemas.py` | `$schema` URL 与版本常量 |
+| `duanxian/message_sources.py` | 插件消息源进程内注册表 |
 | `duanxian/plugin_store.py` | `plugins.json` 读写 |
 | `duanxian/plugin_status.py` | 运行状态存储与 API 合成 |
 | `duanxian/plugin_cli.py` | 命令行管理 |
@@ -627,6 +630,93 @@ def on_register(reg: HookRegistry) -> None:
 **`payload` 常用字段**：`code`（6 位，必填）、`source`、`prev`、`ths_dir`、`symbol`、`market_id`、`instance_id`。代码未变时返回 `detail="unchanged"`。
 
 **并发注意**：实现位于 `duanxian/current_stock.py`（进程内锁 + SSE 订阅列表）。**不要在 WebSocket 读线程里同步调用**；应入队后由 worker 线程上报。详见 [lock-safety.md](./lock-safety.md)。
+
+---
+
+### B.7 `register_message_source` {#b7-register_message_source}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 向引擎登记一个 **插件消息源**（进程内内存，不落 `message_source` 表）。消息分析页的源列表会合并展示，`adapter_type=plugin`。停用插件时自动注销。 |
+| **调用方式** | `reg.register_message_source(source_id, label="") -> ImportResult`（须已 `bind_plugin`） |
+| **对应页面** | [消息分析](/messages) 源筛选 |
+| **对应 API** | `GET /api/messages/sources`（合并插件源） |
+
+**约束**：
+
+- `source_id` 不可占用系统保留 id：`manual` / `article` / `calendar` / `cls_telegraph` / `xgb_msgs`
+- 不同插件不可争用同一 `source_id`
+- 同插件重复注册可更新 `label`
+- **系统不轮询**；由插件自行拉取外部流后调用 `push_messages`
+
+**示例**：
+
+```python
+def on_enable(reg: HookRegistry) -> None:
+    global _PID
+    _PID = reg.plugin_id
+    reg.register_message_source("my_feed", "我的快讯")
+```
+
+---
+
+### B.8 `push_messages` {#b8-push_messages}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 按系统标准格式推送消息串。默认只入 raw；`auto_analyze=true` 时对成功新插入的 raw 生成 analyzed draft。 |
+| **调用方式** | `reg.push_messages(payload) -> ImportResult`（须已 `bind_plugin`，且 `source_id` 已由本插件注册） |
+| **对应页面** | [消息分析](/messages) |
+| **`$schema`** | `https://vibe-astock.dev/schemas/hook/message-push/1.0.0`（可省略，按 1.0.0 处理） |
+
+**标准 `payload`**：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/message-push/1.0.0",
+  "source_id": "my_feed",
+  "auto_analyze": false,
+  "messages": [
+    {
+      "content": "必填正文",
+      "title": "",
+      "keywords": [],
+      "url": "",
+      "marks": [],
+      "external_ref": "可选幂等键",
+      "produced_at": "YYYY-MM-DD HH:MM:SS",
+      "effective_mode": "immediate",
+      "effective_at": null,
+      "targets": [{"kind": "stock", "code": "600000", "name": "浦发银行"}],
+      "summary": "仅 auto_analyze 时写入 analyzed",
+      "detail": "",
+      "impact_level": "medium",
+      "meta": {}
+    }
+  ]
+}
+```
+
+插件负责把外部原始消息转换成上述结构；引擎 **不做** 厂商专有解析。`external_ref` 与 `content_hash` 去重规则与手动/轮询入库一致。返回 `detail` 形如 `inserted=N analyzed=M`。
+
+**异步推送约定**：`on_enable` 内记下 `pid = reg.plugin_id`；后台线程先 `reg.bind_plugin(pid)` 再 `push_messages`。读线程勿同步重 I/O，先入队。
+
+**示例**：
+
+```python
+def on_enable(reg: HookRegistry) -> None:
+    global _REG, _PID
+    _REG, _PID = reg, reg.plugin_id
+    reg.register_message_source("my_feed", "我的快讯")
+
+# worker 线程：
+_REG.bind_plugin(_PID)
+_REG.push_messages({
+    "source_id": "my_feed",
+    "auto_analyze": True,
+    "messages": [{"content": "某条快讯", "external_ref": "ext-1", "impact_level": "high"}],
+})
+```
 
 ---
 

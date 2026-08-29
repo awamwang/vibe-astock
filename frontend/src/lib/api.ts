@@ -238,7 +238,7 @@ export interface ImpactTarget {
 export interface MessageSourceInfo {
   id: string;
   label: string;
-  adapter_type: "manual" | "poll";
+  adapter_type: "manual" | "poll" | "plugin";
   enabled: boolean;
   poll_interval_s?: number | null;
   last_poll_at?: string | null;

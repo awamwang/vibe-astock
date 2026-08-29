@@ -510,6 +510,168 @@ PACK = HookPack(
 
 
 @pytest.mark.unit
+class TestMessageSourcePush:
+    @pytest.fixture(autouse=True)
+    def _clean_sources(self):
+        from duanxian import message_sources as ms
+
+        ms.clear_all()
+        yield
+        ms.clear_all()
+
+    @pytest.fixture
+    def push_store(self, tmp_path, monkeypatch):
+        from duanxian.hooks import _ensure_vr_path
+
+        _ensure_vr_path()
+        import message.store as msg_store
+
+        path = str(tmp_path / "messages.db")
+        monkeypatch.setattr(msg_store, "DB_PATH", path)
+        msg_store.init_db(path)
+        return msg_store, path
+
+    def test_register_and_list_sources(self, push_store):
+        msg_store, path = push_store
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug_msg1")
+        res = reg.register_message_source("my_feed", "我的快讯")
+        assert res.ok
+        assert res.detail == "my_feed"
+
+        sources = msg_store.list_sources(path=path)
+        plugin_srcs = [s for s in sources if s.adapter_type == "plugin"]
+        assert len(plugin_srcs) == 1
+        assert plugin_srcs[0].id == "my_feed"
+        assert plugin_srcs[0].label == "我的快讯"
+        assert plugin_srcs[0].enabled is True
+
+    def test_push_raw_only_and_auto_analyze(self, push_store):
+        msg_store, path = push_store
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug_msg1")
+        reg.register_message_source("my_feed", "我的快讯")
+
+        res = reg.push_messages({
+            "source_id": "my_feed",
+            "messages": [
+                {"content": "仅 raw 消息", "external_ref": "e1", "title": "标题一"},
+            ],
+        })
+        assert res.ok
+        assert "inserted=1" in res.detail
+        assert "analyzed=0" in res.detail
+        raws, total = msg_store.list_raw(msg_store.ListQuery(source="my_feed"), path=path)
+        assert total == 1
+        assert raws[0].content == "仅 raw 消息"
+        analyzed, an_total = msg_store.list_analyzed(
+            msg_store.ListQuery(source="my_feed"), path=path
+        )
+        assert an_total == 0
+
+        res2 = reg.push_messages({
+            "source_id": "my_feed",
+            "auto_analyze": True,
+            "messages": [
+                {
+                    "content": "带分析消息",
+                    "external_ref": "e2",
+                    "title": "标题二",
+                    "summary": "摘要",
+                    "impact_level": "high",
+                    "targets": [{"kind": "stock", "code": "600000", "name": "浦发银行"}],
+                },
+            ],
+        })
+        assert "inserted=1" in res2.detail
+        assert "analyzed=1" in res2.detail
+        analyzed, an_total = msg_store.list_analyzed(
+            msg_store.ListQuery(source="my_feed"), path=path
+        )
+        assert an_total == 1
+        assert analyzed[0].summary == "摘要"
+        assert analyzed[0].impact_level == "high"
+        assert any(t.code == "600000" for t in analyzed[0].targets)
+
+    def test_external_ref_idempotent(self, push_store):
+        msg_store, path = push_store
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug_msg1")
+        reg.register_message_source("my_feed")
+        payload = {
+            "source_id": "my_feed",
+            "messages": [{"content": "同一条", "external_ref": "dup-1"}],
+        }
+        assert "inserted=1" in reg.push_messages(payload).detail
+        assert "inserted=0" in reg.push_messages(payload).detail
+        _, total = msg_store.list_raw(msg_store.ListQuery(source="my_feed"), path=path)
+        assert total == 1
+
+    def test_rejects_unregistered_and_foreign_and_unbound(self, push_store):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        with pytest.raises(RuntimeError, match="bind_plugin"):
+            reg.register_message_source("my_feed")
+
+        reg.bind_plugin("plug_msg1")
+        reg.register_message_source("my_feed")
+
+        with pytest.raises(ValueError, match="未注册"):
+            reg.push_messages({
+                "source_id": "other_feed",
+                "messages": [{"content": "x"}],
+            })
+
+        reg2 = HookRegistry()
+        reg2.bind_plugin("plug_msg2")
+        with pytest.raises(ValueError, match="不属于"):
+            reg2.push_messages({
+                "source_id": "my_feed",
+                "messages": [{"content": "x"}],
+            })
+
+    def test_rejects_reserved_source_id(self):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug_msg1")
+        with pytest.raises(ValueError, match="保留"):
+            reg.register_message_source("cls_telegraph", "财联社")
+
+    def test_deactivate_unregisters_source(self, push_store):
+        msg_store, path = push_store
+        from duanxian.hooks import HookPack, HookRegistry, LoadedPlugin, _deactivate_plugin
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug_msg1")
+        reg.register_message_source("my_feed", "我的快讯")
+        assert any(s.id == "my_feed" for s in msg_store.list_sources(path=path))
+
+        lp = LoadedPlugin(
+            id="plug_msg1",
+            path="/tmp/x.py",
+            pack=HookPack(name="t", version="1", schema_bundle="t/1"),
+        )
+        _deactivate_plugin(lp)
+        assert not any(
+            s.id == "my_feed" and s.adapter_type == "plugin"
+            for s in msg_store.list_sources(path=path)
+        )
+        with pytest.raises(ValueError, match="未注册"):
+            reg.push_messages({
+                "source_id": "my_feed",
+                "messages": [{"content": "停用后"}],
+            })
+
+
+@pytest.mark.unit
 class TestPluginCli:
     def test_cli_register_and_list(self, plugin_home, capsys):
         from duanxian import plugin_cli

@@ -291,11 +291,13 @@ def list_sources(*, path: Optional[str] = None) -> list[MessageSourceInfo]:
                 "SELECT id, label, adapter_type, enabled, poll_interval_s FROM message_source ORDER BY id"
             ).fetchall()
             out: list[MessageSourceInfo] = []
+            seen: set[str] = set()
             for r in rows:
                 ps = conn.execute(
                     "SELECT last_poll_at, last_error FROM poll_state WHERE source_id = ?",
                     (r["id"],),
                 ).fetchone()
+                seen.add(r["id"])
                 out.append(
                     MessageSourceInfo(
                         id=r["id"],
@@ -307,6 +309,20 @@ def list_sources(*, path: Optional[str] = None) -> list[MessageSourceInfo]:
                         last_error=ps["last_error"] if ps else None,
                     )
                 )
+    # 合并插件进程内注册的消息源（DB 同 id 优先）
+    try:
+        from duanxian import message_sources as ms  # noqa: PLC0415
+    except ImportError:
+        return out
+    for info in ms.as_source_info_dicts():
+        sid = str(info.get("id") or "")
+        if not sid or sid in seen:
+            if sid and sid in seen:
+                print(f"⚠️ 插件消息源 {sid!r} 与库内源冲突，已跳过")
+            continue
+        out.append(MessageSourceInfo(**info))
+        seen.add(sid)
+    out.sort(key=lambda s: s.id)
     return out
 
 
