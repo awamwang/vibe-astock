@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,11 @@ import {
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 const WEEKDAY_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const MAX_VISIBLE = 4;
+const POPOVER_WIDTH = 288;
+const POPOVER_PAD = 8;
+const POPOVER_GAP = 6;
+const POPOVER_MAX_HEIGHT = 420;
+const POPOVER_MIN_HEIGHT = 160;
 
 export interface CalendarCell {
   date: Date;
@@ -107,6 +112,44 @@ function EventChip({
   );
 }
 
+/** 按视口边缘碰撞调整位置（类似谷歌日历「更多」弹层：贴右向左、贴底向上） */
+function clampPopoverPosition(
+  anchor: DOMRect,
+  width: number,
+  measuredHeight: number,
+): { top: number; left: number; maxHeight: number } {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const pad = POPOVER_PAD;
+
+  // 水平：优先左对齐锚点；右侧溢出则改为右对齐锚点，再钳到视口内
+  let left = anchor.left;
+  if (left + width > vw - pad) {
+    left = anchor.right - width;
+  }
+  left = Math.max(pad, Math.min(left, vw - width - pad));
+
+  const spaceBelow = Math.max(0, vh - anchor.bottom - pad - POPOVER_GAP);
+  const spaceAbove = Math.max(0, anchor.top - pad - POPOVER_GAP);
+  const openUp = spaceBelow < POPOVER_MIN_HEIGHT && spaceAbove > spaceBelow;
+  const available = openUp ? spaceAbove : spaceBelow;
+
+  let maxHeight = Math.min(POPOVER_MAX_HEIGHT, available);
+  if (measuredHeight > 0) {
+    maxHeight = Math.min(maxHeight, measuredHeight);
+  }
+  // 尽量不低于舒适高度，但绝不超出可用空间
+  maxHeight = Math.max(maxHeight, Math.min(96, available));
+
+  let top = openUp
+    ? anchor.top - maxHeight - POPOVER_GAP
+    : anchor.bottom + POPOVER_GAP;
+  top = Math.max(pad, Math.min(top, vh - Math.max(maxHeight, 1) - pad));
+  maxHeight = Math.max(0, Math.min(maxHeight, vh - top - pad));
+
+  return { top, left, maxHeight };
+}
+
 function DayOverflowPopover({
   cell,
   selectedId,
@@ -122,6 +165,20 @@ function DayOverflowPopover({
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const weekday = WEEKDAY_LABELS[cell.date.getDay()];
+  const [pos, setPos] = useState(() =>
+    clampPopoverPosition(anchorRect, POPOVER_WIDTH, 0),
+  );
+
+  useLayoutEffect(() => {
+    const el = popoverRef.current;
+    if (!el) return;
+    const width = el.offsetWidth || POPOVER_WIDTH;
+    // 先按视口可用空间设上限，再按实际渲染高度收紧（短列表 / 向上展开贴锚点）
+    const capped = clampPopoverPosition(anchorRect, width, 0);
+    el.style.maxHeight = `${capped.maxHeight}px`;
+    const actual = el.offsetHeight;
+    setPos(clampPopoverPosition(anchorRect, width, actual));
+  }, [anchorRect, cell.key, cell.items.length]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -131,31 +188,32 @@ function DayOverflowPopover({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // 日历在可滚动容器内，滚动后锚点错位，直接关闭（与谷歌日历一致）
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Node && popoverRef.current?.contains(t)) return;
+      onClose();
+    };
+    const onResize = () => onClose();
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [onClose]);
-
-  const maxLeft = Math.max(8, window.innerWidth - 288);
-  const left = Math.min(Math.max(8, anchorRect.left), maxLeft);
-  const spaceBelow = window.innerHeight - anchorRect.bottom - 12;
-  const spaceAbove = anchorRect.top - 12;
-  const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
-  const maxHeight = Math.min(420, openUp ? spaceAbove : spaceBelow);
-  const top = openUp
-    ? Math.max(8, anchorRect.top - Math.min(maxHeight, 420) - 6)
-    : anchorRect.bottom + 6;
 
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[90] w-72 overflow-hidden rounded-xl border border-border bg-background shadow-xl"
-      style={{ top, left, maxHeight }}
+      className="fixed z-[90] flex w-72 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl"
+      style={{ top: pos.top, left: pos.left, width: POPOVER_WIDTH, maxHeight: pos.maxHeight }}
     >
-      <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-3 py-2">
         <div className="text-sm font-semibold text-foreground">
           <span className="text-muted-foreground">{weekday}</span>
           {" · "}
@@ -173,7 +231,7 @@ function DayOverflowPopover({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="max-h-[min(360px,calc(100vh-6rem))] space-y-1 overflow-auto p-2">
+      <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
         {cell.items.map((item) => (
           <EventChip
             key={item.id}
@@ -303,6 +361,7 @@ export function MessageCalendar({
             return (
               <div
                 key={cell.key}
+                data-cal-cell
                 className={cn(
                   "flex min-h-[108px] flex-col border-b border-r border-border/40 p-1 last:border-r-0",
                   !cell.inMonth && "bg-muted/15",
@@ -340,8 +399,11 @@ export function MessageCalendar({
                       type="button"
                       className="px-1 text-left text-[10px] text-primary hover:underline"
                       onClick={(e) => {
+                        // 以日期格为锚点（类似谷歌日历），贴右列时弹层可向左翻入视口
+                        const cellEl = e.currentTarget.closest("[data-cal-cell]");
+                        const rect = (cellEl ?? e.currentTarget).getBoundingClientRect();
                         setExpandedCell(cell);
-                        setPopoverRect(e.currentTarget.getBoundingClientRect());
+                        setPopoverRect(rect);
                       }}
                     >
                       另外 {overflow} 项
