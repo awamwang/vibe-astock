@@ -20,7 +20,8 @@ import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type AnalyzedMessage, type BlockResolveItem, type ImpactTarget, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
+  type AnalyzedMessage, type BlockResolveItem, type EffectStatus, type Freshness, type ImpactLevel,
+  type ImpactTarget, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
   type StockResolveItem,
 } from "@/lib/api";
 import {
@@ -43,6 +44,12 @@ import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope, useBlockResolveOptional } from "@/components/block/BlockResolveContext";
 import { isStockMatched } from "@/lib/stocks";
 import { isBlockMatched } from "@/lib/thsBlocks";
+
+const IMPACT_LEVELS: ImpactLevel[] = ["critical", "high", "medium", "low", "noise"];
+const FRESHNESS_VALUES: Freshness[] = ["new", "follow_up", "duplicate", "rumor"];
+const EFFECT_STATUSES: EffectStatus[] = [...EFFECT_STATUS_OPTIONS];
+const quickSelectCls =
+  "h-8 max-w-[7.5rem] rounded-lg border border-border bg-background px-2 text-xs font-semibold text-foreground disabled:opacity-40";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
@@ -623,6 +630,7 @@ export function MessageAnalysis() {
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState<DetailEditDraft | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [quickPatching, setQuickPatching] = useState(false);
   const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1161,23 +1169,20 @@ export function MessageAnalysis() {
     }
   };
 
-  const confirmItem = async (item: AnalyzedMessage) => {
+  const quickPatchField = async (
+    item: AnalyzedMessage,
+    patch: Partial<Pick<AnalyzedMessage, "impact_level" | "freshness" | "effect_status">>,
+  ) => {
+    const key = Object.keys(patch)[0] as keyof typeof patch | undefined;
+    if (!key || patch[key] === item[key]) return;
+    setQuickPatching(true);
     try {
-      const updated = await api.messageAnalyzedPatch(item.id, { status: "confirmed" });
+      const updated = await api.messageAnalyzedPatch(item.id, patch);
       applyMessagePatch(updated);
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "更新失败");
-    }
-  };
-
-  const setPendingVerify = async (item: AnalyzedMessage) => {
-    if (item.effect_status === "pending_verify") return;
-    try {
-      const updated = await api.messageAnalyzedPatch(item.id, { effect_status: "pending_verify" });
-      applyMessagePatch(updated);
-      notify.success("已标为待验证");
-    } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "更新失败");
+    } finally {
+      setQuickPatching(false);
     }
   };
 
@@ -1765,89 +1770,112 @@ export function MessageAnalysis() {
                       {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {selected.status !== "confirmed" && (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <select
+                        aria-label="级别"
+                        title="级别"
+                        disabled={editing || quickPatching}
+                        className={cn(quickSelectCls, IMPACT_BADGE[selected.impact_level] || IMPACT_BADGE.medium)}
+                        value={selected.impact_level}
+                        onChange={(e) => void quickPatchField(selected, { impact_level: e.target.value as ImpactLevel })}
+                      >
+                        {IMPACT_LEVELS.map((l) => (
+                          <option key={l} value={l}>{IMPACT_LABEL[l]}</option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="新旧"
+                        title="新旧"
+                        disabled={editing || quickPatching}
+                        className={quickSelectCls}
+                        value={selected.freshness}
+                        onChange={(e) => void quickPatchField(selected, { freshness: e.target.value as Freshness })}
+                      >
+                        {FRESHNESS_VALUES.map((f) => (
+                          <option key={f} value={f}>{FRESHNESS_LABEL[f]}</option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="炒作阶段"
+                        title="炒作阶段"
+                        disabled={editing || quickPatching}
+                        className={cn(quickSelectCls, "max-w-[8.5rem]", EFFECT_BADGE[selected.effect_status] || EFFECT_BADGE.not_erupted)}
+                        value={selected.effect_status}
+                        onChange={(e) => void quickPatchField(selected, { effect_status: e.target.value as EffectStatus })}
+                      >
+                        {!EFFECT_STATUSES.includes(selected.effect_status as EffectStatus) && (
+                          <option value={selected.effect_status}>
+                            {EFFECT_LABEL[selected.effect_status] || selected.effect_status}
+                          </option>
+                        )}
+                        {EFFECT_STATUSES.map((s) => (
+                          <option key={s} value={s}>{EFFECT_LABEL[s]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
-                        onClick={() => confirmItem(selected)}
+                        disabled={batchBusy}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40",
+                          selected.favorited
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                            : "border-border bg-background text-foreground",
+                        )}
+                        onClick={() => runFavorite([selected.id], !selected.favorited)}
                       >
-                        <Check className="h-3.5 w-3.5" /> 确认
+                        <Star className={cn("h-3.5 w-3.5", selected.favorited && "fill-current")} />
+                        {selected.favorited ? "取消收藏" : "收藏"}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      disabled={editing || selected.effect_status === "pending_verify"}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold",
-                        selected.effect_status === "pending_verify"
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 disabled:opacity-100 dark:text-amber-200"
-                          : "border-amber-500/35 bg-background text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-200",
-                      )}
-                      onClick={() => void setPendingVerify(selected)}
-                    >
-                      待验证
-                    </button>
-                    <button
-                      type="button"
-                      disabled={batchBusy}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40",
-                        selected.favorited
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                          : "border-border bg-background text-foreground",
-                      )}
-                      onClick={() => runFavorite([selected.id], !selected.favorited)}
-                    >
-                      <Star className={cn("h-3.5 w-3.5", selected.favorited && "fill-current")} />
-                      {selected.favorited ? "取消收藏" : "收藏"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={batchBusy}
-                      className="inline-flex items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-40"
-                      onClick={() => runDelete([selected.id])}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> 删除
-                    </button>
-                    <button
-                      type="button"
-                      disabled={analyzing || !hasLlm() || editing}
-                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
-                      onClick={() => runAnalyze([selected.id])}
-                    >
-                      {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                      AI 分析
-                    </button>
-                    {!editing ? (
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground"
-                        onClick={startEdit}
+                        disabled={batchBusy}
+                        className="inline-flex items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-40"
+                        onClick={() => runDelete([selected.id])}
                       >
-                        <Pencil className="h-3.5 w-3.5" /> 编辑
+                        <Trash2 className="h-3.5 w-3.5" /> 删除
                       </button>
-                    ) : (
-                      <>
+                      <button
+                        type="button"
+                        disabled={analyzing || !hasLlm() || editing}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
+                        onClick={() => runAnalyze([selected.id])}
+                      >
+                        {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        AI 分析
+                      </button>
+                      {!editing ? (
                         <button
                           type="button"
-                          disabled={saveLoading}
-                          className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
-                          onClick={() => void saveEdit()}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground"
+                          onClick={startEdit}
                         >
-                          {saveLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                          保存
+                          <Pencil className="h-3.5 w-3.5" /> 编辑
                         </button>
-                        <button
-                          type="button"
-                          disabled={saveLoading}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-40"
-                          onClick={cancelEdit}
-                        >
-                          取消
-                        </button>
-                      </>
-                    )}
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            disabled={saveLoading}
+                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+                            onClick={() => void saveEdit()}
+                          >
+                            {saveLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            disabled={saveLoading}
+                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-40"
+                            onClick={cancelEdit}
+                          >
+                            取消
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
