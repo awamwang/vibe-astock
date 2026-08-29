@@ -2539,6 +2539,7 @@ class TestReviewHistory:
         assert "TradeDatePicker" in s, "用交易日选择器，周末置灰不可选"
         assert "prevDone" in s and "prev_trade_date" in s, "上一交易日已有复盘时要把日期框推到今天"
         assert "tradeToday" in s and "today_is_trade_day" in s, "非交易日不把日期框推到今天"
+        assert "lastWeekdayOnOrBefore" in s, "非交易日日期框落到上一交易日，不留空"
         assert "shouldFallbackToPrev" in s and "today_settled" in s, "未到复盘时间应展示上一份存档"
         assert "archived.includes(today)" in s, "今日已有存档时须加载当日缓存，不能一律判 missing"
         assert "showContent" in s and "loadedDay" in s, "选中日与载入日复盘不一致时不展示内容"

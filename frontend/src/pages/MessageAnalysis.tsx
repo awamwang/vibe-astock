@@ -548,9 +548,7 @@ function FollowStockHint({
   const resolved = useStockResolve({ code });
   const name = resolved?.stock?.name?.trim() || "";
   const text = code
-    ? name
-      ? `${name}（${code}）`
-      : code
+    ? name || code
     : status === "connecting"
       ? "连接中…"
       : status === "connected"
@@ -559,13 +557,13 @@ function FollowStockHint({
           ? error || "未连接"
           : "等待插件…";
   return (
-    <span className="relative inline-block min-w-[9.5rem] align-middle text-xs font-normal">
+    <span className="relative inline-block min-w-[5.5rem] align-middle text-xs font-normal">
       <span className="invisible whitespace-nowrap" aria-hidden>
-        八八八八八八（000000）
+        八八八八八八
       </span>
       <span
-        className="absolute inset-0 truncate text-right tabular-nums"
-        title={text}
+        className="absolute inset-0 truncate text-right"
+        title={code && name ? `${name}（${code}）` : text}
       >
         {text}
       </span>

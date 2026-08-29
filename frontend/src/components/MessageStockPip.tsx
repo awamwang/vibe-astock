@@ -6,7 +6,7 @@ import { api, ApiError, type AnalyzedMessage } from "@/lib/api";
 import { getDefaultEndDays, IMPACT_LABEL, targetTitle } from "@/lib/messages";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { openSectionPopup, appUrl } from "@/lib/sectionPopup";
-import { StockResolveScope, useStockResolve } from "@/components/stock/StockResolveContext";
+import { stockQueryKey } from "@/lib/stocks";
 import { cn } from "@/lib/utils";
 
 const LIST_LIMIT = 80;
@@ -109,6 +109,7 @@ function PipTargets({
   );
 }
 
+/** 顶部焦点股：直接按代码解析名称，不依赖外层 StockResolveScope */
 function StockCodeHint({
   code,
   status,
@@ -118,8 +119,31 @@ function StockCodeHint({
   status: string;
   error: string | null;
 }) {
-  const resolved = useStockResolve({ code });
-  const name = resolved?.stock?.name?.trim() || "";
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (!code) {
+      setName("");
+      return;
+    }
+    let cancelled = false;
+    setName("");
+    api
+      .stocksResolve([{ code }])
+      .then((data) => {
+        if (cancelled) return;
+        const key = stockQueryKey({ code });
+        const item = (key && data.by_key?.[key]) || data.items?.[0];
+        setName(item?.stock?.name?.trim() || item?.name?.trim() || "");
+      })
+      .catch(() => {
+        if (!cancelled) setName("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
   if (code) {
     return <>{name ? `${name}（${code}）` : code}</>;
   }
@@ -155,7 +179,7 @@ export function MessageStockLinkPanel({
     listScrollRef.current?.scrollTo({ top: 0 });
   }, [code]);
 
-  const body = (
+  return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <header className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
         <PictureInPicture2 className="h-3.5 w-3.5 shrink-0 text-primary" />
@@ -221,12 +245,6 @@ export function MessageStockLinkPanel({
       </div>
     </div>
   );
-
-  return (
-    <StockResolveScope queries={code ? [{ code }] : []}>
-      {body}
-    </StockResolveScope>
-  );
 }
 
 /** 订阅焦点股并拉取按股票过滤的消息列表 */
@@ -234,23 +252,31 @@ export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: numbe
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const { code, status, error } = usePluginCurrentStock(enabled);
+  /** 与列表同源：每次拉列表时同步 GET /plugins/current-stock，避免弹窗 SSE 卡住导致顶部代码不更新 */
+  const [code, setCode] = useState<string | null>(null);
+  const { code: streamCode, status, error } = usePluginCurrentStock(enabled);
   const days = defaultEndDays ?? getDefaultEndDays();
+  const streamCodeRef = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
     if (!enabled) return;
     setLoading(true);
     try {
-      const data = await api.messageAnalyzedList({
-        match_current_stock: "yes",
-        default_end_days: days,
-        sort: "produced_at",
-        order: "desc",
-        limit: LIST_LIMIT,
-        offset: 0,
-      });
+      const [data, current] = await Promise.all([
+        api.messageAnalyzedList({
+          match_current_stock: "yes",
+          default_end_days: days,
+          sort: "produced_at",
+          order: "desc",
+          limit: LIST_LIMIT,
+          offset: 0,
+        }),
+        api.pluginsCurrentStock().catch(() => undefined),
+      ]);
       setItems(data.items || []);
       setTotal(data.total || 0);
+      // undefined = 拉取失败，保留现有 code；null/有值 = 与列表过滤同源
+      if (current !== undefined) setCode(current?.code ?? null);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "联动消息加载失败", {
         position: "top-center",
@@ -259,16 +285,27 @@ export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: numbe
     } finally {
       setLoading(false);
     }
-  }, [enabled, days, code]);
+  }, [enabled, days]);
 
   useEffect(() => {
     if (!enabled) {
       setItems([]);
       setTotal(0);
+      setCode(null);
+      streamCodeRef.current = null;
       return;
     }
     void loadList();
   }, [enabled, loadList]);
+
+  // SSE 推送焦点股变化时立即刷新列表与顶部代码
+  useEffect(() => {
+    if (!enabled || !streamCode) return;
+    if (streamCodeRef.current === streamCode) return;
+    streamCodeRef.current = streamCode;
+    setCode(streamCode);
+    void loadList();
+  }, [enabled, streamCode, loadList]);
 
   useEffect(() => {
     if (!enabled) return;

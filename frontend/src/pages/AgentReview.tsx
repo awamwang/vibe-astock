@@ -16,7 +16,7 @@ import { BreadthPanel } from "@/components/BreadthPanel";
 import { TrendPanel } from "@/components/TrendPanel";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
-import { TradeDatePicker, isWeekendDate } from "@/components/TradeDatePicker";
+import { TradeDatePicker, isWeekendDate, lastWeekdayOnOrBefore } from "@/components/TradeDatePicker";
 import { TomorrowVerificationPanel } from "@/pages/popout/AgentReviewPopouts";
 import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
@@ -264,11 +264,7 @@ export function AgentReview() {
   const [data, setData] = useState<ReviewData | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [date, setDate] = useState<string>(() => {
-    const t = localDate();
-    // 周末先不指着今天，等 bootstrap 落到最近复盘交易日
-    return isWeekendDate(t) ? "" : t;
-  });
+  const [date, setDate] = useState<string>(() => lastWeekdayOnOrBefore(localDate()));
   const [dates, setDates] = useState<string[]>([]);   // 跑过复盘的交易日（历史入口）
   const [calendarToday, setCalendarToday] = useState<string>(localDate());
   const [missing, setMissing] = useState<string>("");  // 选了某天但那天没跑过
@@ -351,7 +347,8 @@ export function AgentReview() {
   }
 
   // 首次进入：并行拉最近复盘 + 历史日期；
-  // 仅当今天是交易日且上一交易日已有复盘时，日期框才推到今天；非交易日停在最近复盘日
+  // 仅当今天是交易日且上一交易日已有复盘时，日期框才推到今天；
+  // 非交易日固定选上一交易日（不留空）
   useEffect(() => {
     async function bootstrap() {
       const my = ++reqId.current;
@@ -392,15 +389,22 @@ export function AgentReview() {
             setFallback(false);
             setTradeBudget(null);
           }
-        } else if (latestDay) {
-          setData(r);
-          setMissing("");
-          setFallback(false);
-          setDate(latestDay);
-          void loadTradeBudget(latestDay);
-        } else if (prev) {
-          setDate(prev);
-          void loadLatest(prev, datesR);
+        } else {
+          // 非交易日 / 上一交易日尚未复盘：日期框落到上一交易日（有则优先），不留空
+          const pick =
+            prev
+            || datesR.latest_session
+            || latestDay
+            || lastWeekdayOnOrBefore(today);
+          setDate(pick);
+          if (hasReviewPayload(r) && (latestDay === pick)) {
+            setData(r);
+            setMissing("");
+            setFallback(false);
+            void loadTradeBudget(pick);
+          } else {
+            void loadLatest(pick, datesR);
+          }
         }
       } catch {
         if (alive.current && my === reqId.current) {
