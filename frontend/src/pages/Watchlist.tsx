@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, X, RefreshCw, Star, Loader2, Sparkles, Trash2, TrendingUp } from "lucide-react";
+import { Plus, X, RefreshCw, Star, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -7,6 +7,7 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import {
   useDeepDive,
   RunAllButton,
+  AnalyzeIconButtons,
   WatchlistAnalyzePanel,
   type DiveItem,
   type WatchlistAnalyzeTab,
@@ -446,50 +447,21 @@ export function Watchlist() {
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pb ?? "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.turnover_pct ?? "—"}</td>
                         <td className="whitespace-nowrap px-2 py-2.5">
-                          <div className="inline-flex flex-wrap items-center gap-1">
-                            <button
-                              type="button"
-                              title={openCode === c && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
-                              aria-label={openCode === c && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
-                              onClick={() => {
-                                if (openCode === c && analyzeTab === "deep") closeAnalyze();
-                                else ensureAnalyze(c, "deep");
-                              }}
-                              className={cn(
-                                "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
-                                openCode === c && analyzeTab === "deep"
-                                  ? "border-primary bg-primary/15 text-primary"
-                                  : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
-                              )}
-                            >
-                              {ddDeep.running === c && analyzeTab === "deep" ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Sparkles className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              title={openCode === c && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
-                              aria-label={openCode === c && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
-                              onClick={() => {
-                                if (openCode === c && analyzeTab === "short") closeAnalyze();
-                                else ensureAnalyze(c, "short");
-                              }}
-                              className={cn(
-                                "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
-                                openCode === c && analyzeTab === "short"
-                                  ? "border-secondary bg-secondary/15 text-secondary"
-                                  : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
-                              )}
-                            >
-                              {ddShort.running === c && analyzeTab === "short" ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <TrendingUp className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                          </div>
+                          <AnalyzeIconButtons
+                            code={c}
+                            openCode={openCode}
+                            analyzeTab={analyzeTab}
+                            ddDeep={ddDeep}
+                            ddShort={ddShort}
+                            onDeep={() => {
+                              if (openCode === c && analyzeTab === "deep") closeAnalyze();
+                              else ensureAnalyze(c, "deep");
+                            }}
+                            onShort={() => {
+                              if (openCode === c && analyzeTab === "short") closeAnalyze();
+                              else ensureAnalyze(c, "short");
+                            }}
+                          />
                         </td>
                         <td className="px-2 py-2.5">
                           <button

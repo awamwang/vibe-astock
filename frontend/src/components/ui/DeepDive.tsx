@@ -1,10 +1,10 @@
 // 「AI 深入分析」共享单元：行内展开的流式分析面板（首板分析 / 每日复盘连板表共用）。
 // useDeepDive 管理展开态 + 流式请求 + 本地存档 + 一键全部分析；DeepDivePanel 渲染表格内的展开行。
 // 存档只存本地 localStorage（与研究记录同体系，不上传、不进仓库），按「日期|页面|代码」为键，
-// 自动清理只保留最近 5 个交易日 —— 分析过的股票刷新页面后按钮变「展开」，不再重复花模型调用。
+// 自动清理只保留最近 5 个交易日 —— 分析过的股票刷新页面后图标变为「展开」，不再重复花模型调用。
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { Loader2, RefreshCw, Sparkles, TrendingUp, ChevronDown, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
@@ -632,6 +632,90 @@ export function WatchlistAnalyzePanel({
         )}
       </td>
     </tr>
+  );
+}
+
+/** 深度 / 短线图标按钮：未分析用功能图标；已有结果用展开箭头；当前展开用收起 */
+export function AnalyzeIconButtons({
+  code,
+  openCode,
+  analyzeTab,
+  ddDeep,
+  ddShort,
+  onDeep,
+  onShort,
+  className,
+}: {
+  code: string;
+  openCode: string | null;
+  analyzeTab: WatchlistAnalyzeTab;
+  ddDeep: DeepDiveState;
+  ddShort: DeepDiveState;
+  onDeep: () => void;
+  onShort: () => void;
+  className?: string;
+}) {
+  const deepOpen = openCode === code && analyzeTab === "deep";
+  const shortOpen = openCode === code && analyzeTab === "short";
+  const deepHas = Boolean(ddDeep.analysis[code]);
+  const shortHas = Boolean(ddShort.analysis[code]);
+  const deepRunning = ddDeep.running === code && analyzeTab === "deep";
+  const shortRunning = ddShort.running === code && analyzeTab === "short";
+
+  const deepTitle = deepOpen ? "收起深度分析" : deepHas ? "展开深度分析" : "深度分析";
+  const shortTitle = shortOpen ? "收起短线分析" : shortHas ? "展开短线分析" : "短线分析";
+
+  return (
+    <div className={cn("inline-flex flex-wrap items-center gap-1", className)}>
+      <button
+        type="button"
+        title={deepTitle}
+        aria-label={deepTitle}
+        onClick={onDeep}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+          deepOpen
+            ? "border-primary bg-primary/15 text-primary"
+            : deepHas
+              ? "border-primary/70 bg-primary/15 text-primary hover:bg-primary/25"
+              : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+        )}
+      >
+        {deepRunning ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : deepOpen ? (
+          <X className="h-3.5 w-3.5" />
+        ) : deepHas ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <Sparkles className="h-3.5 w-3.5" />
+        )}
+      </button>
+      <button
+        type="button"
+        title={shortTitle}
+        aria-label={shortTitle}
+        onClick={onShort}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+          shortOpen
+            ? "border-secondary bg-secondary/15 text-secondary"
+            : shortHas
+              ? "border-secondary/70 bg-secondary/15 text-secondary hover:bg-secondary/25"
+              : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
+        )}
+      >
+        {shortRunning ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : shortOpen ? (
+          <X className="h-3.5 w-3.5" />
+        ) : shortHas ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <TrendingUp className="h-3.5 w-3.5" />
+        )}
+      </button>
+    </div>
   );
 }
 
