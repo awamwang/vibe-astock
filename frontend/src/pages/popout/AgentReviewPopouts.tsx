@@ -59,10 +59,10 @@ export function TomorrowVerificationPanel({
   return (
     <div>
       {showHeader && (
-        <h4 className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+        <h4 className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-bold">
           <CheckSquare className="h-4 w-4 text-info" /> 明日验证条件
           <span className="text-[11px] font-normal text-muted-foreground">
-            明天用这几个读数检验今晚的判断
+            明天用这几个读数检验今晚的判断；变动未超阈值视为持平
           </span>
         </h4>
       )}

@@ -89,6 +89,9 @@ function VerificationResults({ reflection }: { reflection?: Reflection | null })
           )}
         </span>
       </h4>
+      <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+        各指标有变动阈值：幅度未超过阈值记为「实际持平」，避免把噪声当成方向兑现。
+      </p>
       {s?.edge_note && decided > 0 && (
         <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">{s.edge_note}</p>
       )}
@@ -685,7 +688,7 @@ export function AgentReview() {
                 <h4 className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-bold">
                   <CheckSquare className="h-4 w-4 text-info" /> 明日验证条件
                   <span className="text-[11px] font-normal text-muted-foreground">
-                    明天用这几个读数检验今晚的判断；结果会出现在下一场复盘的「上期验证结果」里
+                    明天用这几个读数检验今晚的判断；变动未超阈值视为持平
                   </span>
                   <SectionPopupButton
                     compact
