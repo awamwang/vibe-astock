@@ -61,6 +61,21 @@ def prev_trade_date(date: str) -> Optional[str]:
     return None
 
 
+def is_trade_date(date: str) -> bool:
+    """日历日是否为 A 股交易日。
+
+    周末直接否；其余查参考股行情日历。取不到日历时工作日兜底为是
+    （与 prev/next_trade_date 的工作日兜底同口径）。
+    """
+    if is_weekend(date):
+        return False
+    start = (datetime.datetime.strptime(date, "%Y-%m-%d") - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
+    dates = _ref_dates(start, date)
+    if not dates:
+        return True
+    return date in dates
+
+
 def last_trade_dates(n: int = 5) -> list[str]:
     """最近 n 个**已收盘**交易日（升序）。上海时区未收盘的今天会被剔除。"""
     today = china_now().date()

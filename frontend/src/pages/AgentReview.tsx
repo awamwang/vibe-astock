@@ -16,6 +16,7 @@ import { BreadthPanel } from "@/components/BreadthPanel";
 import { TrendPanel } from "@/components/TrendPanel";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { TradeDatePicker, isWeekendDate } from "@/components/TradeDatePicker";
 import { TomorrowVerificationPanel } from "@/pages/popout/AgentReviewPopouts";
 import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
@@ -140,6 +141,7 @@ const DISCLAIMER =
 interface ReviewDatesMeta {
   dates: string[];
   today?: string;
+  today_is_trade_day?: boolean;
   prev_trade_date?: string | null;
   latest_session?: string | null;
   today_settled?: boolean;
@@ -149,10 +151,17 @@ function hasReviewPayload(r: ReviewData | null | undefined): r is ReviewData {
   return Boolean(r && (r.target_date || r.trade_date));
 }
 
-/** 选中日尚无存档、且盘面未到可复盘时间 → 展示上一份 */
+/** 今天是否交易日：以后端为准，缺字段时用周末兜底 */
+function todayIsTradeDay(meta: ReviewDatesMeta): boolean {
+  if (typeof meta.today_is_trade_day === "boolean") return meta.today_is_trade_day;
+  return Boolean(meta.today) && !isWeekendDate(meta.today!);
+}
+
+/** 选中日尚无存档、且盘面未到可复盘时间 → 展示上一份（仅交易日；非交易日不推选今天） */
 function shouldFallbackToPrev(selected: string, meta: ReviewDatesMeta): boolean {
   if (!selected || !meta.today) return false;
   if (selected !== meta.today) return false;
+  if (!todayIsTradeDay(meta)) return false;
   if (meta.today_settled) return false;
   const prev = meta.prev_trade_date || "";
   return Boolean(prev && meta.dates.includes(prev));
@@ -255,13 +264,18 @@ export function AgentReview() {
   const [data, setData] = useState<ReviewData | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [date, setDate] = useState<string>(localDate());
+  const [date, setDate] = useState<string>(() => {
+    const t = localDate();
+    // 周末先不指着今天，等 bootstrap 落到最近复盘交易日
+    return isWeekendDate(t) ? "" : t;
+  });
   const [dates, setDates] = useState<string[]>([]);   // 跑过复盘的交易日（历史入口）
+  const [calendarToday, setCalendarToday] = useState<string>(localDate());
   const [missing, setMissing] = useState<string>("");  // 选了某天但那天没跑过
   const [err, setErr] = useState("");
   // 「已复盘/还没收盘」这类不是错误、是正常告知，跟 err 分开显示
   const [notice, setNotice] = useState("");
-  // 日历指着今天、内容却是上一份（盘前/盘中/非交易日还没法跑今日复盘）
+  // 日历指着今天、内容却是上一份（盘前/盘中还没法跑今日复盘；非交易日不推选今天）
   const [fallback, setFallback] = useState(false);
   const datesMeta = useRef<ReviewDatesMeta | null>(null);
   const [tradeBudget, setTradeBudget] = useState<TradeBudget | null>(null);
@@ -332,10 +346,12 @@ export function AgentReview() {
       if (!alive.current) return;
       datesMeta.current = r;
       setDates(r.dates || []);
+      if (r.today) setCalendarToday(r.today);
     } catch { /* 拿不到就不显示历史列表，不影响主流程 */ }
   }
 
-  // 首次进入：并行拉最近复盘 + 历史日期；上一交易日已有复盘则日期框推到今天
+  // 首次进入：并行拉最近复盘 + 历史日期；
+  // 仅当今天是交易日且上一交易日已有复盘时，日期框才推到今天；非交易日停在最近复盘日
   useEffect(() => {
     async function bootstrap() {
       const my = ++reqId.current;
@@ -349,13 +365,15 @@ export function AgentReview() {
         datesMeta.current = datesR;
         const archived = datesR.dates || [];
         setDates(archived);
+        if (datesR.today) setCalendarToday(datesR.today);
 
         const today = datesR.today || localDate();
         const prev = datesR.prev_trade_date || "";
         const prevDone = Boolean(prev && archived.includes(prev));
+        const tradeToday = todayIsTradeDay(datesR);
 
         const latestDay = r?.target_date || r?.trade_date || "";
-        if (prevDone) {
+        if (prevDone && tradeToday) {
           // 上一交易日已落盘 → 日期框推到今天；今日已有存档则加载，未到复盘时间则展示上一份
           setDate(today);
           if (archived.includes(today) && latestDay === today) {
@@ -380,6 +398,9 @@ export function AgentReview() {
           setFallback(false);
           setDate(latestDay);
           void loadTradeBudget(latestDay);
+        } else if (prev) {
+          setDate(prev);
+          void loadLatest(prev, datesR);
         }
       } catch {
         if (alive.current && my === reqId.current) {
@@ -491,16 +512,19 @@ export function AgentReview() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex flex-col items-start">
-            <input type="date" value={date} list="review-dates"
-              onChange={(e) => { const v = e.target.value; setDate(v); setErr(""); if (v) loadLatest(v); }}
-              className="rounded-lg border border-border bg-card px-3 py-2 text-sm" />
+            <TradeDatePicker
+              value={date}
+              maxDate={calendarToday}
+              onChange={(v) => {
+                if (!v || isWeekendDate(v)) return;
+                setDate(v); setErr(""); setNotice("");
+                void loadLatest(v);
+              }}
+            />
             {/* 跑过的日子直接列出来 —— 不然用户只能靠猜哪天有存档 */}
-            <datalist id="review-dates">
-              {dates.map((d) => <option key={d} value={d} />)}
-            </datalist>
             {chipDates.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                {chipDates.map((d) => (
+                {chipDates.filter((d) => !isWeekendDate(d)).map((d) => (
                   <button key={d} onClick={() => { setDate(d); setErr(""); loadLatest(d); }}
                     className={`rounded px-1.5 py-0.5 transition-colors hover:text-primary ${
                       date === d ? "bg-primary/15 text-primary" : "bg-muted/40"

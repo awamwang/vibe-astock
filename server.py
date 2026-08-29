@@ -420,13 +420,15 @@ def api_review_dates():
     在此之前 `reviews/` 每天存一份、但只有 `latest.json` 有接口 ——
     对一个复盘产品来说「翻回上周三看看」是刚需，却没有入口。
 
-    附带 today / prev_trade_date / today_settled：前端在「上一交易日已有复盘」时
-    把日期框推到今天；若今日尚未到复盘时间且还没跑过，则展示上一份存档。
+    附带 today / today_is_trade_day / prev_trade_date / today_settled：
+    仅当今天是交易日且上一交易日已有复盘时，才把日期框推到今天；
+    非交易日不推进、日历置灰不可选。若今日尚未到复盘时间且还没跑过，则展示上一份存档。
     """
     today = china_today()
     return {
         "dates": review_store.dates(),
         "today": today,
+        "today_is_trade_day": trade_calendar.is_trade_date(today),
         "prev_trade_date": trade_calendar.prev_trade_date(today),
         "latest_session": trade_calendar.latest_session(),
         "today_settled": trade_calendar.is_settled(today),

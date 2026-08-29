@@ -2516,6 +2516,7 @@ class TestReviewHistory:
         d = server.api_review_dates()
         assert isinstance(d.get("dates"), list)
         assert "today" in d and "prev_trade_date" in d, "前端推进日期框需要 today / 上一交易日"
+        assert "today_is_trade_day" in d, "前端需知今天是否交易日，非交易日不推进日期框"
         assert "today_settled" in d and "latest_session" in d, "前端判断可否展示上一份需要 settled 口径"
 
     def test_latest_takes_a_date(self):
@@ -2535,8 +2536,9 @@ class TestReviewHistory:
         s = pathlib.Path("frontend/src/pages/AgentReview.tsx").read_text(encoding="utf-8")
         assert "loadLatest(v)" in s, "改日期要去读那天的存档"
         assert "setMissing(" in s and "这天还没跑过复盘" in s, "那天没有要说出来"
-        assert '<datalist id="review-dates">' in s, "list= 指向的 datalist 必须存在"
+        assert "TradeDatePicker" in s, "用交易日选择器，周末置灰不可选"
         assert "prevDone" in s and "prev_trade_date" in s, "上一交易日已有复盘时要把日期框推到今天"
+        assert "tradeToday" in s and "today_is_trade_day" in s, "非交易日不把日期框推到今天"
         assert "shouldFallbackToPrev" in s and "today_settled" in s, "未到复盘时间应展示上一份存档"
         assert "archived.includes(today)" in s, "今日已有存档时须加载当日缓存，不能一律判 missing"
         assert "showContent" in s and "loadedDay" in s, "选中日与载入日复盘不一致时不展示内容"
