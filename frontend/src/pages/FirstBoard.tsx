@@ -1,12 +1,20 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronUp, Flame, Loader2, Sparkles, AlertCircle, X, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Flame, Loader2, Sparkles, AlertCircle, X, Upload, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Caliber } from "@/components/ui/Caliber";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { useDeepDive, DeepDivePanel, RunAllButton, parseDiveMeta, type DiveItem } from "@/components/ui/DeepDive";
+import {
+  useDeepDive,
+  RunAllButton,
+  WatchlistAnalyzePanel,
+  parseDiveMeta,
+  type DiveItem,
+  type WatchlistAnalyzeTab,
+} from "@/components/ui/DeepDive";
+import { SHORT_OBSERVE_INSTRUCTIONS } from "@/lib/watchlistAnalyze";
 import { api, type FirstBoardData, type FirstBoardStock, type ZtReasonPreview } from "@/lib/api";
 import { DEFAULT_ZT_KEYWORDS, setZtKeywordsCache } from "@/lib/zt-keywords";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -98,7 +106,10 @@ export function FirstBoard() {
   const [themeExpanded, setThemeExpanded] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("boards");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
-  const dd = useDeepDive("firstboard", data?.date || "");
+  const ddDeep = useDeepDive("firstboard", data?.date || "");
+  const ddShort = useDeepDive("firstboard-short", data?.date || "");
+  const [openCode, setOpenCode] = useState<string | null>(null);
+  const [analyzeTab, setAnalyzeTab] = useState<WatchlistAnalyzeTab>("deep");
 
   const reload = () =>
     api.firstBoard().then(setData).catch(() => {}).finally(() => setLoaded(true));
@@ -185,8 +196,8 @@ export function FirstBoard() {
           else cmp = a.float_cap - b.float_cap;
           break;
         case "keyword": {
-          const ak = parseDiveMeta(dd.analysis[a.code] || "", ztKeywords).keyword || "";
-          const bk = parseDiveMeta(dd.analysis[b.code] || "", ztKeywords).keyword || "";
+          const ak = parseDiveMeta(ddDeep.analysis[a.code] || "", ztKeywords).keyword || "";
+          const bk = parseDiveMeta(ddDeep.analysis[b.code] || "", ztKeywords).keyword || "";
           const ai = keywordSortIndex(ak, ztKeywords);
           const bi = keywordSortIndex(bk, ztKeywords);
           cmp = ai !== bi ? ai - bi : ak.localeCompare(bk, "zh-CN");
@@ -200,7 +211,7 @@ export function FirstBoard() {
       return a.code.localeCompare(b.code);
     });
     return list;
-  }, [filteredStocks, sortKey, sortOrder, dd.analysis, ztKeywords]);
+  }, [filteredStocks, sortKey, sortOrder, ddDeep.analysis, ztKeywords]);
 
   const toggleTheme = (tag: string) => {
     setSelectedThemes((prev) =>
@@ -294,9 +305,54 @@ export function FirstBoard() {
     );
   };
 
+  const buildShortPrompt = (s: FirstBoardStock) => {
+    const boardDesc = s.boards <= 1 ? "首板" : `${s.boards} 连板`;
+    const themeLine = (s.themes ?? []).length > 0
+      ? `拆散映射后题材标签：${s.themes.join("、")}；`
+      : "";
+    return (
+      `今天（${dateLabel(data?.date || "")}）A 股涨停股「${s.name}（${s.code}）」的客观数据：\n` +
+      `板位 ${boardDesc}，现价 ${s.price} 元，涨停 +${s.pct}%，首次封板时间 ${s.seal_time || "未知"}，` +
+      `炸板 ${s.break_count} 次，成交额 ${yi(s.amount)}，流通市值 ${yi(s.float_cap)}，` +
+      `所属行业 ${s.industry || "未知"}，${themeLine}涨停原因题材：${s.reason || "（暂缺，需要自查）"}。\n\n` +
+      SHORT_OBSERVE_INSTRUCTIONS
+    );
+  };
+
   const ctx = (s: FirstBoardStock) =>
     `涨停股 ${s.name}(${s.code}) ${s.boards <= 1 ? "首板" : `${s.boards}板`} 涨停原因深入分析`;
+  const shortCtx = (s: FirstBoardStock) =>
+    `涨停股 ${s.name}(${s.code}) ${s.boards <= 1 ? "首板" : `${s.boards}板`} 短线观察`;
   const diveItem = (s: FirstBoardStock): DiveItem => ({ key: s.code, prompt: buildPrompt(s), context: ctx(s) });
+  const shortItem = (s: FirstBoardStock): DiveItem => ({
+    key: s.code,
+    prompt: buildShortPrompt(s),
+    context: shortCtx(s),
+  });
+
+  const ensureAnalyze = (s: FirstBoardStock, tab: WatchlistAnalyzeTab) => {
+    setOpenCode(s.code);
+    setAnalyzeTab(tab);
+    const dd = tab === "deep" ? ddDeep : ddShort;
+    const item = tab === "deep" ? diveItem(s) : shortItem(s);
+    if (!dd.analysis[s.code] && dd.running !== s.code) void dd.rerun(item);
+  };
+
+  const closeAnalyze = () => {
+    ddDeep.stopAll();
+    ddShort.stopAll();
+    setOpenCode(null);
+  };
+
+  const switchTab = (tab: WatchlistAnalyzeTab) => {
+    if (!openCode) return;
+    const s = sortedStocks.find((x) => x.code === openCode);
+    if (!s) return;
+    setAnalyzeTab(tab);
+    const dd = tab === "deep" ? ddDeep : ddShort;
+    const item = tab === "deep" ? diveItem(s) : shortItem(s);
+    if (!dd.analysis[openCode] && dd.running !== openCode) void dd.rerun(item);
+  };
 
   const nameByCode = Object.fromEntries(sortedStocks.map((s) => [s.code, s.name]));
 
@@ -305,7 +361,7 @@ export function FirstBoard() {
     <div>
       <PageHeader
         title="涨停分析"
-        subtitle="当日全部涨停股 · 涨停原因题材 · 首板/连板/题材筛选 · 每只可让 AI 深入分析"
+        subtitle="当日全部涨停股 · 涨停原因题材 · 首板/连板/题材筛选 · 每只可做深度 / 短线分析"
         actions={
           <button
             type="button"
@@ -447,7 +503,7 @@ export function FirstBoard() {
             点击表头排序 · 客观公开榜单，非推荐 / 非预测
           </span>
           <span className="ml-auto font-normal">
-            <RunAllButton dd={dd} items={sortedStocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
+            <RunAllButton dd={ddDeep} items={sortedStocks.map(diveItem)} nameOf={(k) => nameByCode[k] || k} />
           </span>
         </div>
         {!loaded ? (
@@ -484,7 +540,7 @@ export function FirstBoard() {
               </thead>
               <tbody>
                 {sortedStocks.map((s) => {
-                  const diveMeta = parseDiveMeta(dd.analysis[s.code] || "", ztKeywords);
+                  const diveMeta = parseDiveMeta(ddDeep.analysis[s.code] || "", ztKeywords);
                   return (
                   <Fragment key={s.code}>
                     <tr className="border-b border-border/30">
@@ -530,22 +586,69 @@ export function FirstBoard() {
                         {s.industry ? <BlockLabel name={s.industry} /> : "—"}
                       </td>
                       <td className="whitespace-nowrap px-2 py-2 text-right">
-                        <button
-                          onClick={() => dd.toggle(diveItem(s))}
-                          className="inline-flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-                        >
-                          {dd.running === s.code ? <Loader2 className="h-3 w-3 animate-spin" /> : dd.open === s.code ? <X className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-                          {dd.open === s.code ? "收起" : dd.analysis[s.code] ? "展开" : "深入分析"}
-                        </button>
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            title={openCode === s.code && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
+                            aria-label={openCode === s.code && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
+                            onClick={() => {
+                              if (openCode === s.code && analyzeTab === "deep") closeAnalyze();
+                              else ensureAnalyze(s, "deep");
+                            }}
+                            className={cn(
+                              "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+                              openCode === s.code && analyzeTab === "deep"
+                                ? "border-primary bg-primary/15 text-primary"
+                                : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+                            )}
+                          >
+                            {ddDeep.running === s.code && analyzeTab === "deep" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            title={openCode === s.code && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
+                            aria-label={openCode === s.code && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
+                            onClick={() => {
+                              if (openCode === s.code && analyzeTab === "short") closeAnalyze();
+                              else ensureAnalyze(s, "short");
+                            }}
+                            className={cn(
+                              "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+                              openCode === s.code && analyzeTab === "short"
+                                ? "border-secondary bg-secondary/15 text-secondary"
+                                : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
+                            )}
+                          >
+                            {ddShort.running === s.code && analyzeTab === "short" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <TrendingUp className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
-                    {dd.open === s.code && (
-                      <DeepDivePanel
-                        dd={dd}
+                    {openCode === s.code && (
+                      <WatchlistAnalyzePanel
+                        openCode={openCode}
+                        tab={analyzeTab}
+                        onTab={switchTab}
+                        onClose={closeAnalyze}
+                        ddDeep={ddDeep}
+                        ddShort={ddShort}
                         stockKey={s.code}
                         colSpan={12}
-                        noteTitle={`涨停深析 · ${s.name}${s.boards <= 1 ? "" : ` ${s.boards}板`}`}
-                        onRerun={() => dd.rerun(diveItem(s))}
+                        stockName={s.name}
+                        deepMetaMode="zt"
+                        ztKeywords={ztKeywords}
+                        deepNoteTitle={`涨停深析 · ${s.name}${s.boards <= 1 ? "" : ` ${s.boards}板`}`}
+                        shortNoteTitle={`涨停短线 · ${s.name}${s.boards <= 1 ? "" : ` ${s.boards}板`}`}
+                        onRerunDeep={() => void ddDeep.rerun(diveItem(s))}
+                        onRerunShort={() => void ddShort.rerun(shortItem(s))}
                       />
                     )}
                   </Fragment>

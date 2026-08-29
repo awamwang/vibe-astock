@@ -414,7 +414,7 @@ export function Watchlist() {
                       aria-label="全选"
                     />
                   </th>
-                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "", "分析"].map((h, i) => (
+                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", "分析", ""].map((h, i) => (
                     <th key={h || `a${i}`} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -445,6 +445,52 @@ export function Watchlist() {
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pe_ttm ?? "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.pb ?? "—"}</td>
                         <td className="px-2 py-2.5 font-mono text-muted-foreground">{q?.turnover_pct ?? "—"}</td>
+                        <td className="whitespace-nowrap px-2 py-2.5">
+                          <div className="inline-flex flex-wrap items-center gap-1">
+                            <button
+                              type="button"
+                              title={openCode === c && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
+                              aria-label={openCode === c && analyzeTab === "deep" ? "收起深度分析" : "深度分析"}
+                              onClick={() => {
+                                if (openCode === c && analyzeTab === "deep") closeAnalyze();
+                                else ensureAnalyze(c, "deep");
+                              }}
+                              className={cn(
+                                "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+                                openCode === c && analyzeTab === "deep"
+                                  ? "border-primary bg-primary/15 text-primary"
+                                  : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
+                              )}
+                            >
+                              {ddDeep.running === c && analyzeTab === "deep" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              title={openCode === c && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
+                              aria-label={openCode === c && analyzeTab === "short" ? "收起短线分析" : "短线分析"}
+                              onClick={() => {
+                                if (openCode === c && analyzeTab === "short") closeAnalyze();
+                                else ensureAnalyze(c, "short");
+                              }}
+                              className={cn(
+                                "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors",
+                                openCode === c && analyzeTab === "short"
+                                  ? "border-secondary bg-secondary/15 text-secondary"
+                                  : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
+                              )}
+                            >
+                              {ddShort.running === c && analyzeTab === "short" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <TrendingUp className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-2 py-2.5">
                           <button
                             onClick={() => remove(c)}
@@ -453,50 +499,6 @@ export function Watchlist() {
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-2.5 text-right">
-                          <div className="inline-flex flex-wrap items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (openCode === c && analyzeTab === "deep") closeAnalyze();
-                                else ensureAnalyze(c, "deep");
-                              }}
-                              className={cn(
-                                "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
-                                openCode === c && analyzeTab === "deep"
-                                  ? "border-primary bg-primary/15 text-primary"
-                                  : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20",
-                              )}
-                            >
-                              {ddDeep.running === c && analyzeTab === "deep" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Sparkles className="h-3 w-3" />
-                              )}
-                              {openCode === c && analyzeTab === "deep" ? "收起" : ddDeep.analysis[c] ? "深度" : "深度分析"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (openCode === c && analyzeTab === "short") closeAnalyze();
-                                else ensureAnalyze(c, "short");
-                              }}
-                              className={cn(
-                                "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors",
-                                openCode === c && analyzeTab === "short"
-                                  ? "border-secondary bg-secondary/15 text-secondary"
-                                  : "border-secondary/50 bg-secondary/10 text-secondary hover:bg-secondary/20",
-                              )}
-                            >
-                              {ddShort.running === c && analyzeTab === "short" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <TrendingUp className="h-3 w-3" />
-                              )}
-                              {openCode === c && analyzeTab === "short" ? "收起" : ddShort.analysis[c] ? "短线" : "短线分析"}
-                            </button>
-                          </div>
                         </td>
                       </tr>
                       {openCode === c && (
@@ -510,6 +512,8 @@ export function Watchlist() {
                           stockKey={c}
                           colSpan={10}
                           stockName={q?.name || c}
+                          deepNoteTitle={`自选深析 · ${q?.name || c}`}
+                          shortNoteTitle={`自选短线 · ${q?.name || c}`}
                           onRerunDeep={() => void ddDeep.rerun(deepItem(c))}
                           onRerunShort={() => void ddShort.rerun(shortItem(c))}
                         />

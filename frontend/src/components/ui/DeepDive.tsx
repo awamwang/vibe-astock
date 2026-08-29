@@ -424,7 +424,7 @@ interface RunAllProps {
 
 export type WatchlistAnalyzeTab = "deep" | "short";
 
-/** 自选股：深度 / 短线双标签分析面板 */
+/** 深度 / 短线双标签分析面板（自选股、涨停分析共用） */
 interface WatchlistAnalyzePanelProps {
   openCode: string;
   tab: WatchlistAnalyzeTab;
@@ -437,6 +437,12 @@ interface WatchlistAnalyzePanelProps {
   stockName: string;
   onRerunDeep: () => void;
   onRerunShort: () => void;
+  /** 深度分析摘要模式：涨停页用 zt，自选股用 none */
+  deepMetaMode?: "zt" | "none";
+  deepNoteTitle?: string;
+  shortNoteTitle?: string;
+  /** 涨停关键字白名单（deepMetaMode=zt 时传入） */
+  ztKeywords?: string[];
 }
 
 function DivePanelBody({
@@ -446,6 +452,7 @@ function DivePanelBody({
   noteTitle,
   onRerun,
   metaMode,
+  ztKeywords,
 }: {
   dd: DeepDiveState;
   stockKey: string;
@@ -453,9 +460,10 @@ function DivePanelBody({
   noteTitle: string;
   onRerun: () => void;
   metaMode: "zt" | "short" | "none";
+  ztKeywords?: string[];
 }) {
   const text = dd.analysis[stockKey] || "";
-  const ztMeta = metaMode === "zt" ? parseDiveMeta(text) : null;
+  const ztMeta = metaMode === "zt" ? parseDiveMeta(text, ztKeywords) : null;
   const shortMeta = metaMode === "short" ? parseShortDiveMeta(text) : null;
   const body = metaMode === "zt" ? ztMeta!.body : metaMode === "short" ? shortMeta!.body : text;
 
@@ -549,6 +557,10 @@ export function WatchlistAnalyzePanel({
   stockName,
   onRerunDeep,
   onRerunShort,
+  deepMetaMode = "none",
+  deepNoteTitle,
+  shortNoteTitle,
+  ztKeywords,
 }: WatchlistAnalyzePanelProps) {
   const dd = tab === "deep" ? ddDeep : ddShort;
   const isRunning = dd.running === stockKey;
@@ -601,16 +613,17 @@ export function WatchlistAnalyzePanel({
                 dd={ddDeep}
                 stockKey={stockKey}
                 isRunning={isRunning}
-                noteTitle={`自选深析 · ${stockName}`}
+                noteTitle={deepNoteTitle ?? `深析 · ${stockName}`}
                 onRerun={onRerunDeep}
-                metaMode="none"
+                metaMode={deepMetaMode}
+                ztKeywords={ztKeywords}
               />
             ) : (
               <DivePanelBody
                 dd={ddShort}
                 stockKey={stockKey}
                 isRunning={isRunning}
-                noteTitle={`自选短线 · ${stockName}`}
+                noteTitle={shortNoteTitle ?? `短线 · ${stockName}`}
                 onRerun={onRerunShort}
                 metaMode="short"
               />
