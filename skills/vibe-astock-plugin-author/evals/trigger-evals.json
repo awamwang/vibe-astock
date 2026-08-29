@@ -1,0 +1,22 @@
+[
+  {
+    "query": "帮我写一个 vibe-astock HookPack 插件，启用时注册消息源并 push_messages",
+    "should_trigger": true
+  },
+  {
+    "query": "插件里 on_enable 怎么 bind_plugin，WebSocket 推当前股要注意什么",
+    "should_trigger": true
+  },
+  {
+    "query": "python -m duanxian.plugin_cli register 之后改 py 为什么不生效",
+    "should_trigger": true
+  },
+  {
+    "query": "把这张持仓截图解析成 ScreenshotDraft JSON 导入持仓与预算",
+    "should_trigger": false
+  },
+  {
+    "query": "复盘看板情绪指标怎么算晋级率",
+    "should_trigger": false
+  }
+]

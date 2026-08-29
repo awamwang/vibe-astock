@@ -1,0 +1,67 @@
+{
+  "skill_name": "vibe-astock-plugin-author",
+  "created_by": "skill-creator-advanced",
+  "evals": [
+    {
+      "id": 1,
+      "name": "scaffold-minimal-hookpack",
+      "prompt": "帮我写一个 vibe-astock 钩子插件最小骨架，能 CLI 注册，启用时 report_status ok，停用时清理全局引用。",
+      "expected_output": "产出含 PACK=HookPack、on_enable/on_disable、report_status 的插件代码，并给出 plugin_cli register 命令与改代码需重启说明。",
+      "assertions": [
+        {"text": "输出包含 HookPack 与 PACK 赋值", "type": "functional"},
+        {"text": "包含 on_enable 与 report_status 或等价启用上报", "type": "functional"},
+        {"text": "提到 python -m duanxian.plugin_cli register", "type": "functional"}
+      ],
+      "tags": ["smoke"]
+    },
+    {
+      "id": 2,
+      "name": "message-source-push-format",
+      "prompt": "写一个插件：启用时注册消息源 my_news，把外部 RSS 条目转成系统标准格式推送，默认只入 raw，可选 auto_analyze。",
+      "expected_output": "使用 register_message_source 与 push_messages；payload 含 source_id、messages[].content；说明引擎不做厂商解析；提及保留 id 与 bind_plugin 异步约定。",
+      "assertions": [
+        {"text": "调用 register_message_source 与 push_messages", "type": "functional"},
+        {"text": "messages 条目含 content；说明标准格式由系统指定", "type": "functional"},
+        {"text": "说明或使用 auto_analyze 控制 analyzed", "type": "functional"}
+      ],
+      "tags": ["smoke", "disclosure"]
+    },
+    {
+      "id": 3,
+      "name": "ws-read-thread-no-sync-push",
+      "prompt": "插件用 WebSocket 收同花顺焦点股，如何安全地上报 report_current_stock？",
+      "expected_output": "读线程只入队；worker bind_plugin 后再 report_current_stock；引用 concurrency 约定。",
+      "assertions": [
+        {"text": "明确禁止在 WS 读线程同步 report_current_stock", "type": "functional"},
+        {"text": "描述 queue + worker + bind_plugin 流程", "type": "functional"},
+        {
+          "text": "回答依赖 concurrency 约定（入队/worker），而非仅罗列 write-apis 字段表",
+          "type": "disclosure"
+        }
+      ],
+      "tags": ["edge", "disclosure"]
+    },
+    {
+      "id": 4,
+      "name": "not-portfolio-screenshot-parse",
+      "prompt": "这张券商持仓截图帮我解析成可导入的 ScreenshotDraft JSON，不要写插件。",
+      "expected_output": "应导向 portfolio-holding-parse 或不按本技能写 HookPack；不产出无请求的插件脚手架为主答案。",
+      "assertions": [
+        {"text": "不以编写 HookPack 插件为主交付物", "type": "negative"},
+        {"text": "指出应使用持仓截图解析流程或 portfolio-holding-parse", "type": "functional"}
+      ],
+      "tags": ["negative"]
+    },
+    {
+      "id": 5,
+      "name": "reserved-source-id-rejected",
+      "prompt": "我想 register_message_source('cls_telegraph') 覆盖财联社，可以吗？",
+      "expected_output": "拒绝：cls_telegraph 为系统保留；应自选新 source_id 并由插件推送。",
+      "assertions": [
+        {"text": "说明 cls_telegraph 不可由插件注册", "type": "functional"},
+        {"text": "建议使用自定义 source_id 而非覆盖内置 poll 源", "type": "functional"}
+      ],
+      "tags": ["edge", "negative"]
+    }
+  ]
+}
