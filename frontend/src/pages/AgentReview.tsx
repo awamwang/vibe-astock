@@ -15,6 +15,8 @@ import {
 import { BreadthPanel } from "@/components/BreadthPanel";
 import { TrendPanel } from "@/components/TrendPanel";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
+import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { TomorrowVerificationPanel } from "@/pages/popout/AgentReviewPopouts";
 import {
   agentFetch, agentPost, finite, localDate, phaseTone, safeArray,
   type FocusDirection, type Reflection, type ReviewData, type VerificationItem,
@@ -36,19 +38,6 @@ function formatMetricValue(n: number | null | undefined, unit?: string | null): 
   if (unit === "%") return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
   if (!unit) return `${Math.round(v * 100)}%`;
   return `${v}${unit}`;
-}
-
-function statText(v: VerificationItem): string {
-  return formatMetricValue(v.base_value, v.unit);
-}
-
-function epsText(v: VerificationItem): string {
-  const e = finite(v.eps);
-  if (e == null) return "";
-  // 比率与百分数都按"个百分点"说，别写成「超过 0.05」
-  if (!v.unit) return `${Math.round(e * 100)} 个百分点`;
-  if (v.unit === "%") return `${e} 个百分点`;
-  return `${e}${v.unit}`;
 }
 
 function pctText(n: number | null | undefined): string {
@@ -556,6 +545,14 @@ export function AgentReview() {
       <TradeBudgetCard
         b={tradeBudget}
         date={loadedDay || date}
+        actions={
+          <SectionPopupButton
+            compact
+            path="/popout/agent/trade-budget"
+            windowName="va-popout-trade-budget"
+            title="独立窗口打开仓位预算"
+          />
+        }
       />
 
       {/* ② 昨天进去的人今天赚不赚钱 —— 用户说这是全页最有用的一块，所以提到第二位 */}
@@ -657,35 +654,23 @@ export function AgentReview() {
 
             {safeArray<VerificationItem>(focus.verification_items).length > 0 && (
               <div className="mt-5 border-t-2 border-foreground pt-2.5">
-                <h4 className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+                <h4 className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-bold">
                   <CheckSquare className="h-4 w-4 text-info" /> 明日验证条件
                   <span className="text-[11px] font-normal text-muted-foreground">
                     明天用这几个读数检验今晚的判断；结果会出现在下一场复盘的「上期验证结果」里
                   </span>
+                  <SectionPopupButton
+                    compact
+                    className="ml-auto"
+                    path="/popout/agent/verification"
+                    windowName="va-popout-verification"
+                    title="独立窗口打开明日验证条件"
+                  />
                 </h4>
-                <div className="flex flex-wrap gap-2">
-                  {safeArray<VerificationItem>(focus.verification_items).map((v, i) => (
-                    <div key={i} className="flex-1 basis-[240px] rounded-lg border border-border bg-muted/20 px-3 py-2">
-                      <div className="text-[13px] font-semibold">
-                        {v.label || METRIC_LABEL[v.metric] || v.metric}
-                        {}
-                        <span className={cn("ml-1.5 rounded px-1.5 py-0.5 text-[11px] font-bold",
-                          v.direction === "上升" ? "bg-danger/15 text-danger"
-                            : v.direction === "下降" ? "bg-success/15 text-success"
-                            : "bg-muted text-muted-foreground")}>预期{v.direction}</span>
-                      </div>
-                      {/* 今日基准 + 阈值：只写"预期下降"的话，明天从多少降到多少才算降？
-                          没有这两个数，第二天只能凭感觉，而凭感觉怎么变都能自圆其说。 */}
-                      {finite(v.base_value) != null && (
-                        <div className="mt-1 text-[11px] tabular-nums text-foreground/70">
-                          今日 <b className="text-foreground">{statText(v)}</b>
-                          {epsText(v) && <> · 明天变动超过 {epsText(v)} 才算数</>}
-                        </div>
-                      )}
-                      <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{v.reason}</div>
-                    </div>
-                  ))}
-                </div>
+                <TomorrowVerificationPanel
+                  items={safeArray<VerificationItem>(focus.verification_items)}
+                  showHeader={false}
+                />
                 <UserConditions date={loadedDay} />
               </div>
             )}

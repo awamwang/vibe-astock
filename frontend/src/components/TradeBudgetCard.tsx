@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Shield } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -10,13 +11,20 @@ function pct(v?: number | null): string {
 }
 
 /** 复盘看板硬指标区：仓位预算卡（与 AI 五档并列展示，但不进 prompt） */
-export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: string }) {
+export function TradeBudgetCard({
+  b, date, actions,
+}: {
+  b?: TradeBudget | null;
+  date?: string;
+  actions?: ReactNode;
+}) {
   if (!b) {
     return (
       <div className="glass rounded-2xl p-5">
         <div className="mb-1 flex items-center gap-1.5">
           <Shield className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-bold">仓位预算</h3>
+          {actions && <span className="ml-auto flex items-center gap-1">{actions}</span>}
         </div>
         <p className="text-[13px] text-muted-foreground">
           尚未计算。跑完复盘会自动写入，也可在
@@ -38,6 +46,7 @@ export function TradeBudgetCard({ b, date }: { b?: TradeBudget | null; date?: st
         <Caliber text={"硬规则六档驱动总仓/单票上限，与上方 AI「情绪档位」不是同一套词典。\n" +
           "缺关键读数（赚钱效应/晋级/炸板）整日不可用，不给假上限。\n" +
           "修复确认不会自动升档，只给代理提示；需要时在「持仓与预算」手拨。"} />
+        {actions && <span className="ml-auto flex items-center gap-1">{actions}</span>}
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground/70">
         情绪定「最多几成仓」；不算买卖点。

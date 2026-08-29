@@ -13,6 +13,7 @@ import {
   type DetailEditDraft,
 } from "@/components/MessageDetailEdit";
 import { MessageCalendar } from "@/components/MessageCalendar";
+import { MessageStockPipButton, MessageStockPopupButton } from "@/components/MessageStockPip";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
@@ -1380,6 +1381,8 @@ export function MessageAnalysis() {
                 />
               )}
             </label>
+            <MessageStockPipButton defaultEndDays={defaultEndDays} />
+            <MessageStockPopupButton />
             <label
               className={cn(
                 "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",

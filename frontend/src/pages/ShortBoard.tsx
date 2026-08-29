@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { StockLabel } from "@/components/stock/StockLabel";
 import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
+import { SectionPopupButton } from "@/components/SectionPopupButton";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
 const LIVE_MS = 5_000;
@@ -44,7 +45,39 @@ const yiCompact = (v: number | null | undefined) => {
   return `${n.toLocaleString("zh-CN", { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 })}亿`;
 };
 
-type TabKey = "emotion" | "turnover" | "sectors" | "mood" | "rotation";
+export type TabKey = "emotion" | "turnover" | "sectors" | "mood" | "rotation";
+
+export type ShortBoardPopoutSection =
+  | "market"
+  | "emotion"
+  | "tab-emotion"
+  | "tab-turnover"
+  | "tab-sectors"
+  | "tab-mood"
+  | "tab-rotation";
+
+export const SHORT_BOARD_POPOUT_TITLES: Record<ShortBoardPopoutSection, string> = {
+  market: "市场整体",
+  emotion: "短线情绪",
+  "tab-emotion": "昨日短线情绪",
+  "tab-turnover": "全市场成交额 TOP20",
+  "tab-sectors": "板块资金趋势榜",
+  "tab-mood": "板块人气",
+  "tab-rotation": "资金轮动",
+};
+
+export const SHORT_BOARD_TABS: { key: TabKey; label: string }[] = [
+  { key: "emotion", label: "昨日短线情绪" },
+  { key: "turnover", label: "全市场成交额 TOP20" },
+  { key: "sectors", label: "板块资金趋势榜" },
+  { key: "mood", label: "板块人气" },
+  { key: "rotation", label: "资金轮动" },
+];
+
+function tabFromPopout(section?: ShortBoardPopoutSection): TabKey | null {
+  if (!section?.startsWith("tab-")) return null;
+  return section.slice(4) as TabKey;
+}
 
 function SectionHead({
   title, icon, caliber, hint, onRefresh, refreshing, extra,
@@ -241,7 +274,9 @@ function qcjLevelAccent(level?: string | null, prev?: string | null): string | u
   return "text-amber-800 dark:text-amber-300";
 }
 
-export function ShortBoard() {
+export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopoutSection } = {}) {
+  const isPopout = !!popoutSection;
+  const popoutTab = tabFromPopout(popoutSection);
   const [board, setBoard] = useState<ShortBoardSnapshot | null>(null);
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
@@ -250,7 +285,7 @@ export function ShortBoard() {
   const [session, setSession] = useState<MarketSession | null>(null);
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
-  const [tab, setTab] = useState<TabKey>("emotion");
+  const [tab, setTab] = useState<TabKey>(popoutTab ?? "emotion");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
 
@@ -384,20 +419,19 @@ export function ShortBoard() {
   const intFmt = (v: number) => String(Math.round(v));
   const pct1 = (v: number) => v.toFixed(2);
 
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: "emotion", label: "昨日短线情绪" },
-    { key: "turnover", label: "全市场成交额 TOP20" },
-    { key: "sectors", label: "板块资金趋势榜" },
-    { key: "mood", label: "板块人气" },
-    { key: "rotation", label: "资金轮动" },
-  ];
+  const tabs = SHORT_BOARD_TABS;
+  const activeTab = popoutTab ?? tab;
 
   const refreshTab = () => {
-    if (tab === "emotion") loadEmotion();
-    else if (tab === "turnover") loadTurnover();
-    else if (tab === "mood") loadMoodBlocks();
+    if (activeTab === "emotion") loadEmotion();
+    else if (activeTab === "turnover") loadTurnover();
+    else if (activeTab === "mood") loadMoodBlocks();
     else loadSectors();
   };
+
+  const showMarket = !isPopout || popoutSection === "market";
+  const showEmotion = !isPopout || popoutSection === "emotion";
+  const showTabs = !isPopout || !!popoutTab;
 
   const blockNames = useMemo(() => {
     const names: string[] = [];
@@ -419,6 +453,7 @@ export function ShortBoard() {
   return (
     <BlockResolveScope names={blockNames}>
     <div>
+      {!isPopout && (
       <PageHeader
         title="短线盘面"
         subtitle={`${session?.label ?? today} · 市场整体 / 短线情绪 / 资金一屏盯盘`}
@@ -447,8 +482,10 @@ export function ShortBoard() {
           </div>
         }
       />
+      )}
 
       {/* 1. 市场整体：涨跌宽度 + 资金量能 */}
+      {showMarket && (<>
       <SectionHead
         title="市场整体"
         icon={<BarChart3 className="h-4 w-4" />}
@@ -474,6 +511,14 @@ export function ShortBoard() {
         }
         onRefresh={() => { loadBoard(); loadSentiment(); }}
         refreshing={busy.board || busy.sentiment}
+        extra={!isPopout ? (
+          <SectionPopupButton
+            compact
+            path="/popout/short-board/market"
+            windowName="va-popout-sb-market"
+            title="独立窗口打开市场整体"
+          />
+        ) : undefined}
       />
       <GlassCard className="mb-6 !p-3">
         {!board?.available && boardDone ? (
@@ -516,8 +561,10 @@ export function ShortBoard() {
           </div>
         )}
       </GlassCard>
+      </>)}
 
       {/* 2. 短线情绪：情绪全景 + 打板质量 */}
+      {showEmotion && (<>
       <SectionHead
         title="短线情绪"
         icon={<Flame className="h-4 w-4" />}
@@ -550,6 +597,14 @@ export function ShortBoard() {
         }
         onRefresh={() => { loadBoard(); loadLiveEmo(); }}
         refreshing={busy.board || busy.liveEmo}
+        extra={!isPopout ? (
+          <SectionPopupButton
+            compact
+            path="/popout/short-board/emotion"
+            windowName="va-popout-sb-emotion"
+            title="独立窗口打开短线情绪"
+          />
+        ) : undefined}
       />
       <GlassCard className="mb-6 !p-3">
         {!board?.available && boardDone ? (
@@ -632,25 +687,37 @@ export function ShortBoard() {
           </div>
         )}
       </GlassCard>
+      </>)}
 
       {/* 3. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 资金轮动 */}
+      {showTabs && (<>
+      {!isPopout && (
       <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border/50 pb-0">
         {tabs.map((tItem) => (
-          <button
-            key={tItem.key}
-            onClick={() => setTab(tItem.key)}
-            className={cn(
-              "relative px-3 py-2 text-sm transition-colors",
-              tab === tItem.key
-                ? "font-semibold text-primary"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {tItem.label}
-            {tab === tItem.key && (
-              <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary" />
-            )}
-          </button>
+          <div key={tItem.key} className="relative flex items-center gap-0.5">
+            <button
+              onClick={() => setTab(tItem.key)}
+              className={cn(
+                "relative px-3 py-2 text-sm transition-colors",
+                activeTab === tItem.key
+                  ? "font-semibold text-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tItem.label}
+              {activeTab === tItem.key && (
+                <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary" />
+              )}
+            </button>
+            <SectionPopupButton
+              compact
+              path={`/popout/short-board/tab-${tItem.key}`}
+              windowName={`va-popout-sb-tab-${tItem.key}`}
+              title={`独立窗口打开${tItem.label}`}
+              className="mb-0.5"
+              features="popup=yes,width=960,height=720,left=60,top=60,resizable=yes,scrollbars=yes"
+            />
+          </div>
         ))}
         <button
           onClick={refreshTab}
@@ -662,8 +729,22 @@ export function ShortBoard() {
             : <RefreshCw className="h-3.5 w-3.5" />}
         </button>
       </div>
+      )}
+      {isPopout && popoutTab && (
+        <div className="mb-2 flex items-center justify-end">
+          <button
+            onClick={refreshTab}
+            className="text-muted-foreground hover:text-primary"
+            title="刷新"
+          >
+            {(busy.emotion || busy.turnover || busy.sectors || busy.mood)
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <RefreshCw className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      )}
 
-      {tab === "emotion" && (
+      {activeTab === "emotion" && (
         <GlassCard className="mb-6">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <Caliber text={
@@ -754,7 +835,7 @@ export function ShortBoard() {
         </GlassCard>
       )}
 
-      {tab === "turnover" && (
+      {activeTab === "turnover" && (
         <GlassCard className="mb-6">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <BarChart3 className="h-3.5 w-3.5" />
@@ -800,7 +881,7 @@ export function ShortBoard() {
         </GlassCard>
       )}
 
-      {tab === "sectors" && (
+      {activeTab === "sectors" && (
         <GlassCard className="mb-6">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <TrendingUp className="h-3.5 w-3.5" />
@@ -840,7 +921,7 @@ export function ShortBoard() {
         </GlassCard>
       )}
 
-      {tab === "mood" && (
+      {activeTab === "mood" && (
         <GlassCard className="mb-6">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
             <Flame className="h-3.5 w-3.5" />
@@ -901,7 +982,7 @@ export function ShortBoard() {
         </GlassCard>
       )}
 
-      {tab === "rotation" && (
+      {activeTab === "rotation" && (
         <div className="mb-6 grid gap-4 md:grid-cols-2">
           {[
             {
@@ -943,8 +1024,9 @@ export function ShortBoard() {
           ))}
         </div>
       )}
+      </>)}
 
-      <Disclaimer />
+      {!isPopout && <Disclaimer />}
     </div>
     </BlockResolveScope>
   );

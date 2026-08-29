@@ -8,6 +8,9 @@ import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
 import { Watchlist } from "@/pages/Watchlist";
 import { MessageAnalysis } from "@/pages/MessageAnalysis";
+import { MessageStockPopup } from "@/pages/MessageStockPopup";
+import { TradeBudgetPopout, VerificationPopout } from "@/pages/popout/AgentReviewPopouts";
+import { ShortBoardPopout } from "@/pages/popout/ShortBoardPopout";
 import { ThsBlocks } from "@/pages/ThsBlocks";
 import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
@@ -18,6 +21,11 @@ import { PluginManagement } from "@/pages/PluginManagement";
 
 // basename 跟着构建时的 --base 走，这样挂在子路径下内部跳转才不会掉回站点根目录
 export const router = createBrowserRouter([
+  // 独立弹窗页：无侧栏布局，可单独打开或由 window.open 弹出
+  { path: "/messages/pip", element: <MessageStockPopup /> },
+  { path: "/popout/agent/trade-budget", element: <TradeBudgetPopout /> },
+  { path: "/popout/agent/verification", element: <VerificationPopout /> },
+  { path: "/popout/short-board/:section", element: <ShortBoardPopout /> },
   {
     element: <Layout />,
     children: [
