@@ -6,11 +6,9 @@ import { api, ApiError, type AnalyzedMessage } from "@/lib/api";
 import { getDefaultEndDays, IMPACT_LABEL, targetTitle } from "@/lib/messages";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { openSectionPopup, appUrl } from "@/lib/sectionPopup";
-import { stockQueryKey } from "@/lib/stocks";
 import { cn } from "@/lib/utils";
 
 const LIST_LIMIT = 80;
-const REFRESH_MS = 15_000;
 export const MESSAGE_STOCK_POPUP_NAME = "va-message-stock-popup";
 export const MESSAGE_STOCK_POPUP_PATH = "/messages/pip";
 
@@ -109,47 +107,21 @@ function PipTargets({
   );
 }
 
-/** 顶部焦点股：跟随 code 响应式展示名称 */
-function StockCodeHint({
-  code,
-  status,
-  error,
-}: {
-  code: string | null;
-  status: string;
-  error: string | null;
-}) {
-  const [name, setName] = useState("");
-
-  useEffect(() => {
-    if (!code) {
-      setName("");
-      return;
-    }
-    let cancelled = false;
-    api
-      .stocksResolve([{ code }])
-      .then((data) => {
-        if (cancelled) return;
-        const key = stockQueryKey({ code });
-        const item = (key && data.by_key?.[key]) || data.items?.[0];
-        setName(item?.stock?.name?.trim() || item?.name?.trim() || "");
-      })
-      .catch(() => {
-        if (!cancelled) setName("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
-
+/** 顶部焦点股文案（纯展示，无内部异步状态） */
+function formatStockLabel(
+  code: string | null,
+  name: string | undefined,
+  status: string,
+  error: string | null,
+): string {
   if (code) {
-    return <>{name ? `${name}（${code}）` : code}</>;
+    const n = (name || "").trim();
+    return n ? `${n}（${code}）` : code;
   }
-  if (status === "connecting") return <>连接中…</>;
-  if (status === "connected") return <>等待焦点股…</>;
-  if (status === "error") return <>{error || "未连接"}</>;
-  return <>等待插件…</>;
+  if (status === "connecting") return "连接中…";
+  if (status === "connected") return "等待焦点股…";
+  if (status === "error") return error || "未连接";
+  return "等待插件…";
 }
 
 /** 焦点股消息列表（PiP / 独立窗口共用） */
@@ -157,6 +129,7 @@ export function MessageStockLinkPanel({
   items,
   loading,
   code,
+  stockName,
   status,
   error,
   total,
@@ -166,6 +139,7 @@ export function MessageStockLinkPanel({
   items: AnalyzedMessage[];
   loading: boolean;
   code: string | null;
+  stockName?: string;
   status: string;
   error: string | null;
   total: number;
@@ -173,6 +147,7 @@ export function MessageStockLinkPanel({
   title?: string;
 }) {
   const listScrollRef = useRef<HTMLDivElement>(null);
+  const label = formatStockLabel(code, stockName, status, error);
 
   useEffect(() => {
     listScrollRef.current?.scrollTo({ top: 0 });
@@ -184,8 +159,8 @@ export function MessageStockLinkPanel({
         <PictureInPicture2 className="h-3.5 w-3.5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold text-foreground">{title}</p>
-          <p className="truncate text-[11px] text-muted-foreground">
-            <StockCodeHint code={code} status={status} error={error} />
+          <p className="truncate text-[11px] text-muted-foreground" title={label}>
+            {label}
             {total > 0 ? ` · ${total} 条` : ""}
           </p>
         </div>
@@ -212,7 +187,7 @@ export function MessageStockLinkPanel({
           <p className="p-4 text-center text-xs text-muted-foreground">暂无与当前股票相关的消息</p>
         )}
         {code && items.length > 0 && (
-          <ul className="divide-y divide-border/40">
+          <ul key={code} className="divide-y divide-border/40">
             {items.map((item) => (
               <li key={item.id} className="space-y-1.5 px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -246,16 +221,27 @@ export function MessageStockLinkPanel({
   );
 }
 
-/** 订阅焦点股并拉取按股票过滤的消息列表 */
+/**
+ * 订阅焦点股并拉取按股票过滤的消息列表。
+ *
+ * 顶部代码/名称必须与列表过滤同源：match_current_stock 在服务端按 cs.get_current() 过滤，
+ * 并回传 current_stock_code / current_stock_name。若顶部改用客户端 SSE 状态，在代理只推首包
+ * 等情况下会与列表脱节（列表仍按服务端最新股过滤，顶部却停在旧代码）。
+ */
 export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: number) {
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const { code, status, error } = usePluginCurrentStock(enabled);
+  const [code, setCode] = useState<string | null>(null);
+  const [stockName, setStockName] = useState("");
+  const { code: streamCode, status, error } = usePluginCurrentStock(enabled);
   const days = defaultEndDays ?? getDefaultEndDays();
+  const streamCodeRef = useRef<string | null>(null);
+  const fetchSeqRef = useRef(0);
 
   const loadList = useCallback(async () => {
     if (!enabled) return;
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     try {
       const data = await api.messageAnalyzedList({
@@ -266,36 +252,44 @@ export function useMessageStockLinkList(enabled: boolean, defaultEndDays?: numbe
         limit: LIST_LIMIT,
         offset: 0,
       });
+      // 丢弃过期响应，避免旧请求回写把界面打回上一只股票
+      if (seq !== fetchSeqRef.current) return;
       setItems(data.items || []);
       setTotal(data.total || 0);
+      setCode(data.current_stock_code ?? null);
+      setStockName((data.current_stock_name || "").trim());
     } catch (e) {
+      if (seq !== fetchSeqRef.current) return;
       toast.error(e instanceof ApiError ? e.message : "联动消息加载失败", {
         position: "top-center",
         duration: 4000,
       });
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
-  }, [enabled, days, code]);
+  }, [enabled, days]);
 
   useEffect(() => {
     if (!enabled) {
       setItems([]);
       setTotal(0);
+      setCode(null);
+      setStockName("");
+      streamCodeRef.current = null;
       return;
     }
     void loadList();
   }, [enabled, loadList]);
 
+  // 插件推送焦点股变化 → 仅作为刷新触发；展示仍以本次列表响应为准
   useEffect(() => {
-    if (!enabled) return;
-    const timer = window.setInterval(() => {
-      void loadList();
-    }, REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [enabled, loadList]);
+    if (!enabled || !streamCode) return;
+    if (streamCodeRef.current === streamCode) return;
+    streamCodeRef.current = streamCode;
+    void loadList();
+  }, [enabled, streamCode, loadList]);
 
-  return { items, total, loading, code, status, error, reload: loadList };
+  return { items, total, loading, code, stockName, status, error, reload: loadList };
 }
 
 /** Document Picture-in-Picture 联动弹窗（依赖父页） */
@@ -303,7 +297,10 @@ export function MessageStockPipButton({ defaultEndDays }: { defaultEndDays: numb
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
   const pipActive = !!pipWindow;
-  const { items, total, loading, code, status, error } = useMessageStockLinkList(pipActive, defaultEndDays);
+  const { items, total, loading, code, stockName, status, error } = useMessageStockLinkList(
+    pipActive,
+    defaultEndDays,
+  );
   const openingRef = useRef(false);
   const pipWindowRef = useRef<Window | null>(null);
 
@@ -390,9 +387,11 @@ export function MessageStockPipButton({ defaultEndDays }: { defaultEndDays: numb
       {pipWindow && portalEl &&
         createPortal(
           <MessageStockLinkPanel
+            key={code ?? "none"}
             items={items}
             loading={loading}
             code={code}
+            stockName={stockName}
             status={status}
             error={error}
             total={total}

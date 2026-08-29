@@ -7,7 +7,10 @@ import { getDefaultEndDays } from "@/lib/messages";
 export function MessageStockPopup() {
   useDarkMode();
   const defaultEndDays = getDefaultEndDays();
-  const { items, total, loading, code, status, error } = useMessageStockLinkList(true, defaultEndDays);
+  const { items, total, loading, code, stockName, status, error } = useMessageStockLinkList(
+    true,
+    defaultEndDays,
+  );
 
   useEffect(() => {
     document.title = code ? `${code} · 消息联动` : "消息联动";
@@ -15,9 +18,11 @@ export function MessageStockPopup() {
 
   return (
     <MessageStockLinkPanel
+      key={code ?? "none"}
       items={items}
       loading={loading}
       code={code}
+      stockName={stockName}
       status={status}
       error={error}
       total={total}
