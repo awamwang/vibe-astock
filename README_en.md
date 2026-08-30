@@ -204,10 +204,13 @@ out of the engine*.
 
 | Doc | Contents |
 |---|---|
-| [doc/README.md](doc/README.md) | **Documentation index** (domain rules, dev docs, backlog) |
 | [doc/development/architecture.md](doc/development/architecture.md) | Code layout, data flow, in-process locking |
 | [doc/development/hook-lifecycle.md](doc/development/hook-lifecycle.md) | Process load order, event triggers, `emit_after_review` chain |
 | [doc/development/plugin-development.md](doc/development/plugin-development.md) | `HookPack`, `HookRegistry` API, custom verification metrics, CLI |
+| [doc/仓位预算-定档规则.md](doc/仓位预算-定档规则.md) | Emotion tiers, Cap limits, and sizing rules |
+| [doc/消息来源.md](doc/消息来源.md) | Flash news sources (Xuangubao, CLS, etc.) |
+
+Domain and development docs live under `doc/`. The local index `doc/README.md` and internal drafts in `doc/inner/` are gitignored.
 
 Minimal setup:
 
