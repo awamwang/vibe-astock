@@ -525,6 +525,24 @@ export interface GlobalIndex {
   key: string; name: string; region: string;
   price: number | null; change_pct: number | null;
 }
+
+/** 短线盘面全球事件概率条（精简字段） */
+export interface PulseOverviewLite {
+  as_of?: string | null;
+  summary?: string;
+  highlights?: Array<{
+    key: string;
+    topic: string;
+    title: string | null;
+    title_en?: string | null;
+    pick_label?: string | null;
+    prob_yes: number | null;
+    change_24h?: number | null;
+    volume_24h?: number | null;
+    source?: string;
+  }>;
+  updating?: boolean;
+}
 export interface GlobalQuote {
   code: string; name: string;
   price: number | null; open: number | null; high: number | null; low: number | null;
@@ -603,6 +621,9 @@ export const api = {
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
+  /** 全球事件概率总览（Polymarket+Kalshi）；慢，宜单独请求 */
+  pulseOverview: (refresh = false) =>
+    get<PulseOverviewLite>(`/pulse/overview${refresh ? "?refresh=true" : ""}`),
   hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),

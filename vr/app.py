@@ -407,6 +407,36 @@ def global_stock(symbol: str = Query(..., min_length=1, max_length=16)):
         raise HTTPException(502, f"美港股查询异常：{e}") from e
 
 
+@app.get("/api/pulse/overview")
+async def pulse_overview(
+    refresh: bool = Query(False, description="绕过快照，后台重拉 Polymarket + Kalshi"),
+):
+    """事件概率总览：双源合并、按模块分组。正常读快照；refresh 异步重建。
+
+    公开只读数据，作宏观情绪温度计，非交易信号。响应含 highlights / summary 供短线盘面卡片。
+    """
+    try:
+        from pulse.market_pulse import fetch_overview
+
+        return await fetch_overview(force=refresh)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"事件概率总览异常：{e}") from e
+
+
+@app.get("/api/pulse/polymarket/history")
+async def pulse_polymarket_history(
+    token_id: str = Query(..., description="CLOB Yes token id"),
+    interval: str = Query("1w", description="1d / 1w / 1m / max"),
+):
+    """Polymarket 单合约 Yes 概率时间序列（趋势图）。"""
+    try:
+        from pulse.polymarket_signals import fetch_history
+
+        return {"history": await fetch_history(token_id=token_id, interval=interval)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Polymarket 历史异常：{e}") from e
+
+
 @app.get("/api/indices")
 def indices():
     """A股大盘指数实时行情（上证/深证成指/创业板指/沪深300）。仅标准库。"""

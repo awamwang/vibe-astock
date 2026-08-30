@@ -32,6 +32,7 @@ import { StockLabel } from "@/components/stock/StockLabel";
 import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { GlobalPulseCards } from "@/components/GlobalPulseCards";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
 const LIVE_MS = 5_000;
@@ -494,6 +495,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
           "归档只在「日历今天就是这场」且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。\n" +
           "涨跌宽度：情绪温度（衡量整个市场的情绪）、大盘宽度、题材投机、上涨/下跌/平盘家数、活跃度；按日归档作昨日对照。\n" +
           "资金量能：上证 / A 股成交额、主力净流入；缺失字段按可用行情补全。\n" +
+          "全球事件概率：Polymarket + Kalshi 公开价作外围情绪对照（独立请求，慢，骨架占位）；非买卖信号。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }
@@ -560,6 +562,10 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             </EnvGroup>
           </div>
         )}
+        {/* 独立请求：骨架占位，与上方盘面数据解耦 */}
+        <div className="mt-2.5">
+          <GlobalPulseCards />
+        </div>
       </GlassCard>
       </>)}
 
