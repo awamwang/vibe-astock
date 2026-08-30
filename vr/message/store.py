@@ -981,6 +981,21 @@ def upsert_analyzed_from_raw(
     return result
 
 
+_NULLABLE_ANALYZED_API_FIELDS = frozenset({"effective_at", "end_at"})
+
+
+def patch_dict_from_api_model(body: Any) -> dict[str, Any]:
+    """从 API 部分更新 body 构造 store patch。
+
+    只用客户端显式传入的字段（exclude_unset）；effective_at / end_at 允许显式 null 清空。
+    """
+    return {
+        k: v
+        for k, v in body.model_dump(exclude_unset=True).items()
+        if v is not None or k in _NULLABLE_ANALYZED_API_FIELDS
+    }
+
+
 def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[str] = None) -> AnalyzedMessage | None:
     init_db(path)
     db = path or DB_PATH

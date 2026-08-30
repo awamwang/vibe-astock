@@ -1075,6 +1075,65 @@ def test_end_at_update_and_clear(msg_db):
     assert effective_end_at(cleared, default_days=3) == "2026-08-04 10:00:00"
 
 
+def test_partial_api_patch_preserves_effective_and_end(msg_db):
+    """快捷 PATCH 只改 effect_status 时，不得清空未传入的生效/结束时间。"""
+    from pydantic import BaseModel
+
+    class AnalyzedPatchIn(BaseModel):
+        effect_status: str | None = None
+        effective_at: str | None = None
+        end_at: str | None = None
+        impact_level: str | None = None
+
+    d = RawMessageDraft(
+        draft_key="partial1",
+        source_id="manual",
+        source_label="手动",
+        content="部分更新保时间",
+        title="部分更新保时间",
+        produced_at="2026-08-01 10:00:00",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    an = store.upsert_analyzed_from_raw(
+        raw,
+        patch={
+            "effective_mode": "scheduled",
+            "effective_at": "2026-08-05 09:00:00",
+        },
+        path=msg_db,
+    )
+    an = store.update_analyzed(an.id, {"end_at": "2026-08-20 18:00:00"}, path=msg_db)
+    assert an is not None
+    assert an.effective_at == "2026-08-05 09:00:00"
+    assert an.end_at == "2026-08-20 18:00:00"
+
+    body = AnalyzedPatchIn.model_validate({"effect_status": "pending_verify"})
+    # 旧逻辑 model_dump() 会把未传字段变成 None 并误清时间
+    buggy = {
+        k: v
+        for k, v in body.model_dump().items()
+        if v is not None or k in ("effective_at", "end_at")
+    }
+    assert buggy.get("effective_at") is None and buggy.get("end_at") is None
+
+    patch = store.patch_dict_from_api_model(body)
+    assert patch == {"effect_status": "pending_verify"}
+    updated = store.update_analyzed(an.id, {**patch, "analyzed_by": "human"}, path=msg_db)
+    assert updated is not None
+    assert updated.effect_status == "pending_verify"
+    assert updated.effective_mode == "scheduled"
+    assert updated.effective_at == "2026-08-05 09:00:00"
+    assert updated.end_at == "2026-08-20 18:00:00"
+
+    clear_body = AnalyzedPatchIn.model_validate({"end_at": None})
+    clear_patch = store.patch_dict_from_api_model(clear_body)
+    assert clear_patch == {"end_at": None}
+    cleared = store.update_analyzed(an.id, clear_patch, path=msg_db)
+    assert cleared is not None
+    assert cleared.end_at is None
+    assert cleared.effective_at == "2026-08-05 09:00:00"
+
+
 def test_effective_end_at_scheduled(msg_db):
     from vr.message.dates import effective_at_dt, effective_end_at
     from vr.message.schemas import AnalyzedMessage

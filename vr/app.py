@@ -987,11 +987,9 @@ def messages_analyzed_detail(analyzed_id: str):
 
 @app.patch("/api/messages/analyzed/{analyzed_id}")
 def messages_analyzed_patch(analyzed_id: str, body: AnalyzedPatchIn):
-    patch = {
-        k: v
-        for k, v in body.model_dump().items()
-        if v is not None or k in ("effective_at", "end_at")
-    }
+    # exclude_unset：快捷改级别/鲜度/生效情况时只带单字段，避免把未传的
+    # effective_at/end_at 默认 None 当成「显式清空」写进库。
+    patch = msg_layer.store.patch_dict_from_api_model(body)
     patch["analyzed_by"] = "human"
     row = msg_layer.store.update_analyzed(analyzed_id, patch)
     if not row:
