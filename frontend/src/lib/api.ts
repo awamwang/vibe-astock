@@ -296,6 +296,10 @@ export interface AnalyzedMessage {
   produced_at: string;
   targets: ImpactTarget[];
   impact_level: ImpactLevel;
+  /** 进入消息系统时的初始优先级（不受 AI/关注影响） */
+  initial_impact_level?: ImpactLevel;
+  /** 优先级是否被人工指定过 */
+  impact_manual?: boolean;
   freshness: Freshness;
   effect_status: EffectStatus;
   analyzed_at?: string | null;

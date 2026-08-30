@@ -24,6 +24,10 @@ export const IMPACT_EVENT_BG: Record<string, string> = {
   noise: "bg-muted/50 text-muted-foreground/80",
 };
 
+/** 日历「待验证」事件条背景色 */
+export const PENDING_VERIFY_EVENT_BG =
+  "bg-violet-300/75 text-violet-950 dark:bg-violet-400/40 dark:text-violet-100";
+
 export function impactSortKey(level: string): number {
   return IMPACT_ORDER[level] ?? IMPACT_ORDER.medium;
 }

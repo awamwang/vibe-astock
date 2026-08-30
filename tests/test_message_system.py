@@ -661,24 +661,73 @@ def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
         patch={"impact_level": "medium", "summary": "半导体板块走强"},
         path=msg_db,
     )
-    # 新建导入时升档并落库
+    # 新建导入时工作档升档并落库；初始档保持来源先验
     assert an.followed is True
     assert an.impact_level == "high"
+    assert an.initial_impact_level == "medium"
+    assert an.impact_manual is False
     rows, _ = store.list_analyzed(store.ListQuery(source="cls_telegraph"), path=msg_db)
     assert len(rows) == 1
     assert rows[0].followed is True
     assert rows[0].impact_level == "high"
+    assert rows[0].initial_impact_level == "medium"
     assert follow.boost_impact_level("critical") == "critical"
 
-    # 手动降级后保存：读取不再二次升档
+    # 手动降级：工作档与初始档同步，并打上手动标记；读取不再二次升档
     updated = store.update_analyzed(an.id, {"impact_level": "medium"}, path=msg_db)
     assert updated is not None
     assert updated.impact_level == "medium"
+    assert updated.initial_impact_level == "medium"
+    assert updated.impact_manual is True
     assert updated.followed is True
     again = store.get_analyzed(an.id, path=msg_db)
     assert again is not None
     assert again.impact_level == "medium"
+    assert again.initial_impact_level == "medium"
+    assert again.impact_manual is True
     assert again.followed is True
+
+    # AI 改档不得动初始档，且手动标记后不得覆写工作档
+    ai_touch = store.update_analyzed(
+        an.id,
+        {"impact_level": "critical", "analyzed_by": "ai", "summary": "ai"},
+        path=msg_db,
+    )
+    assert ai_touch is not None
+    assert ai_touch.impact_level == "medium"
+    assert ai_touch.initial_impact_level == "medium"
+    assert ai_touch.impact_manual is True
+
+
+
+def test_initial_impact_preserved_from_ai_without_manual(msg_db):
+    """未手动指定时，AI 可改工作档，但不可改初始档。"""
+    d = RawMessageDraft(
+        draft_key="d-init-ai",
+        source_id="manual",
+        source_label="手动",
+        content="常规公告",
+        title="常规公告",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    an = store.upsert_analyzed_from_raw(
+        raw,
+        patch={"impact_level": "low", "summary": "常规公告"},
+        path=msg_db,
+    )
+    assert an.impact_level == "low"
+    assert an.initial_impact_level == "low"
+    assert an.impact_manual is False
+
+    ai_upd = store.update_analyzed(
+        an.id,
+        {"impact_level": "high", "analyzed_by": "ai"},
+        path=msg_db,
+    )
+    assert ai_upd is not None
+    assert ai_upd.impact_level == "high"
+    assert ai_upd.initial_impact_level == "low"
+    assert ai_upd.impact_manual is False
 
 
 def test_cls_fetch_incremental(msg_db, monkeypatch):

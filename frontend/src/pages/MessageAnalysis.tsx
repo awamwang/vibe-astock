@@ -262,10 +262,11 @@ function Badge({
   );
 }
 
-function ImpactBadge({ level }: { level: string }) {
+function ImpactBadge({ level, manual }: { level: string; manual?: boolean }) {
   return (
-    <Badge className={IMPACT_BADGE[level] || IMPACT_BADGE.medium}>
+    <Badge className={IMPACT_BADGE[level] || IMPACT_BADGE.medium} title={manual ? "已手动指定优先级" : undefined}>
       {IMPACT_LABEL[level] || level}
+      {manual ? <span className="ml-1 opacity-80">手</span> : null}
     </Badge>
   );
 }
@@ -1651,7 +1652,7 @@ export function MessageAnalysis() {
                           {item.source_label}
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <ImpactBadge level={item.impact_level} />
+                          <ImpactBadge level={item.impact_level} manual={item.impact_manual} />
                         </td>
                         <td className="px-3 py-3 align-top">
                           <EffectBadge status={item.effect_status} />
@@ -1774,7 +1775,7 @@ export function MessageAnalysis() {
                     <div className="flex flex-wrap items-center gap-1.5">
                       <select
                         aria-label="级别"
-                        title="级别"
+                        title={selected.impact_manual ? "已手动指定；修改将同步初始档与工作档" : "修改将同步初始档与工作档"}
                         disabled={editing || quickPatching}
                         className={cn(quickSelectCls, IMPACT_BADGE[selected.impact_level] || IMPACT_BADGE.medium)}
                         value={selected.impact_level}
@@ -1784,6 +1785,14 @@ export function MessageAnalysis() {
                           <option key={l} value={l}>{IMPACT_LABEL[l]}</option>
                         ))}
                       </select>
+                      {selected.impact_manual ? (
+                        <span className="text-[11px] text-muted-foreground" title="优先级已手动指定">手动</span>
+                      ) : null}
+                      {selected.initial_impact_level && selected.initial_impact_level !== selected.impact_level ? (
+                        <span className="text-[11px] text-muted-foreground" title="进入系统时的初始优先级">
+                          初:{IMPACT_LABEL[selected.initial_impact_level] || selected.initial_impact_level}
+                        </span>
+                      ) : null}
                       <select
                         aria-label="新旧"
                         title="新旧"
@@ -1977,7 +1986,14 @@ export function MessageAnalysis() {
                         : `${endAt(selected, defaultEndDays)}（默认 ${defaultEndDays} 天）`}
                     </dd>
                     <dt className="text-muted-foreground">级别</dt>
-                    <dd className="text-foreground">{IMPACT_LABEL[selected.impact_level]}</dd>
+                    <dd className="text-foreground">
+                      {IMPACT_LABEL[selected.impact_level]}
+                      {selected.impact_manual ? "（手动）" : ""}
+                    </dd>
+                    <dt className="text-muted-foreground">初始级别</dt>
+                    <dd className="text-foreground">
+                      {IMPACT_LABEL[selected.initial_impact_level || selected.impact_level]}
+                    </dd>
                     <dt className="text-muted-foreground">新旧</dt>
                     <dd className="text-foreground">{FRESHNESS_LABEL[selected.freshness]}</dd>
                     <dt className="text-muted-foreground">炒作</dt>

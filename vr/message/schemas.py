@@ -64,6 +64,10 @@ class AnalyzedMessage(BaseModel):
     produced_at: str
     targets: list[ImpactTarget] = Field(default_factory=list)
     impact_level: ImpactLevel = "medium"
+    # 进入消息系统时的初始优先级；不受 AI / 关注词影响，仅手动改档时与 impact_level 同步
+    initial_impact_level: ImpactLevel = "medium"
+    # 优先级是否被人工指定过
+    impact_manual: bool = False
     freshness: Freshness = "new"
     effect_status: EffectStatus = "not_erupted"
     analyzed_at: str | None = None

@@ -251,6 +251,9 @@ def analyze_one(cfg: dict, *, raw_id: str | None = None, analyzed_id: str | None
         raise RuntimeError("模型未返回可解析的 JSON")
 
     patch = _parse_llm_patch(obj, raw=raw, analyzed=analyzed)
+    # 已手动指定优先级时，AI 不再改写工作档（初始档本就不在 AI patch 中）
+    if analyzed.impact_manual:
+        patch.pop("impact_level", None)
     updated = store.update_analyzed(analyzed.id, patch)
     if not updated:
         raise RuntimeError("写入分析结果失败")

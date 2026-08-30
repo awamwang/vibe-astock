@@ -131,6 +131,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             effective_at TEXT,
             produced_at TEXT NOT NULL,
             impact_level TEXT NOT NULL DEFAULT 'medium',
+            initial_impact_level TEXT NOT NULL DEFAULT 'medium',
+            impact_manual INTEGER NOT NULL DEFAULT 0,
             freshness TEXT NOT NULL DEFAULT 'new',
             effect_status TEXT NOT NULL DEFAULT 'not_erupted',
             analyzed_at TEXT,
@@ -205,6 +207,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
     if "end_at" not in cols:
         conn.execute("ALTER TABLE analyzed_message ADD COLUMN end_at TEXT")
+    if "initial_impact_level" not in cols:
+        conn.execute(
+            "ALTER TABLE analyzed_message ADD COLUMN initial_impact_level TEXT NOT NULL DEFAULT 'medium'"
+        )
+        # 存量行：用当前工作档回填初始档（无法还原导入瞬间的来源先验）
+        conn.execute(
+            "UPDATE analyzed_message SET initial_impact_level = impact_level"
+        )
+    if "impact_manual" not in cols:
+        conn.execute(
+            "ALTER TABLE analyzed_message ADD COLUMN impact_manual INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def init_db(path: Optional[str] = None) -> str:
@@ -256,6 +270,16 @@ def _row_analyzed(r: sqlite3.Row, targets: list[ImpactTarget], raw_ids: list[str
         produced_at=r["produced_at"],
         targets=targets,
         impact_level=r["impact_level"] or "medium",
+        initial_impact_level=(
+            r["initial_impact_level"]
+            if "initial_impact_level" in r.keys() and r["initial_impact_level"]
+            else (r["impact_level"] or "medium")
+        ),
+        impact_manual=bool(
+            r["impact_manual"]
+            if "impact_manual" in r.keys() and r["impact_manual"] is not None
+            else 0
+        ),
         freshness=r["freshness"] or "new",
         effect_status=r["effect_status"] or "not_erupted",
         analyzed_at=r["analyzed_at"],
@@ -905,9 +929,10 @@ def upsert_analyzed_from_raw(
                 summary = patch.get("summary") or (raw.title[:120] if raw.title else raw.content[:120])
                 detail = patch.get("detail", raw.content)
                 keywords = patch.get("keywords", raw.keywords)
-                # 仅新建（导入/转换）时按关注词升档并落库；后续手动改等级不再被覆盖
+                # 初始档保留来源先验，不受关注词升档影响；工作档可升档
+                initial_impact = str(patch.get("impact_level", "medium") or "medium")
                 impact_level = initial_impact_with_follow(
-                    patch.get("impact_level", "medium"),
+                    initial_impact,
                     title=title or "",
                     summary=summary or "",
                     detail=detail or "",
@@ -918,8 +943,9 @@ def upsert_analyzed_from_raw(
                     INSERT INTO analyzed_message (
                         id, source_id, source_label, title, keywords_json, url, marks_json,
                         summary, detail, effective_mode, effective_at, produced_at,
-                        impact_level, freshness, effect_status, analyzed_at, analyzed_by, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        impact_level, initial_impact_level, impact_manual,
+                        freshness, effect_status, analyzed_at, analyzed_by, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         aid,
@@ -935,6 +961,8 @@ def upsert_analyzed_from_raw(
                         patch.get("effective_at"),
                         raw.produced_at,
                         impact_level,
+                        initial_impact,
+                        0,
                         patch.get("freshness", "new"),
                         patch.get("effect_status", "not_erupted"),
                         now,
@@ -959,9 +987,15 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
     now = _now()
     with _LOCK:
         with closing(_connect(db)) as conn:
-            r = conn.execute("SELECT id FROM analyzed_message WHERE id = ?", (analyzed_id,)).fetchone()
+            r = conn.execute(
+                "SELECT id, impact_manual FROM analyzed_message WHERE id = ?",
+                (analyzed_id,),
+            ).fetchone()
             if not r:
                 return None
+            already_manual = bool(r["impact_manual"] if "impact_manual" in r.keys() else 0)
+            analyzed_by = str(patch.get("analyzed_by") or "human")
+            is_human = analyzed_by == "human"
             fields: list[str] = []
             args: list[Any] = []
             scalar_map = {
@@ -973,13 +1007,26 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                 "effective_at": "effective_at",
                 "end_at": "end_at",
                 "produced_at": "produced_at",
-                "impact_level": "impact_level",
                 "freshness": "freshness",
                 "effect_status": "effect_status",
                 "status": "status",
                 "source_label": "source_label",
                 "favorited": "favorited",
             }
+            # 人工改档：工作档与初始档同步，并打上手动标记；AI 不得改初始档，
+            # 且若已手动指定则不再覆写工作档
+            if "impact_level" in patch:
+                level = str(patch["impact_level"] or "medium")
+                if is_human:
+                    fields.append("impact_level = ?")
+                    args.append(level)
+                    fields.append("initial_impact_level = ?")
+                    args.append(level)
+                    fields.append("impact_manual = ?")
+                    args.append(1)
+                elif not already_manual:
+                    fields.append("impact_level = ?")
+                    args.append(level)
             for k, col in scalar_map.items():
                 if k in patch:
                     val = patch[k]

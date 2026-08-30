@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Star, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalyzedMessage } from "@/lib/api";
 import {
   IMPACT_EVENT_BG,
   IMPACT_LABEL,
+  PENDING_VERIFY_EVENT_BG,
   compareCalendarDayItems,
   dateKeyFromEffective,
 } from "@/lib/messages";
@@ -89,19 +90,25 @@ function EventChip({
   onSelect: (item: AnalyzedMessage) => void;
   className?: string;
 }) {
+  const pendingVerify = item.effect_status === "pending_verify";
   return (
     <button
       type="button"
       title={`${IMPACT_LABEL[item.impact_level] || item.impact_level} · ${item.title || item.summary}`}
       className={cn(
-        "w-full truncate rounded px-1.5 py-1 text-left text-[11px] font-medium leading-tight transition-opacity hover:opacity-90",
-        IMPACT_EVENT_BG[item.impact_level] || IMPACT_EVENT_BG.medium,
+        "flex w-full items-center gap-0.5 rounded px-1.5 py-1 text-left text-[11px] font-medium leading-tight transition-opacity hover:opacity-90",
+        pendingVerify
+          ? PENDING_VERIFY_EVENT_BG
+          : (IMPACT_EVENT_BG[item.impact_level] || IMPACT_EVENT_BG.medium),
         selected && "ring-2 ring-foreground/40 ring-offset-1",
         className,
       )}
       onClick={() => onSelect(item)}
     >
-      {item.title || item.summary || "—"}
+      {item.favorited && (
+        <Star className="h-3 w-3 shrink-0 fill-amber-500 text-amber-500" aria-label="已收藏" />
+      )}
+      <span className="min-w-0 truncate">{item.title || item.summary || "—"}</span>
     </button>
   );
 }
