@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { request, ApiError } from "@/lib/api";
 
-/** 短线盘面「市场整体」内嵌的全球事件概率条：独立请求，骨架占位，不挡主盘面。 */
+/**
+ * 短线盘面「市场整体」内嵌的全球事件概率条。
+ * - 挂载时只读快照一次；不跟盘面「自动刷新」、也不跟「市场整体」区刷新按钮。
+ * - 仅本组件右上角手动刷新会 refresh=true 并轮询至完成（主页与弹窗同一组件）。
+ */
 
 export interface PulseHighlight {
   key: string;
@@ -101,10 +105,16 @@ export function GlobalPulseCards() {
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const alive = useRef(true);
+  const pollGen = useRef(0);
+  const dataRef = useRef<PulseOverview | null>(null);
+  dataRef.current = data;
 
   useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; };
+    return () => {
+      alive.current = false;
+      pollGen.current += 1; // 取消进行中的手动刷新轮询
+    };
   }, []);
 
   const apply = (res: PulseOverview) => {
@@ -113,13 +123,14 @@ export function GlobalPulseCards() {
     setErr(null);
   };
 
-  const pollUntilFresh = async (prevAsOf: string | null | undefined) => {
+  /** 仅手动 refresh 后轮询，直到 as_of 前进或 updating 结束 */
+  const pollUntilFresh = async (prevAsOf: string | null | undefined, gen: number) => {
     for (let i = 0; i < POLL_MAX; i++) {
       await new Promise((r) => setTimeout(r, POLL_MS));
-      if (!alive.current) return;
+      if (!alive.current || pollGen.current !== gen) return;
       try {
         const fresh = await request<PulseOverview>("/pulse/overview");
-        if (!alive.current) return;
+        if (!alive.current || pollGen.current !== gen) return;
         apply(fresh);
         if (fresh.as_of && fresh.as_of !== prevAsOf && !fresh.updating) return;
         if (fresh.as_of && !fresh.updating) return;
@@ -129,50 +140,55 @@ export function GlobalPulseCards() {
     }
   };
 
-  const load = async (refresh = false) => {
-    if (refresh) setRefreshing(true);
-    else setLoading(true);
-    const prevAsOf = data?.as_of;
+  const loadSnapshotOnce = useCallback(async () => {
+    setLoading(true);
     try {
-      const path = refresh ? "/pulse/overview?refresh=true" : "/pulse/overview";
-      const res = await request<PulseOverview>(path);
+      // 只读快照，绝不带 refresh=true，也不因 updating 自动轮询
+      const res = await request<PulseOverview>("/pulse/overview");
       apply(res);
-      if (res.updating || !res.as_of) {
-        void pollUntilFresh(prevAsOf ?? res.as_of);
-      }
     } catch (e) {
       if (!alive.current) return;
       setErr(e instanceof ApiError ? e.message : "事件概率加载失败");
     } finally {
-      if (alive.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      if (alive.current) setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void load(false);
-    // 仅挂载时拉一次，不跟短线盘面主刷新绑死
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const manualRefresh = useCallback(async () => {
+    const gen = ++pollGen.current;
+    setRefreshing(true);
+    const prevAsOf = dataRef.current?.as_of;
+    try {
+      const res = await request<PulseOverview>("/pulse/overview?refresh=true");
+      if (!alive.current || pollGen.current !== gen) return;
+      apply(res);
+      if (res.updating || !res.as_of) {
+        await pollUntilFresh(prevAsOf ?? res.as_of, gen);
+      }
+    } catch (e) {
+      if (!alive.current || pollGen.current !== gen) return;
+      setErr(e instanceof ApiError ? e.message : "事件概率刷新失败");
+    } finally {
+      if (alive.current && pollGen.current === gen) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSnapshotOnce();
+  }, [loadSnapshotOnce]);
+
   const highlights = data?.highlights ?? [];
-  const showSkeleton = loading && !data?.as_of;
-  const updating = Boolean(data?.updating) || refreshing;
+  const showSkeleton = loading && !data?.as_of && !(data?.highlights?.length);
+  const updating = refreshing;
 
   return (
-    <div
-      className={cn(
-        "rounded-lg border border-sky-500/30 bg-sky-500/[0.06] p-2.5",
-      )}
-    >
+    <div className={cn("rounded-lg border border-sky-500/30 bg-sky-500/[0.06] p-2.5")}>
       <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <span className="text-[11px] font-semibold tracking-wide text-sky-700 dark:text-sky-400">
           全球事件概率
         </span>
         <span className="text-[10px] text-muted-foreground/55">
-          Polymarket + Kalshi · 价格即概率 · 非交易信号
+          Polymarket + Kalshi · 仅手动刷新 · 不跟盘面自动刷新
         </span>
         <span className="ml-auto flex items-center gap-2">
           {data?.as_of && (
@@ -183,9 +199,9 @@ export function GlobalPulseCards() {
           )}
           <button
             type="button"
-            onClick={() => void load(true)}
+            onClick={() => void manualRefresh()}
             className="text-muted-foreground hover:text-primary"
-            title="重新拉取双源（后台重建，不阻塞本页）"
+            title="手动重新拉取双源（不跟短线盘面自动刷新）"
             disabled={refreshing}
           >
             {updating
@@ -202,13 +218,15 @@ export function GlobalPulseCards() {
       {showSkeleton ? (
         <>
           <SkeletonCards />
-          <p className="mt-2 text-[11px] text-muted-foreground/70 animate-pulse">
-            外围概率拉取中（首次可能需数分钟，不影响上方盘面）…
+          <p className="mt-2 text-[11px] text-muted-foreground/70">
+            暂无快照。点右上角手动刷新拉取（首次可能较慢）；不跟盘面自动刷新。
           </p>
         </>
       ) : highlights.length === 0 ? (
         <p className="text-[11px] text-muted-foreground/60">
           {data?.summary || "暂无核心模块数据"}
+          {" · "}
+          点右上角手动刷新；若仍空，多半是本机直连 Polymarket/Kalshi 失败。
         </p>
       ) : (
         <>

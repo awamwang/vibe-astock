@@ -463,8 +463,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             <button
               onClick={toggleAuto}
               title={autoRefresh
-                ? `已开：市场整体与短线情绪每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
-                : "开启后在交易时段自动刷新"}
+                ? `已开：市场整体与短线情绪每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒（不含全球事件概率）。只在盘中生效`
+                : "开启后在交易时段自动刷新（全球事件概率仍仅手动刷新）"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors",
                 autoRefresh
@@ -495,7 +495,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
           "归档只在「日历今天就是这场」且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。\n" +
           "涨跌宽度：情绪温度（衡量整个市场的情绪）、大盘宽度、题材投机、上涨/下跌/平盘家数、活跃度；按日归档作昨日对照。\n" +
           "资金量能：上证 / A 股成交额、主力净流入；缺失字段按可用行情补全。\n" +
-          "全球事件概率：Polymarket + Kalshi 公开价作外围情绪对照（独立请求，慢，骨架占位）；非买卖信号。\n" +
+          "全球事件概率：Polymarket + Kalshi 公开价作外围情绪对照；仅本区块手动刷新，不跟盘面自动刷新 / 市场整体刷新按钮；主页与弹窗相同。非买卖信号。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。\n" +
           "「量能对比昨日」「量能5日，量比」暂未接入，仅占位。"
         }

@@ -164,11 +164,22 @@ async def _build() -> dict[str, Any]:
     merged = pm + ks
     if not merged:
         prev = _load_snapshot()
-        if prev:
+        if prev and (prev.get("modules") or prev.get("highlights")):
             logger.warning("pulse rebuild empty; keeping previous snapshot")
             return prev
+        logger.warning("pulse rebuild empty and no usable snapshot")
+        return _empty_updating()
+
     await _translate(merged)
     modules = _group_by_module(merged)
+    # 有拉到行但分类后为空（极端），同样不覆盖好快照
+    if not modules:
+        prev = _load_snapshot()
+        if prev and (prev.get("modules") or prev.get("highlights")):
+            logger.warning("pulse modules empty after classify; keeping previous snapshot")
+            return prev
+        return _empty_updating()
+
     highlights = _pick_highlights(modules)
     overview = {
         "as_of": datetime.now().isoformat(timespec="seconds"),
