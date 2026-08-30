@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=white" alt="React">
   <img src="https://img.shields.io/badge/tests-341%20passing-brightgreen.svg" alt="Tests">
-  <img src="https://img.shields.io/badge/version-v0.1.1-orange.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.1.3-orange.svg" alt="Version">
 </p>
 
 <p align="center">
