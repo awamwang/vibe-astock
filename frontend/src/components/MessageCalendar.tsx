@@ -6,9 +6,8 @@ import type { AnalyzedMessage } from "@/lib/api";
 import {
   IMPACT_EVENT_BG,
   IMPACT_LABEL,
+  compareCalendarDayItems,
   dateKeyFromEffective,
-  effectiveAt,
-  impactSortKey,
 } from "@/lib/messages";
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -55,12 +54,7 @@ function buildMonthGrid(year: number, month: number, items: AnalyzedMessage[]): 
     else byDay.set(key, [item]);
   }
   for (const list of byDay.values()) {
-    list.sort((a, b) => {
-      const ia = impactSortKey(a.impact_level);
-      const ib = impactSortKey(b.impact_level);
-      if (ia !== ib) return ia - ib;
-      return effectiveAt(b).localeCompare(effectiveAt(a));
-    });
+    list.sort(compareCalendarDayItems);
   }
 
   const first = new Date(year, month, 1);

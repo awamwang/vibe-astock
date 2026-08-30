@@ -28,6 +28,43 @@ export function impactSortKey(level: string): number {
   return IMPACT_ORDER[level] ?? IMPACT_ORDER.medium;
 }
 
+/** 日历日内优先档：收藏、待验证高于其他 */
+export function calendarDayPriority(item: {
+  favorited?: boolean;
+  effect_status?: string;
+}): number {
+  if (item.favorited || item.effect_status === "pending_verify") return 0;
+  return 1;
+}
+
+/** 日历同一天内排序：优先档 → 重要程度 → 生效时间新到旧 */
+export function compareCalendarDayItems(
+  a: {
+    favorited?: boolean;
+    effect_status?: string;
+    impact_level: string;
+    effective_mode?: string;
+    effective_at?: string | null;
+    produced_at: string;
+  },
+  b: {
+    favorited?: boolean;
+    effect_status?: string;
+    impact_level: string;
+    effective_mode?: string;
+    effective_at?: string | null;
+    produced_at: string;
+  },
+): number {
+  const pa = calendarDayPriority(a);
+  const pb = calendarDayPriority(b);
+  if (pa !== pb) return pa - pb;
+  const ia = impactSortKey(a.impact_level);
+  const ib = impactSortKey(b.impact_level);
+  if (ia !== ib) return ia - ib;
+  return effectiveAt(b).localeCompare(effectiveAt(a));
+}
+
 export const DEFAULT_END_DAYS = 5;
 const DEFAULT_END_DAYS_KEY = "va-message-default-end-days";
 
