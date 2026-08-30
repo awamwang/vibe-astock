@@ -29,4 +29,5 @@
 
 1. 注册命令与插件路径  
 2. 改源码后重启 `server.py` / `main.py`  
-3. 插件管理页可看 `report_status` 与加载错误
+3. 插件管理页可看 `report_status` 与加载错误  
+4. 引擎会在 `error` / 未加载时按指数退避自动热重启（见 hook-lifecycle「自动检测与重启」）

@@ -59,6 +59,17 @@ sequenceDiagram
 
 修改插件代码或注册表路径后需 **重启 server**（或重新跑 `main.py`）。
 
+### 自动检测与重启
+
+进程内 `plugin_supervisor` 守护线程会轮询已启用插件：
+
+- **触发**：运行状态 `level=error`，或启用却未加载（如启动 import 失败）。
+- **动作**：`apply_plugin_restart`（`on_disable` → 卸载模块 → 再加载 / `on_enable`），不改注册表 enabled。
+- **退避**：默认 5s 起指数增长（2^n），上限 300s；状态文案会附带「Ns 后自动重启」。
+- **关闭**：`VIBE_PLUGIN_SUPERVISOR=0`。可调 `VIBE_PLUGIN_RETRY_BASE_SEC` / `VIBE_PLUGIN_RETRY_MAX_SEC` / `VIBE_PLUGIN_SUPERVISOR_POLL_SEC`。
+
+`warn` 不触发引擎重启（留给插件自行恢复）；恢复到 `ok`/`info`/`warn` 后清零退避计数。
+
 ---
 
 ## 事件生命周期

@@ -789,7 +789,9 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
                 detail = None if isinstance(exc, RuntimeError) else tb
                 ps.set_status(lp.id, "error", msg, detail)
             else:
-                if ps.get_status(lp.id) is None:
+                st = ps.get_status(lp.id)
+                # 插件未上报，或仍是引擎占位/旧错误时，标为已加载
+                if st is None or st.level in ("error", "off") or st.message == "正在自动重启…":
                     ps.set_status(lp.id, "ok", "已加载")
         else:
             ps.set_status(lp.id, "ok", "已加载")
@@ -871,9 +873,36 @@ def apply_plugin_enable(plugin_id: str) -> LoadedPlugin | None:
     return lp
 
 
-def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
-    from . import plugin_status as ps
+def apply_plugin_restart(plugin_id: str) -> LoadedPlugin | None:
+    """热重启已启用插件：停止运行时 → 卸载模块 → 重新加载并 on_enable。
 
+    不改注册表 enabled；用于监督线程在报错后自动恢复。
+    """
+    from . import message_sources as ms
+    from . import plugin_status as ps
+    from . import plugin_store as pstore
+
+    _plugins_init_done.wait(timeout=120.0)
+
+    rec = next((r for r in pstore.list_plugins() if r.id == plugin_id), None)
+    if rec is None or not rec.enabled:
+        return None
+
+    lp = _find_loaded_plugin(PLUGINS, plugin_id)
+    if lp is not None:
+        ms.unregister_plugin(lp.id)
+        _safe_call(lp.pack.on_disable, lp)
+        PLUGINS[:] = [p for p in PLUGINS if p.id != plugin_id]
+        RUNNER.plugins[:] = [p for p in RUNNER.plugins if p.id != plugin_id]
+        _rebuild_metric_providers(PLUGINS)
+        _unload_module(plugin_id)
+
+    ps.set_status(plugin_id, "info", "正在自动重启…")
+    print(f"ℹ️ 正在自动重启插件（id={plugin_id}）")
+    return apply_plugin_enable(plugin_id)
+
+
+def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
     plugins = load_plugins()
     registry = HookRegistry()
     for lp in plugins:
@@ -900,6 +929,12 @@ def _init_plugins_background() -> None:
         traceback.print_exc()
     finally:
         _plugins_init_done.set()
+        try:
+            from . import plugin_supervisor as psup
+
+            psup.ensure_started()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
 
 
 threading.Thread(target=_init_plugins_background, name="hook-plugins-init", daemon=True).start()

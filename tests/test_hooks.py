@@ -437,13 +437,12 @@ PACK = HookPack(
     def test_apply_enable_disable(self, plugin_home):
         import sys
 
+        from duanxian import hooks
         from duanxian import plugin_store as ps
         from duanxian.hooks import (
             _module_name,
             apply_plugin_disable,
             apply_plugin_enable,
-            PLUGINS,
-            RUNNER,
         )
 
         p = plugin_home / "lifecycle.py"
@@ -453,12 +452,12 @@ PACK = HookPack(
         assert apply_plugin_enable(rec.id) is not None
         mod_obj = sys.modules[_module_name(rec.id)]
         assert mod_obj._STATE["active"] is True
-        assert rec.id in {lp.id for lp in PLUGINS}
-        assert rec.id in {lp.id for lp in RUNNER.plugins}
+        assert rec.id in {lp.id for lp in hooks.PLUGINS}
+        assert rec.id in {lp.id for lp in hooks.RUNNER.plugins}
 
         assert apply_plugin_disable(rec.id) is True
         assert mod_obj._STATE["active"] is False
-        assert rec.id not in {lp.id for lp in PLUGINS}
+        assert rec.id not in {lp.id for lp in hooks.PLUGINS}
 
     def test_on_register_fallback_for_enable(self, plugin_home):
         from duanxian import plugin_store as ps
@@ -508,9 +507,163 @@ PACK = HookPack(
         assert st.message == "无法连接 ths-linker：请先启动服务"
         assert st.detail is None
 
+    def test_apply_plugin_restart_reloads_module(self, plugin_home):
+        import sys
+
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import (
+            _module_name,
+            apply_plugin_enable,
+            apply_plugin_restart,
+            PLUGINS,
+        )
+
+        p = plugin_home / "restart_me.py"
+        p.write_text(self._LIFECYCLE_SRC, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+        mod1 = sys.modules[_module_name(rec.id)]
+        assert mod1._STATE["active"] is True
+
+        lp = apply_plugin_restart(rec.id)
+        assert lp is not None
+        assert rec.id in {x.id for x in PLUGINS}
+        mod2 = sys.modules[_module_name(rec.id)]
+        assert mod2._STATE["active"] is True
+        assert mod1 is not mod2
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "ok"
+
 
 @pytest.mark.unit
-class TestMessageSourcePush:
+class TestPluginSupervisor:
+    @pytest.fixture(autouse=True)
+    def _isolate_supervisor(self, monkeypatch):
+        from duanxian import plugin_supervisor as psup
+
+        # 关闭守护轮询，仅手动调用 _tick，避免与用例竞态
+        monkeypatch.setenv("VIBE_PLUGIN_SUPERVISOR", "0")
+        psup.reset_state_for_tests()
+        yield
+        psup.reset_state_for_tests()
+
+    def test_backoff_delay_grows_exponentially(self):
+        from duanxian.plugin_supervisor import _backoff_delay
+
+        assert _backoff_delay(0, 5.0, 300.0) == 5.0
+        assert _backoff_delay(1, 5.0, 300.0) == 10.0
+        assert _backoff_delay(2, 5.0, 300.0) == 20.0
+        assert _backoff_delay(10, 5.0, 300.0) == 300.0
+
+    def test_tick_restarts_error_plugin_after_backoff(self, plugin_home, monkeypatch):
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian import plugin_supervisor as psup
+        from duanxian.hooks import apply_plugin_enable, PLUGINS
+
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_BASE_SEC", "1")
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_MAX_SEC", "8")
+
+        counter = plugin_home / "flaky_count.txt"
+        counter.write_text("0", encoding="utf-8")
+        counter_s = str(counter).replace("\\", "/")
+        src = f'''
+from pathlib import Path
+from duanxian.hooks import HookPack, HookRegistry
+
+_COUNTER = Path("{counter_s}")
+
+def on_enable(reg: HookRegistry) -> None:
+    n = int(_COUNTER.read_text(encoding="utf-8") or "0") + 1
+    _COUNTER.write_text(str(n), encoding="utf-8")
+    if n <= 1:
+        raise RuntimeError("暂时不可用")
+    reg.report_status("ok", "已恢复")
+
+def on_disable() -> None:
+    pass
+
+PACK = HookPack(
+    name="flaky",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+    on_disable=on_disable,
+)
+'''
+        p = plugin_home / "flaky.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+        st = pstat.get_status(rec.id)
+        assert st is not None and st.level == "error"
+        assert counter.read_text(encoding="utf-8") == "1"
+
+        # 首次发现：只登记，等 base 秒后再重启
+        t0 = 1000.0
+        psup._tick(now=t0)
+        with psup._lock:
+            state = psup._states[rec.id]
+            assert state.attempt == 0
+            assert state.next_at == t0 + 1.0
+
+        # 到期：执行重启，第二次 on_enable 成功
+        psup._tick(now=t0 + 1.0)
+        assert rec.id in {x.id for x in PLUGINS}
+        assert counter.read_text(encoding="utf-8") == "2"
+        st2 = pstat.get_status(rec.id)
+        assert st2 is not None
+        assert st2.level == "ok"
+        assert "已恢复" in st2.message
+        with psup._lock:
+            assert rec.id not in psup._states
+
+    def test_tick_increases_backoff_when_still_error(self, plugin_home, monkeypatch):
+        import time
+
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian import plugin_supervisor as psup
+        from duanxian.hooks import apply_plugin_enable
+
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_BASE_SEC", "2")
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_MAX_SEC", "100")
+
+        src = '''
+from duanxian.hooks import HookPack, HookRegistry
+
+def on_enable(reg: HookRegistry) -> None:
+    raise RuntimeError("持续失败")
+
+PACK = HookPack(
+    name="always-fail",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+)
+'''
+        p = plugin_home / "always_fail.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+
+        t0 = 2000.0
+        psup._tick(now=t0)
+        before = time.monotonic()
+        psup._tick(now=t0 + 2.0)
+        with psup._lock:
+            state = psup._states[rec.id]
+            assert state.attempt == 1
+            # 重启后下次间隔 2 * 2^1 = 4s（相对真实 monotonic）
+            assert state.next_at >= before + 4.0 - 0.5
+            assert state.next_at <= time.monotonic() + 4.0 + 0.5
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "error"
+        assert "后自动重启" in st.message
+
     @pytest.fixture(autouse=True)
     def _clean_sources(self):
         from duanxian import message_sources as ms

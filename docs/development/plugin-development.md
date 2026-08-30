@@ -581,8 +581,8 @@ python -m duanxian.plugin_cli list
 |---|---|
 | `ok` | 正常运行 |
 | `info` | 一般提示（如等待外部服务） |
-| `warn` | 可恢复异常（如同步失败但仍在重试） |
-| `error` | 严重错误（需人工介入） |
+| `warn` | 可恢复异常（如同步失败但仍在重试）；**不**触发引擎自动重启 |
+| `error` | 严重错误；引擎监督线程会按指数退避 **自动热重启**（见 [hook-lifecycle.md](./hook-lifecycle.md#自动检测与重启)） |
 | `off` | 停用（引擎对停用插件自动合成，插件无需上报） |
 
 **`runtime_status` 结构**：
