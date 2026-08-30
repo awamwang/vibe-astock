@@ -332,11 +332,11 @@ def test_list_analyzed_match_current_stock_via_content(msg_db, monkeypatch):
     )
     monkeypatch.setattr(
         "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
-        lambda conn, code: set(),
+        lambda conn, code: {},
     )
     monkeypatch.setattr(
         "ths_block.match.analyzed_ids_with_stock_in_block_targets",
-        lambda conn, code: set(),
+        lambda conn, code: {},
     )
 
     matched, matched_total = store.list_analyzed(
@@ -406,7 +406,7 @@ def test_list_analyzed_match_current_stock_sort_priority(msg_db, monkeypatch):
     )
 
     def _ids_with_stock(conn, code):
-        return {block_msg.id} if code == "600519" else set()
+        return {block_msg.id: 50} if code == "600519" else {}
 
     monkeypatch.setattr(
         "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
@@ -464,7 +464,7 @@ def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
         ),
     )
     def _ids_with_stock(conn, code):
-        return {an.id} if code == "600519" else set()
+        return {an.id: 30} if code == "600519" else {}
 
     def _name_has_stock(name, code):
         return name == "华为概念" and code == "600519"
@@ -481,6 +481,14 @@ def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
     monkeypatch.setattr("vr.ths_block.match.target_name_contains_stock", _name_has_stock)
     monkeypatch.setattr("ths_block.match.target_name_contains_stock", _name_has_stock)
     monkeypatch.setattr(
+        "vr.ths_block.match.block_name_stock_count",
+        lambda name: 30 if name == "华为概念" else 10**9,
+    )
+    monkeypatch.setattr(
+        "ths_block.match.block_name_stock_count",
+        lambda name: 30 if name == "华为概念" else 10**9,
+    )
+    monkeypatch.setattr(
         "vr.message.current_stock_match.resolve_stock_name",
         lambda code: "",
     )
@@ -492,6 +500,112 @@ def test_list_analyzed_match_current_stock_via_block(msg_db, monkeypatch):
     assert matched_total == 1
     assert matched[0].title == "华为产业链利好"
     assert matched[0].matched_current_stock_blocks == ["华为概念"]
+
+
+def test_list_analyzed_match_current_stock_block_size_order(msg_db, monkeypatch):
+    """仅板块命中时：按命中板块成分股从少到多；不影响标的→内容→板块大顺序。"""
+    from duanxian import current_stock as cs
+
+    def _make(title: str, *, produced_at: str, targets):
+        d = RawMessageDraft(
+            draft_key=f"blk-size-{title}",
+            source_id="manual",
+            source_label="手动",
+            content=title,
+            title=title,
+            produced_at=produced_at,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        return store.upsert_analyzed_from_raw(
+            raw,
+            patch={
+                "targets": targets,
+                "produced_at": produced_at,
+            },
+            path=msg_db,
+        )
+
+    # produced_at：大板块更新 → 若仅按时间则会排在前；期望按成分股少→多
+    large = _make(
+        "大板块",
+        produced_at="2026-08-27 12:00:00",
+        targets=[{"kind": "sector", "name": "白酒"}],
+    )
+    small = _make(
+        "小板块",
+        produced_at="2026-08-27 11:00:00",
+        targets=[{"kind": "sector", "name": "茅台概念"}],
+    )
+    multi = _make(
+        "多板块",
+        produced_at="2026-08-27 10:30:00",
+        targets=[
+            {"kind": "sector", "name": "白酒"},
+            {"kind": "sector", "name": "茅台概念"},
+        ],
+    )
+    target_hit = _make(
+        "标的命中",
+        produced_at="2026-08-27 09:00:00",
+        targets=[{"kind": "stock", "code": "600519", "name": "贵州茅台"}],
+    )
+
+    counts = {"茅台概念": 12, "白酒": 80}
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="600519",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-08-27 10:00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "",
+    )
+
+    def _ids_with_stock(conn, code):
+        if code != "600519":
+            return {}
+        return {
+            large.id: counts["白酒"],
+            small.id: counts["茅台概念"],
+            # 多板块取最少者
+            multi.id: counts["茅台概念"],
+        }
+
+    def _name_has_stock(name, code):
+        return code == "600519" and name in counts
+
+    def _stock_count(name):
+        return counts.get(name, 10**9)
+
+    monkeypatch.setattr(
+        "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        _ids_with_stock,
+    )
+    monkeypatch.setattr(
+        "ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        _ids_with_stock,
+    )
+    monkeypatch.setattr("vr.ths_block.match.target_name_contains_stock", _name_has_stock)
+    monkeypatch.setattr("ths_block.match.target_name_contains_stock", _name_has_stock)
+    monkeypatch.setattr("vr.ths_block.match.block_name_stock_count", _stock_count)
+    monkeypatch.setattr("ths_block.match.block_name_stock_count", _stock_count)
+
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes", sort="produced_at", order="desc"),
+        path=msg_db,
+    )
+    assert matched_total == 4
+    # 大顺序：标的优先；板块层内：少→多（多板块与小板块同为 12，再按 produced_at desc）
+    assert [m.title for m in matched] == ["标的命中", "小板块", "多板块", "大板块"]
+    multi_msg = next(m for m in matched if m.title == "多板块")
+    assert multi_msg.matched_current_stock_blocks == ["茅台概念", "白酒"]
 
 
 def test_dedup_external_ref(msg_db):

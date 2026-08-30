@@ -727,6 +727,28 @@ def _stock_match_priority_order(
     return f"CASE {' '.join(whens)} ELSE 3 END ASC", args
 
 
+def _stock_match_block_size_order(
+    buckets: CurrentStockMatchIds | None,
+) -> tuple[str, list[Any]]:
+    """仅板块命中层内：按命中板块成分股数从少到多（不影响标的/内容大顺序）。"""
+    if buckets is None or not buckets.block_min_stock_count:
+        return "", []
+    block_only = buckets.block - buckets.target - buckets.content
+    if not block_only:
+        return "", []
+    counts = {
+        aid: n for aid, n in buckets.block_min_stock_count if aid in block_only
+    }
+    if not counts:
+        return "", []
+    whens: list[str] = []
+    args: list[Any] = []
+    for aid, n in sorted(counts.items(), key=lambda x: (x[1], x[0])):
+        whens.append("WHEN analyzed_message.id = ? THEN ?")
+        args.extend([aid, int(n)])
+    return f"CASE {' '.join(whens)} ELSE 1000000000 END ASC", args
+
+
 def _build_analyzed_where(
     q: ListQuery,
     *,
@@ -837,9 +859,17 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     sort_col = sort_map.get(q.sort, "produced_at")
     order = "ASC" if q.order == "asc" else "DESC"
     priority_sql, priority_args = _stock_match_priority_order(stock_match_buckets)
-    order_by = (
-        f"{priority_sql}, {sort_col} {order}" if priority_sql else f"{sort_col} {order}"
-    )
+    block_size_sql, block_size_args = _stock_match_block_size_order(stock_match_buckets)
+    order_parts: list[str] = []
+    order_args: list[Any] = []
+    if priority_sql:
+        order_parts.append(priority_sql)
+        order_args.extend(priority_args)
+    if block_size_sql:
+        order_parts.append(block_size_sql)
+        order_args.extend(block_size_args)
+    order_parts.append(f"{sort_col} {order}")
+    order_by = ", ".join(order_parts)
     cap = 1000 if q.from_dt and q.to_dt else 200
     limit = max(1, min(q.limit, cap))
     offset = max(0, q.offset)
@@ -853,7 +883,7 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
                 SELECT * FROM analyzed_message WHERE {where}
                 ORDER BY {order_by} LIMIT ? OFFSET ?
                 """,
-                [*args, *priority_args, limit, offset],
+                [*args, *order_args, limit, offset],
             ).fetchall()
             follow_kws = load_keywords()
             follow_blocks = load_blocks()

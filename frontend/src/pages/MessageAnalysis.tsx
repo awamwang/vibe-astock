@@ -319,7 +319,7 @@ function MessageKeywords({ item }: { item: AnalyzedMessage }) {
   );
 }
 
-/** 展示排序：已解析板块 → 已解析个股 → 未解析 */
+/** 展示排序：已解析板块 → 已解析个股 → 未解析；股票联动命中板块按成分股从少到多（stockHitBlockNames 顺序） */
 function messageTargetSortTier(
   t: ImpactTarget,
   stockGet: (q: { code?: string | null; name?: string }) => StockResolveItem | undefined,
@@ -332,17 +332,36 @@ function messageTargetSortTier(
   return 2;
 }
 
+function normTargetName(name: string | null | undefined): string {
+  return (name || "").replace(/\s+/g, "").trim();
+}
+
 function sortMessageTargets(
   targets: AnalyzedMessage["targets"],
   stockGet?: (q: { code?: string | null; name?: string }) => StockResolveItem | undefined,
   blockGet?: (name: string) => BlockResolveItem | undefined,
+  stockHitBlockNames?: string[],
 ) {
   const getStock = stockGet ?? (() => undefined);
   const getBlock = blockGet ?? (() => undefined);
-  return [...targets].sort((a, b) => messageTargetSortTier(a, getStock, getBlock) - messageTargetSortTier(b, getStock, getBlock));
+  const hitOrder = new Map(
+    (stockHitBlockNames ?? []).map((n, i) => [normTargetName(n), i]),
+  );
+  return [...targets].sort((a, b) => {
+    const tierDiff =
+      messageTargetSortTier(a, getStock, getBlock) - messageTargetSortTier(b, getStock, getBlock);
+    if (tierDiff !== 0) return tierDiff;
+    if (hitOrder.size === 0) return 0;
+    const aHit = hitOrder.get(normTargetName(a.name));
+    const bHit = hitOrder.get(normTargetName(b.name));
+    if (aHit !== undefined && bHit !== undefined) return aHit - bHit;
+    if (aHit !== undefined) return -1;
+    if (bHit !== undefined) return 1;
+    return 0;
+  });
 }
 
-function useSortMessageTargets() {
+function useSortMessageTargets(stockHitBlockNames?: string[]) {
   const stockCtx = useStockResolveOptional();
   const blockCtx = useBlockResolveOptional();
   return useCallback(
@@ -350,8 +369,9 @@ function useSortMessageTargets() {
       targets,
       stockCtx ? (q) => stockCtx.get(q) : undefined,
       blockCtx ? (n) => blockCtx.get(n) : undefined,
+      stockHitBlockNames,
     ),
-    [stockCtx, blockCtx],
+    [stockCtx, blockCtx, stockHitBlockNames],
   );
 }
 
@@ -440,7 +460,7 @@ function MessageTargets({
   max?: number;
   stockHitBlockNames?: string[];
 }) {
-  const sortTargets = useSortMessageTargets();
+  const sortTargets = useSortMessageTargets(stockHitBlockNames);
   if (!item.targets.length) return <span className="text-muted-foreground">—</span>;
   const targets = sortTargets(item.targets);
   return (
@@ -459,7 +479,7 @@ function MessageDetailTargets({
   targets: AnalyzedMessage["targets"];
   stockHitBlockNames?: string[];
 }) {
-  const sortTargets = useSortMessageTargets();
+  const sortTargets = useSortMessageTargets(stockHitBlockNames);
   return (
     <div className="flex flex-wrap gap-2">
       {sortTargets(targets).map((t, i) => (
@@ -1365,7 +1385,7 @@ export function MessageAnalysis() {
                   ? "border-primary/50 bg-primary/10 text-primary"
                   : "border-border bg-background text-muted-foreground hover:text-foreground",
               )}
-              title="勾选后仅显示与插件上报焦点股相关的消息（标的含该股、摘要/内容含股票名、或板块成分含该股）；排序优先标的→内容→板块；需启用 vibe-ths-linker"
+              title="勾选后仅显示与插件上报焦点股相关的消息（标的含该股、摘要/内容含股票名、或板块成分含该股）；排序优先标的→内容→板块，板块层内按成分股从少到多；需启用 vibe-ths-linker"
             >
               <input
                 type="checkbox"

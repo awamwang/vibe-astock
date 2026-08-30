@@ -79,9 +79,23 @@ function PipTargets({
   if (!targets.length) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
+  const hitOrder = new Map(
+    (stockHitBlockNames ?? []).map((n, i) => [(n || "").replace(/\s+/g, "").trim(), i]),
+  );
+  const ordered =
+    hitOrder.size === 0
+      ? targets
+      : [...targets].sort((a, b) => {
+          const aHit = hitOrder.get((a.name || "").replace(/\s+/g, "").trim());
+          const bHit = hitOrder.get((b.name || "").replace(/\s+/g, "").trim());
+          if (aHit !== undefined && bHit !== undefined) return aHit - bHit;
+          if (aHit !== undefined) return -1;
+          if (bHit !== undefined) return 1;
+          return 0;
+        });
   return (
     <div className="flex flex-wrap gap-1">
-      {targets.map((t, i) => {
+      {ordered.map((t, i) => {
         const blockName = (t.name || "").replace(/\s+/g, "").trim();
         const isStockHitBlock =
           (t.kind === "sector" || t.kind === "theme") &&

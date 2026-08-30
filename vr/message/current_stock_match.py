@@ -17,6 +17,8 @@ class CurrentStockMatchIds:
     target: frozenset[str]
     content: frozenset[str]
     block: frozenset[str]
+    # 仅板块命中消息 id → 命中板块中成分股数最少者（用于板块层内从少到多排序）
+    block_min_stock_count: frozenset[tuple[str, int]] = frozenset()
 
     def all_ids(self) -> set[str]:
         return set(self.target) | set(self.content) | set(self.block)
@@ -50,7 +52,13 @@ def collect_match_ids(conn: sqlite3.Connection, stock_code: str) -> CurrentStock
     ):
         target.add(str(row["analyzed_id"]))
 
-    block = set(block_match.analyzed_ids_with_stock_in_block_targets(conn, code))
+    block_counts_raw = block_match.analyzed_ids_with_stock_in_block_targets(conn, code)
+    if isinstance(block_counts_raw, dict):
+        block_counts = {str(k): int(v) for k, v in block_counts_raw.items()}
+    else:
+        # 兼容仅返回 id 集合的旧调用 / 测试 mock
+        block_counts = {str(x): 10**9 for x in block_counts_raw}
+    block = set(block_counts)
 
     content: set[str] = set()
     name = resolve_stock_name(code).strip()
@@ -69,11 +77,12 @@ def collect_match_ids(conn: sqlite3.Connection, stock_code: str) -> CurrentStock
         target=frozenset(target),
         content=frozenset(content),
         block=frozenset(block),
+        block_min_stock_count=frozenset(block_counts.items()),
     )
 
 
 def enrich_current_stock(msg: AnalyzedMessage, stock_code: str | None) -> AnalyzedMessage:
-    """填充当前股票命中的板块目标名称列表。"""
+    """填充当前股票命中的板块目标名称列表（按成分股数从少到多）。"""
     code = (stock_code or "").strip()
     if not code:
         msg.matched_current_stock_blocks = []
@@ -89,5 +98,6 @@ def enrich_current_stock(msg: AnalyzedMessage, stock_code: str | None) -> Analyz
         if block_match.target_name_contains_stock(name, code):
             seen.add(name)
             names.append(name)
+    names.sort(key=lambda n: (block_match.block_name_stock_count(n), n))
     msg.matched_current_stock_blocks = names
     return msg
