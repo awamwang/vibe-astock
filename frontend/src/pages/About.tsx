@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import {
-  BookOpen, Bug, ExternalLink, Github, Info, Mail, MessageSquarePlus, Sparkles,
+  AlertTriangle, BookOpen, Bug, ExternalLink, Github, Info, Mail, MessageSquarePlus, Sparkles,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -107,7 +107,7 @@ export function About() {
     <div>
       <PageHeader
         title="关于项目"
-        subtitle="版本说明、仓库地址与反馈渠道"
+        subtitle="版本说明、仓库地址、反馈渠道与免责声明"
       />
 
       <div className="space-y-5">
@@ -227,6 +227,28 @@ export function About() {
                 </ContactChip>
               </div>
             </div>
+          </div>
+        </GlassCard>
+
+        {/* 免责声明 */}
+        <GlassCard>
+          <SectionTitle
+            icon={AlertTriangle}
+            title="免责声明"
+            hint="请在使用前仔细阅读"
+          />
+          <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3.5">
+            <p className="text-sm leading-relaxed text-foreground/90">
+              Vibe-Astock 是一个中立的信息整理与 AI 接入工具。榜单与盘面指标均为客观公开数据；
+              本产品只呈现事实，不推荐个股、不预测涨跌、不给买卖时机、不构成投资建议。
+              看板内分析方向由你自行配置的 AI 给出，与本产品无关。请自行核实并独立决策，风险自担。
+            </p>
+            <ul className="mt-3 list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
+              <li>本系统产出的所有内容均可能由 AI 自动生成，存在错误或偏差的可能</li>
+              <li>本项目不构成任何投资建议；投资决策请咨询持有相应资质的专业机构</li>
+              <li>作者与维护者不对使用本工具产生的任何损失承担责任</li>
+              <li>股市有风险，投资需谨慎</li>
+            </ul>
           </div>
         </GlassCard>
 
