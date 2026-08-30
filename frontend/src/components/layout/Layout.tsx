@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
@@ -17,8 +17,8 @@ function XLogo({ className }: { className?: string }) {
 }
 import { useDarkMode } from "@/hooks/useDarkMode";
 
-const APP_VERSION = "v0.1.1";
-const REPO_URL = "https://github.com/simonlin1212/Vibe-Astock";
+const APP_VERSION = "v0.1.3";
+const REPO_URL = "https://github.com/awamwang/vibe-astock";
 // 作者联系方式只留 X。
 const X_URL = "https://x.com/linsizhen";
 const X_HANDLE = "@linsizhen";
@@ -45,6 +45,7 @@ const SETTINGS_NAV = [
   { to: "/settings/keywords", icon: Tags, label: "自定义配置" },
   { to: "/settings/plugins", icon: Plug, label: "插件管理" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
+  { to: "/settings/about", icon: Info, label: "关于项目" },
 ];
 
 function MainShell() {
