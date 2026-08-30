@@ -12,6 +12,7 @@ from contextlib import closing
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
+from duanxian.message_follow_blocks import build_follow_blocks_sql, load_blocks
 from duanxian.message_follow_keywords import build_follow_sql, load_keywords
 
 from .current_stock_match import CurrentStockMatchIds, collect_match_ids, enrich_current_stock
@@ -764,12 +765,16 @@ def _build_analyzed_where(
         want_no = "no" in selected or "0" in selected or "false" in selected
         if want_yes != want_no:
             follow_kws = load_keywords()
-            match_sql, match_args = build_follow_sql(follow_kws)
+            follow_blocks = load_blocks()
+            kw_sql, kw_args = build_follow_sql(follow_kws)
+            block_sql, block_args = build_follow_blocks_sql(follow_blocks)
+            match_sql = f"(({kw_sql}) OR ({block_sql}))"
+            match_args = [*kw_args, *block_args]
             if want_yes:
                 parts.append(match_sql)
                 args.extend(match_args)
             else:
-                if follow_kws:
+                if follow_kws or follow_blocks:
                     parts.append(f"NOT ({match_sql})")
                     args.extend(match_args)
     if q.match_current_stock:
@@ -851,12 +856,17 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
                 [*args, *priority_args, limit, offset],
             ).fetchall()
             follow_kws = load_keywords()
+            follow_blocks = load_blocks()
             out: list[AnalyzedMessage] = []
             for r in rows:
                 aids = r["id"]
                 targets = _load_targets(conn, aids)
                 raw_ids = _load_raw_ids(conn, aids)
-                msg = enrich_follow(_row_analyzed(r, targets, raw_ids), follow_kws)
+                msg = enrich_follow(
+                    _row_analyzed(r, targets, raw_ids),
+                    follow_kws,
+                    follow_blocks,
+                )
                 if current_stock_code:
                     msg = enrich_current_stock(msg, current_stock_code)
                 out.append(msg)
@@ -872,7 +882,7 @@ def get_analyzed(analyzed_id: str, *, path: Optional[str] = None) -> AnalyzedMes
             if not r:
                 return None
             return enrich_follow(
-                _row_analyzed(r, _load_targets(conn, analyzed_id), _load_raw_ids(conn, analyzed_id))
+                _row_analyzed(r, _load_targets(conn, analyzed_id), _load_raw_ids(conn, analyzed_id)),
             )
 
 
@@ -929,7 +939,8 @@ def upsert_analyzed_from_raw(
                 summary = patch.get("summary") or (raw.title[:120] if raw.title else raw.content[:120])
                 detail = patch.get("detail", raw.content)
                 keywords = patch.get("keywords", raw.keywords)
-                # 初始档保留来源先验，不受关注词升档影响；工作档可升档
+                # 初始档保留来源先验，不受关注词/关注板块升档影响；工作档可升档一次（二者共用）
+                targets = _resolve_targets(raw, patch)
                 initial_impact = str(patch.get("impact_level", "medium") or "medium")
                 impact_level = initial_impact_with_follow(
                     initial_impact,
@@ -937,6 +948,7 @@ def upsert_analyzed_from_raw(
                     summary=summary or "",
                     detail=detail or "",
                     keywords=list(keywords or []),
+                    targets=targets,
                 )
                 conn.execute(
                     """
@@ -974,7 +986,7 @@ def upsert_analyzed_from_raw(
                     "INSERT OR IGNORE INTO raw_analyzed_link (raw_id, analyzed_id) VALUES (?, ?)",
                     (raw.id, aid),
                 )
-                _sync_impact_targets(conn, aid, _resolve_targets(raw, patch))
+                _sync_impact_targets(conn, aid, targets)
             conn.commit()
     result = get_analyzed(aid, path=path)
     assert result is not None

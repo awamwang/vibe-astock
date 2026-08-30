@@ -4550,6 +4550,13 @@ class TestThemeNormalize:
         assert "/config/message-follow-keywords" in fe
         assert "/api/config/message-follow-keywords" in be
         assert "消息关注词" in page
+        assert "/config/message-follow-blocks" in fe
+        assert "/api/config/message-follow-blocks" in be
+        assert "toggleMessageFollowBlock" in fe
+        blocks_page = Path("frontend/src/pages/ThsBlocks.tsx").read_text(encoding="utf-8")
+        assert "toggleFollow" in blocks_page
+        assert "FollowBlockButton" in blocks_page
+        assert "已关注" in blocks_page
 
 
 @pytest.mark.unit
@@ -4583,6 +4590,48 @@ class TestMessageFollowKeywords:
         monkeypatch.setattr(mfk, "_KEYWORDS", None)
         mfk.save_keywords(["涨停"])
         assert mfk.reset_keywords() == []
+
+
+@pytest.mark.unit
+class TestMessageFollowBlocks:
+    """消息关注板块：配置与目标命中。"""
+
+    def test_default_empty(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_blocks as mfb
+
+        cfg = tmp_path / "message_follow_blocks.json"
+        monkeypatch.setattr(mfb, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfb, "_BLOCKS", None)
+        assert mfb.load_blocks() == []
+
+    def test_save_toggle_and_match(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_blocks as mfb
+
+        cfg = tmp_path / "message_follow_blocks.json"
+        monkeypatch.setattr(mfb, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfb, "_BLOCKS", None)
+        saved = mfb.save_blocks([
+            {"kind": "conception", "id": "885788", "name": "半导体"},
+        ])
+        assert saved == [{"kind": "conception", "id": "885788", "name": "半导体"}]
+        assert mfb.is_followed("conception", "885788")
+        matched = mfb.match_in_targets(
+            saved,
+            [{"kind": "sector", "code": "885788", "name": "半导体"}],
+        )
+        assert len(matched) == 1
+        assert matched[0]["name"] == "半导体"
+        cleared = mfb.toggle_block(kind="conception", block_id="885788", follow=False)
+        assert cleared == []
+
+    def test_reset_clears(self, tmp_path, monkeypatch):
+        from duanxian import message_follow_blocks as mfb
+
+        cfg = tmp_path / "message_follow_blocks.json"
+        monkeypatch.setattr(mfb, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mfb, "_BLOCKS", None)
+        mfb.save_blocks([{"kind": "industry", "id": "881101", "name": "白酒"}])
+        assert mfb.reset_blocks() == []
 
 
 @pytest.mark.unit

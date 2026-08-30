@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Loader2, Star } from "lucide-react";
+import { toast } from "sonner";
 import { BlockStocksTable } from "@/components/block/BlockStocksTable";
 import { api, ApiError, type Quote, type ThsBlockStocksDetail } from "@/lib/api";
+import {
+  isBlockFollowed, setFollowBlocksCache, type FollowBlock,
+} from "@/lib/message-follow-blocks";
 import { thsBlockKindLabel } from "@/lib/thsBlocks";
+import { cn } from "@/lib/utils";
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -25,6 +30,8 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
+  const [followBusy, setFollowBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +74,16 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
     return () => { cancelled = true; };
   }, [kind, blockId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api.messageFollowBlocks()
+      .then((data) => {
+        if (!cancelled) setFollowBlocks(setFollowBlocksCache(data.blocks || []));
+      })
+      .catch(() => { /* 关注列表失败不阻断详情 */ });
+    return () => { cancelled = true; };
+  }, [kind, blockId]);
+
   const codes = useMemo(
     () => (detail?.stocks || []).map((s) => s.code).filter(Boolean),
     [detail?.stocks],
@@ -91,11 +108,53 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
   }, [codes.join(",")]);
 
   const displayName = name || detail?.name || blockId;
+  const followed = isBlockFollowed(kind, blockId, followBlocks);
+
+  const toggleFollow = useCallback(async () => {
+    setFollowBusy(true);
+    try {
+      const data = await api.toggleMessageFollowBlock({
+        kind,
+        id: blockId,
+        name: displayName,
+        follow: !followed,
+      });
+      setFollowBlocks(setFollowBlocksCache(data.blocks || []));
+      toast.success(!followed ? `已关注「${displayName}」` : `已取消关注「${displayName}」`, {
+        position: "top-center",
+        duration: 3500,
+      });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "更新关注失败", {
+        position: "top-center",
+        duration: 5000,
+      });
+    } finally {
+      setFollowBusy(false);
+    }
+  }, [kind, blockId, displayName, followed]);
 
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">{displayName}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-foreground">{displayName}</h2>
+          <button
+            type="button"
+            disabled={followBusy}
+            title={followed ? "取消关注" : "关注板块"}
+            onClick={() => void toggleFollow()}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-semibold transition-colors disabled:opacity-50",
+              followed
+                ? "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                : "border-border bg-background text-muted-foreground hover:border-amber-500/35 hover:text-amber-700 dark:hover:text-amber-300",
+            )}
+          >
+            <Star className={cn("h-4 w-4", followed && "fill-current")} />
+            {followed ? "已关注" : "关注"}
+          </button>
+        </div>
         <p className="mt-1 font-mono text-xs text-muted-foreground">{blockId}</p>
       </div>
 

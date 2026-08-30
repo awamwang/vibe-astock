@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Link } from "react-router-dom";
 import {
   Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
-  LayoutList, Loader2, Network, RefreshCw, Search,
+  LayoutList, Loader2, Network, RefreshCw, Search, Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { BlockStocksTable } from "@/components/block/BlockStocksTable";
@@ -14,6 +14,9 @@ import {
   type Quote, type ThsBlockRow, type ThsBlocksSnapshot, type ThsBlockStocksDetail,
   type ThsTreeNode,
 } from "@/lib/api";
+import {
+  isBlockFollowed, setFollowBlocksCache, type FollowBlock,
+} from "@/lib/message-follow-blocks";
 import {
   THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL,
   collectThsBranchIds, filterThsTree, parseThsTree,
@@ -53,28 +56,69 @@ function kindHasError(errors: string[] | undefined, kind: string): boolean {
   return (errors || []).some((e) => e.startsWith(`${kind}:`));
 }
 
+function FollowBlockButton({
+  followed,
+  onToggle,
+  size = "sm",
+  className,
+}: {
+  followed: boolean;
+  onToggle: () => void;
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  const iconCls = size === "md" ? "h-4 w-4" : "h-3.5 w-3.5";
+  return (
+    <button
+      type="button"
+      title={followed ? "取消关注" : "关注板块"}
+      aria-label={followed ? "取消关注" : "关注板块"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
+        size === "md" ? "h-8 gap-1.5 px-2.5 text-xs font-semibold" : "h-7 w-7",
+        followed
+          ? "border-amber-500/40 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:text-amber-300"
+          : "border-border bg-background text-muted-foreground hover:border-amber-500/35 hover:text-amber-700 dark:hover:text-amber-300",
+        className,
+      )}
+    >
+      <Star className={cn(iconCls, followed && "fill-current")} />
+      {size === "md" && (followed ? "已关注" : "关注")}
+    </button>
+  );
+}
+
 function ThsBlockTreeItem({
   node,
   depth,
   expanded,
   rowById,
   selectedId,
+  followedIds,
   onToggle,
   onSelect,
+  onToggleFollow,
 }: {
   node: ThsTreeNode;
   depth: number;
   expanded: Set<string>;
   rowById: Map<string, ThsBlockRow>;
   selectedId: string | null;
+  followedIds: Set<string>;
   onToggle: (id: string) => void;
   onSelect: (row: ThsBlockRow) => void;
+  onToggleFollow: (row: ThsBlockRow) => void;
 }) {
   const isBranch = node.node_type === "branch";
   const isOpen = isBranch && expanded.has(node.id);
   const row = rowById.get(node.id);
   const active = selectedId === node.id;
   const stockCount = row?.stock_count;
+  const followed = row ? followedIds.has(`${row.kind}|${row.id}`) : false;
 
   const handleClick = () => {
     if (isBranch) {
@@ -87,9 +131,7 @@ function ThsBlockTreeItem({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={handleClick}
+      <div
         className={cn(
           "group flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
           "hover:bg-muted/40",
@@ -97,34 +139,47 @@ function ThsBlockTreeItem({
         )}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
-          {isBranch ? (
-            isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
-          ) : (
-            <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
-          )}
-        </span>
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-          {isBranch ? (
-            isOpen
-              ? <FolderOpen className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-              : <Folder className="h-4 w-4 text-amber-600/80 dark:text-amber-400/80" />
-          ) : (
-            <Boxes className="h-3.5 w-3.5 text-primary/70" />
-          )}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-          {node.name || node.id}
-        </span>
-        {stockCount != null && (
-          <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
-            {stockCount}
+        <button
+          type="button"
+          onClick={handleClick}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+            {isBranch ? (
+              isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+            )}
           </span>
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+            {isBranch ? (
+              isOpen
+                ? <FolderOpen className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                : <Folder className="h-4 w-4 text-amber-600/80 dark:text-amber-400/80" />
+            ) : (
+              <Boxes className="h-3.5 w-3.5 text-primary/70" />
+            )}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+            {node.name || node.id}
+          </span>
+          {stockCount != null && (
+            <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+              {stockCount}
+            </span>
+          )}
+          <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground/70 sm:inline">
+            {node.id}
+          </span>
+        </button>
+        {row && (
+          <FollowBlockButton
+            followed={followed}
+            onToggle={() => onToggleFollow(row)}
+            className="opacity-70 group-hover:opacity-100"
+          />
         )}
-        <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground/70 sm:inline">
-          {node.id}
-        </span>
-      </button>
+      </div>
       {isBranch && isOpen && (node.children ?? []).map((child) => (
         <ThsBlockTreeItem
           key={child.id}
@@ -133,8 +188,10 @@ function ThsBlockTreeItem({
           expanded={expanded}
           rowById={rowById}
           selectedId={selectedId}
+          followedIds={followedIds}
           onToggle={onToggle}
           onSelect={onSelect}
+          onToggleFollow={onToggleFollow}
         />
       ))}
     </div>
@@ -159,6 +216,12 @@ export function ThsBlocks() {
   const [stocksDetail, setStocksDetail] = useState<ThsBlockStocksDetail | null>(null);
   const [stocksLoading, setStocksLoading] = useState(false);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
+
+  const followedIds = useMemo(
+    () => new Set(followBlocks.map((b) => `${b.kind}|${b.id}`)),
+    [followBlocks],
+  );
 
   const loadSnapshot = useCallback(async () => {
     setLoading(true);
@@ -172,9 +235,35 @@ export function ThsBlocks() {
     }
   }, []);
 
+  const loadFollowBlocks = useCallback(async () => {
+    try {
+      const data = await api.messageFollowBlocks();
+      setFollowBlocks(setFollowBlocksCache(data.blocks || []));
+    } catch {
+      /* 关注列表失败不阻断板块浏览 */
+    }
+  }, []);
+
   useEffect(() => {
     void loadSnapshot();
-  }, [loadSnapshot]);
+    void loadFollowBlocks();
+  }, [loadSnapshot, loadFollowBlocks]);
+
+  const toggleFollow = useCallback(async (row: ThsBlockRow) => {
+    const nextFollow = !isBlockFollowed(row.kind, row.id, followBlocks);
+    try {
+      const data = await api.toggleMessageFollowBlock({
+        kind: row.kind,
+        id: row.id,
+        name: row.name || row.id,
+        follow: nextFollow,
+      });
+      setFollowBlocks(setFollowBlocksCache(data.blocks || []));
+      notify.success(nextFollow ? `已关注「${row.name || row.id}」` : `已取消关注「${row.name || row.id}」`);
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "更新关注失败");
+    }
+  }, [followBlocks]);
 
   const refreshAll = async () => {
     setRefreshing(true);
@@ -579,8 +668,10 @@ export function ThsBlocks() {
                       expanded={expanded}
                       rowById={rowById}
                       selectedId={selected?.id ?? null}
+                      followedIds={followedIds}
                       onToggle={toggleExpanded}
                       onSelect={(row) => void openDetail(row)}
+                      onToggleFollow={(row) => void toggleFollow(row)}
                     />
                   </div>
                 ) : (
@@ -597,6 +688,7 @@ export function ThsBlocks() {
                       )}
                       <SortTh col="node_type" label="节点" sortCol={sort} order={order} onSort={toggleSort} />
                       <SortTh col="tree_path" label="树路径" sortCol={sort} order={order} onSort={toggleSort} />
+                      <th className="w-16 px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">关注</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -604,6 +696,7 @@ export function ThsBlocks() {
                       const active = selected?.kind === row.kind && selected?.id === row.id;
                       const subtype = thsCustomSubtypeLabel(row);
                       const depth = row.depth ?? 0;
+                      const followed = followedIds.has(`${row.kind}|${row.id}`);
                       return (
                         <tr
                           key={`${row.kind}-${row.id}`}
@@ -633,12 +726,19 @@ export function ThsBlocks() {
                           <td className="max-w-[280px] truncate px-4 py-2.5 text-muted-foreground" title={row.tree_path}>
                             {row.tree_path}
                           </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <FollowBlockButton
+                              followed={followed}
+                              onToggle={() => void toggleFollow(row)}
+                              className="mx-auto"
+                            />
+                          </td>
                         </tr>
                       );
                     })}
                     {!filteredRows.length && (
                       <tr>
-                        <td colSpan={showSubtypeCol ? 5 : 4} className="px-4 py-10 text-center text-muted-foreground">
+                        <td colSpan={showSubtypeCol ? 6 : 5} className="px-4 py-10 text-center text-muted-foreground">
                           无匹配板块
                         </td>
                       </tr>
@@ -672,6 +772,11 @@ export function ThsBlocks() {
                       )}>
                         {THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}
                       </span>
+                      <FollowBlockButton
+                        followed={followedIds.has(`${selected.kind}|${selected.id}`)}
+                        onToggle={() => void toggleFollow(selected)}
+                        size="md"
+                      />
                     </div>
                     <p className="mt-1 font-mono text-xs text-muted-foreground">{selected.id}</p>
                     {selected.tree_path && (

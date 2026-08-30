@@ -309,6 +309,8 @@ export interface AnalyzedMessage {
   favorited?: boolean;
   followed?: boolean;
   matched_follow_keywords?: string[];
+  /** 命中的关注板块名称 */
+  matched_follow_blocks?: string[];
   /** 跟随股票变化时，成分股命中当前股票的板块目标名称 */
   matched_current_stock_blocks?: string[];
 }
@@ -720,6 +722,17 @@ export const api = {
     request<{ keywords: string[]; count: number }>("/config/message-follow-keywords", "POST", { keywords }),
   resetMessageFollowKeywords: () =>
     request<{ keywords: string[]; count: number }>("/config/message-follow-keywords/reset", "POST", {}),
+  messageFollowBlocks: () => get<MessageFollowBlockConfig>("/config/message-follow-blocks"),
+  saveMessageFollowBlocks: (blocks: FollowBlockItem[]) =>
+    request<{ blocks: FollowBlockItem[]; count: number }>("/config/message-follow-blocks", "POST", { blocks }),
+  toggleMessageFollowBlock: (body: { kind: string; id: string; name?: string; follow?: boolean }) =>
+    request<{ blocks: FollowBlockItem[]; count: number; followed: boolean }>(
+      "/config/message-follow-blocks/toggle",
+      "POST",
+      body,
+    ),
+  resetMessageFollowBlocks: () =>
+    request<{ blocks: FollowBlockItem[]; count: number }>("/config/message-follow-blocks/reset", "POST", {}),
   tradePhaseConfig: () => get<TradePhaseConfig>("/config/trade-phases"),
   saveTradePhaseConfig: (phases: TradePhaseConfigRow[]) =>
     request<{ phases: TradePhaseConfigRow[]; count: number }>("/config/trade-phases", "POST", { phases }),
@@ -906,6 +919,16 @@ export interface ZtKeywordConfig {
 export interface MessageFollowKeywordConfig {
   schema: number;
   keywords: string[];
+  path: string;
+}
+export interface FollowBlockItem {
+  kind: string;
+  id: string;
+  name: string;
+}
+export interface MessageFollowBlockConfig {
+  schema: number;
+  blocks: FollowBlockItem[];
   path: string;
 }
 

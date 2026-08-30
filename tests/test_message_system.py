@@ -700,6 +700,73 @@ def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
 
 
 
+def test_follow_block_impact_boost_shared_with_keywords(msg_db, tmp_path, monkeypatch):
+    """关注板块命中升一档；与关注词共用升档条件，不叠加。"""
+    from duanxian import message_follow_blocks as mfb
+    from duanxian import message_follow_keywords as mfk
+
+    kw_cfg = tmp_path / "message_follow_keywords.json"
+    blk_cfg = tmp_path / "message_follow_blocks.json"
+    monkeypatch.setattr(mfk, "_CONFIG_PATH", str(kw_cfg))
+    monkeypatch.setattr(mfk, "_KEYWORDS", None)
+    monkeypatch.setattr(mfb, "_CONFIG_PATH", str(blk_cfg))
+    monkeypatch.setattr(mfb, "_BLOCKS", None)
+    mfk.save_keywords(["半导体"])
+    mfb.save_blocks([{"kind": "conception", "id": "885788", "name": "半导体"}])
+
+    # 仅板块命中（正文不含关注词）
+    d1 = RawMessageDraft(
+        draft_key="d-blk-only",
+        source_id="manual",
+        source_label="粘贴",
+        content="相关板块异动",
+        title="相关板块异动",
+    )
+    raw1 = store.insert_raw_batch([d1], path=msg_db)[0]
+    an1 = store.upsert_analyzed_from_raw(
+        raw1,
+        patch={
+            "impact_level": "medium",
+            "summary": "相关板块异动",
+            "targets": [{"kind": "sector", "code": "885788", "name": "半导体"}],
+        },
+        path=msg_db,
+    )
+    assert an1.followed is True
+    assert an1.impact_level == "high"
+    assert an1.initial_impact_level == "medium"
+    assert "半导体" in an1.matched_follow_blocks
+    assert an1.matched_follow_keywords == []
+
+    # 关注词与关注板块同时命中，仍只升一档
+    d2 = RawMessageDraft(
+        draft_key="d-both",
+        source_id="manual",
+        source_label="粘贴",
+        content="半导体板块走强",
+        title="半导体板块走强",
+    )
+    raw2 = store.insert_raw_batch([d2], path=msg_db)[0]
+    an2 = store.upsert_analyzed_from_raw(
+        raw2,
+        patch={
+            "impact_level": "low",
+            "summary": "半导体板块走强",
+            "targets": [{"kind": "sector", "code": "885788", "name": "半导体"}],
+        },
+        path=msg_db,
+    )
+    assert an2.followed is True
+    assert an2.impact_level == "medium"
+    assert an2.initial_impact_level == "low"
+    assert "半导体" in an2.matched_follow_keywords
+    assert "半导体" in an2.matched_follow_blocks
+
+    rows_yes, total_yes = store.list_analyzed(store.ListQuery(followed="yes"), path=msg_db)
+    assert total_yes == 2
+    assert all(r.followed for r in rows_yes)
+
+
 def test_initial_impact_preserved_from_ai_without_manual(msg_db):
     """未手动指定时，AI 可改工作档，但不可改初始档。"""
     d = RawMessageDraft(

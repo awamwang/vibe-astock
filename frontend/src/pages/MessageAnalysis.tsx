@@ -1661,10 +1661,16 @@ export function MessageAnalysis() {
                           {item.followed ? (
                             <div className="space-y-1">
                               <Badge className="border-primary/40 bg-primary/15 text-primary">关注</Badge>
-                              {(item.matched_follow_keywords?.length ?? 0) > 0 && (
+                              {((item.matched_follow_keywords?.length ?? 0) > 0
+                                || (item.matched_follow_blocks?.length ?? 0) > 0) && (
                                 <div className="flex flex-wrap gap-0.5">
-                                  {item.matched_follow_keywords!.slice(0, 3).map((k) => (
-                                    <span key={k} className="text-[10px] text-primary/80">{k}</span>
+                                  {(item.matched_follow_keywords ?? []).slice(0, 2).map((k) => (
+                                    <span key={`kw-${k}`} className="text-[10px] text-primary/80">{k}</span>
+                                  ))}
+                                  {(item.matched_follow_blocks ?? []).slice(0, 2).map((b) => (
+                                    <span key={`blk-${b}`} className="text-[10px] text-amber-700/90 dark:text-amber-300/90">
+                                      板块·{b}
+                                    </span>
                                   ))}
                                 </div>
                               )}
@@ -1923,16 +1929,23 @@ export function MessageAnalysis() {
                   {selected.followed ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className="border-primary/40 bg-primary/15 text-primary">已命中</Badge>
-                      {(selected.matched_follow_keywords?.length ?? 0) > 0 ? (
+                      {(selected.matched_follow_keywords?.length ?? 0) > 0 &&
                         selected.matched_follow_keywords!.map((k) => (
-                          <Badge key={k} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
-                        ))
-                      ) : (
-                        <span className="text-sm text-muted-foreground">已关注，无匹配词</span>
+                          <Badge key={`kw-${k}`} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
+                        ))}
+                      {(selected.matched_follow_blocks?.length ?? 0) > 0 &&
+                        selected.matched_follow_blocks!.map((b) => (
+                          <Badge key={`blk-${b}`} className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200">
+                            板块·{b}
+                          </Badge>
+                        ))}
+                      {(selected.matched_follow_keywords?.length ?? 0) === 0 &&
+                        (selected.matched_follow_blocks?.length ?? 0) === 0 && (
+                        <span className="text-sm text-muted-foreground">已关注，无匹配项</span>
                       )}
                     </div>
                   ) : (
-                    <span className="text-sm text-muted-foreground">未命中关注词</span>
+                    <span className="text-sm text-muted-foreground">未命中关注词 / 关注板块</span>
                   )}
                 </DetailSection>
 

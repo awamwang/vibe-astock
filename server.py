@@ -1279,6 +1279,70 @@ def api_message_follow_keywords_reset():
     return {"data": {"keywords": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/message-follow-blocks")
+def api_message_follow_blocks_get():
+    """读取消息关注板块配置。"""
+    from duanxian import message_follow_blocks as mfb
+
+    return {"data": mfb.export_config()}
+
+
+@app.post("/api/config/message-follow-blocks")
+def api_message_follow_blocks_save(body: dict = Body(...)):
+    """保存消息关注板块列表。"""
+    from duanxian.message_follow_blocks import MessageFollowBlockError, save_blocks
+
+    raw = (body or {}).get("blocks")
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "blocks 须为数组", "detail": "blocks 须为数组"}, status_code=400)
+    try:
+        saved = save_blocks(raw)
+    except MessageFollowBlockError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"blocks": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/message-follow-blocks/toggle")
+def api_message_follow_blocks_toggle(body: dict = Body(...)):
+    """切换单个板块的关注状态。"""
+    from duanxian.message_follow_blocks import MessageFollowBlockError, is_followed, toggle_block
+
+    body = body or {}
+    kind = str(body.get("kind") or "").strip()
+    block_id = str(body.get("id") or body.get("block_id") or "").strip()
+    name = str(body.get("name") or "").strip()
+    follow = body.get("follow")
+    if follow is not None:
+        follow = bool(follow)
+    try:
+        saved = toggle_block(kind=kind, block_id=block_id, name=name, follow=follow)
+    except MessageFollowBlockError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {
+        "data": {
+            "blocks": saved,
+            "count": len(saved),
+            "followed": is_followed(kind, block_id, saved),
+        }
+    }
+
+
+@app.post("/api/config/message-follow-blocks/reset")
+def api_message_follow_blocks_reset():
+    """清空消息关注板块列表。"""
+    from duanxian import message_follow_blocks as mfb
+
+    try:
+        saved = mfb.reset_blocks()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"blocks": saved, "count": len(saved)}}
+
+
 @app.get("/api/config/sentiment-s")
 def api_sentiment_s_config_get():
     """读取合成情绪分 S 的算法与序列状态。"""

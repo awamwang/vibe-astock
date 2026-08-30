@@ -162,6 +162,7 @@ hooks.RUNNER.emit_after_review（插件推送）
 | `duanxian/zt_keywords.py` | `_LOCK` | `Lock` | 涨停原因词表 | 用户编辑与持久化 |
 | `duanxian/theme_normalize.py` | `_LOCK` | `Lock` | 题材别名表 | 别名映射缓存 |
 | `duanxian/message_follow_keywords.py` | `_LOCK` | `Lock` | 消息关注词 | 关键词配置 |
+| `duanxian/message_follow_blocks.py` | `_LOCK` | `Lock` | 消息关注板块 | 板块关注配置 |
 | `duanxian/experience.py` | `_LOCK` | `Lock` | 经验库索引 | 笔记 CRUD |
 | `duanxian/articles.py` | `_LOCK` | `Lock` | 研报文章索引 | 文章落盘与 index 刷新 |
 | `duanxian/sentiment_score.py` | `_LOCK` | `Lock` | 情绪分缓存 | 计算结果 memo |
