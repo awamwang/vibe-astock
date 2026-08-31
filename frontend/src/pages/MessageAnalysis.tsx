@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
-  Search, RefreshCw, Loader2, ChevronDown, ChevronUp, Plus, Trash2,
-  ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star, RotateCcw, Pencil,
-  LayoutList, CalendarDays,
+  Search, RefreshCw, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
+  Plus, Trash2, ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
+  RotateCcw, Pencil, LayoutList, CalendarDays,
 } from "lucide-react";
 import {
   MessageDetailEdit,
@@ -848,6 +848,30 @@ export function MessageAnalysis() {
     void loadDetail(item);
   };
 
+  /** 详情左右切换所依据的当前可见列表（列表页 / 日历月内） */
+  const detailNavItems = viewMode === "calendar" ? calendarItems : items;
+  const detailNavIndex = selected
+    ? detailNavItems.findIndex((x) => x.id === selected.id)
+    : -1;
+  const canNavPrev = detailNavIndex > 0;
+  const canNavNext = detailNavIndex >= 0 && detailNavIndex < detailNavItems.length - 1;
+
+  const selectAdjacent = (delta: -1 | 1) => {
+    if (detailNavIndex < 0) return;
+    const next = detailNavItems[detailNavIndex + delta];
+    if (!next) return;
+    selectItem(next);
+  };
+
+  // 选中项变化时，列表行滚入可视区
+  useEffect(() => {
+    if (!selected?.id || viewMode !== "list") return;
+    const row = listScrollRef.current?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(selected.id)}"]`,
+    );
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected?.id, viewMode, page]);
+
   const startEdit = () => {
     if (!selected) return;
     setEditDraft(draftFromMessage(selected));
@@ -1669,9 +1693,12 @@ export function MessageAnalysis() {
                     {items.map((item) => (
                       <tr
                         key={item.id}
+                        data-message-id={item.id}
+                        aria-selected={selected?.id === item.id}
                         className={cn(
                           "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/25",
-                          selected?.id === item.id && "bg-primary/8",
+                          selected?.id === item.id &&
+                            "bg-primary/12 shadow-[inset_3px_0_0_0_hsl(var(--primary))]",
                         )}
                         onClick={() => selectItem(item)}
                       >
@@ -1825,18 +1852,47 @@ export function MessageAnalysis() {
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3 border-b border-border/60 pb-4">
-                  <div className="min-w-0">
-                    <h2
-                      className={cn(
-                        "text-base font-bold leading-snug",
-                        IMPACT_TITLE[selected.impact_level] || "text-foreground",
-                      )}
-                    >
-                      {selected.title || "—"}
-                    </h2>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
-                    </p>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <h2
+                        className={cn(
+                          "text-base font-bold leading-snug",
+                          IMPACT_TITLE[selected.impact_level] || "text-foreground",
+                        )}
+                      >
+                        {selected.title || "—"}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
+                      </p>
+                    </div>
+                    {detailNavItems.length > 0 && detailNavIndex >= 0 && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label="上一条"
+                          title="上一条"
+                          disabled={!canNavPrev || detailLoading}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          onClick={() => selectAdjacent(-1)}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <span className="min-w-[3.25rem] text-center text-[11px] tabular-nums text-muted-foreground">
+                          {detailNavIndex + 1}/{detailNavItems.length}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="下一条"
+                          title="下一条"
+                          disabled={!canNavNext || detailLoading}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          onClick={() => selectAdjacent(1)}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-1.5">
