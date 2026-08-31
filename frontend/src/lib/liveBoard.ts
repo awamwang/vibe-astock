@@ -82,6 +82,10 @@ export interface ShortBoardEnv {
   qcj_leader_top?: string | null; // 如「3天3板」
   qcj_themes?: string[] | null; // 主线题材
   qcj_date?: string | null;
+  /** 5 日量比：当日 A 股成交额 / 此前 5 个交易日均额 */
+  vol_ratio_5d?: number | null;
+  /** 20 日量比：当日 A 股成交额 / 此前 20 个交易日均额 */
+  vol_ratio_20d?: number | null;
 }
 
 export interface ShortBoardSnapshot {
@@ -96,10 +100,6 @@ export interface ShortBoardSnapshot {
   today: ShortBoardEnv;
   yesterday: ShortBoardEnv;
   updated?: string;
-  placeholders?: {
-    volume_vs_yesterday?: boolean;
-    volume_5d_ratio?: boolean;
-  };
 }
 
 // ---------- 开盘啦板块人气（与环境条同页，非打板情绪）----------

@@ -387,7 +387,7 @@ def api_market_live_emotion():
 def api_market_short_board():
     """短线盘面环境指标条（情绪温度 / 涨跌家数 / 涨跌停 / 成交额 / 资金等）。
 
-    对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；量能两卡暂占位。
+    对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；含 5/20 日量比。
     """
     return short_board.snapshot()
 

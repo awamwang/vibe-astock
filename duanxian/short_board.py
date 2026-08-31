@@ -13,7 +13,8 @@
   · 归档只在 as_of == 日历今天且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
 趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
-量能对比昨日、量能 5 日/量比暂无可靠源 → 前端占位。
+5 日 / 20 日量比：当日 A 股成交额 ÷ 此前 N 个交易日均额；历史额优先 short_board 落盘，
+不足时用 market_series 两市成交额序列补齐。
 """
 
 from __future__ import annotations
@@ -406,6 +407,95 @@ def _strip_meta(env: dict) -> dict:
     return {k: v for k, v in env.items() if not k.startswith("_") and k != "date"}
 
 
+def _collect_amount_yi_by_date() -> dict[str, float]:
+    """历史 A 股/两市成交额（亿元）：market_series 落盘 + short_board 按日归档。
+
+    short_board 的 `v_ca` 覆盖同日序列值（与环境条展示口径一致）。
+    """
+    out: dict[str, float] = {}
+    try:
+        from . import market_series as ms
+
+        for row in ms._amount_rows_sorted():
+            if not isinstance(row, dict):
+                continue
+            d = row.get("date")
+            v = row.get("amount_yi")
+            if not d or not isinstance(v, (int, float)) or v <= 0:
+                continue
+            out[str(d)] = round(float(v), 2)
+    except Exception:  # noqa: BLE001
+        pass
+    if os.path.isdir(_CACHE_DIR):
+        try:
+            names = os.listdir(_CACHE_DIR)
+        except OSError:
+            names = []
+        for name in names:
+            if not name.endswith(".json") or len(name) != 15:
+                continue
+            date = name[:-5]
+            env = _load_archive(date)
+            v_ca = env.get("v_ca")
+            if isinstance(v_ca, (int, float)) and v_ca > 0:
+                out[date] = round(float(v_ca) / 1e8, 2)
+    return out
+
+
+def _ratio_vs_prev_ma(
+    as_of: str,
+    today_yi: float | None,
+    window: int,
+    amounts: dict[str, float],
+) -> float | None:
+    """当日成交额 ÷ 此前 window 个交易日均额；历史不足 window 天则返回 None。"""
+    if today_yi is None or today_yi <= 0:
+        return None
+    # 多取几天，再筛出严格早于 as_of 的窗口（盘中 today 可能不在日历终点里）
+    dates = trade_calendar.trade_dates_ending_at(as_of, window + 5)
+    prevs = [d for d in dates if d < as_of][-window:]
+    if len(prevs) < window:
+        return None
+    vals: list[float] = []
+    for d in prevs:
+        v = amounts.get(d)
+        if v is None or v <= 0:
+            return None
+        vals.append(float(v))
+    ma = sum(vals) / window
+    if ma <= 0:
+        return None
+    return round(float(today_yi) / ma, 4)
+
+
+def _attach_volume_ratios(
+    as_of: str,
+    prev: str | None,
+    today: dict,
+    yesterday: dict,
+) -> None:
+    """就地写入 vol_ratio_5d / vol_ratio_20d（今日请求额优先，再叠历史落盘）。"""
+    amounts = _collect_amount_yi_by_date()
+    v_ca = today.get("v_ca")
+    if isinstance(v_ca, (int, float)) and v_ca > 0:
+        amounts[as_of] = round(float(v_ca) / 1e8, 2)
+    if prev:
+        y_ca = yesterday.get("v_ca")
+        if isinstance(y_ca, (int, float)) and y_ca > 0:
+            amounts[prev] = round(float(y_ca) / 1e8, 2)
+
+    t_yi = amounts.get(as_of)
+    today["vol_ratio_5d"] = _ratio_vs_prev_ma(as_of, t_yi, 5, amounts)
+    today["vol_ratio_20d"] = _ratio_vs_prev_ma(as_of, t_yi, 20, amounts)
+    if prev:
+        y_yi = amounts.get(prev)
+        yesterday["vol_ratio_5d"] = _ratio_vs_prev_ma(prev, y_yi, 5, amounts)
+        yesterday["vol_ratio_20d"] = _ratio_vs_prev_ma(prev, y_yi, 20, amounts)
+    else:
+        yesterday.pop("vol_ratio_5d", None)
+        yesterday.pop("vol_ratio_20d", None)
+
+
 def _archive_displayable(env: dict) -> bool:
     """归档是否足以撑起左侧对照（非实时场次优先读盘、免打上游）。"""
     return bool(
@@ -424,6 +514,7 @@ def _snapshot_from_archive(
     today: dict,
     yesterday: dict,
 ) -> dict:
+    _attach_volume_ratios(as_of, prev, today, yesterday)
     available = _archive_displayable(today)
     return {
         "available": available,
@@ -434,10 +525,6 @@ def _snapshot_from_archive(
         "today": today,
         "yesterday": yesterday,
         "updated": china_now().strftime("%Y-%m-%d %H:%M"),
-        "placeholders": {
-            "volume_vs_yesterday": True,
-            "volume_5d_ratio": True,
-        },
         "from_archive": True,
     }
 
@@ -511,6 +598,7 @@ def snapshot() -> dict:
             )
         ):
             _save_archive(as_of, today)
+        _attach_volume_ratios(as_of, prev, today, yesterday)
         available = bool(
             today.get("temperature") is not None
             or today.get("n_up")
@@ -527,10 +615,6 @@ def snapshot() -> dict:
             "today": today,
             "yesterday": yesterday,
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
-            "placeholders": {
-                "volume_vs_yesterday": True,
-                "volume_5d_ratio": True,
-            },
         }
 
     return _cached(f"short_board:{as_of}", ttl, build) or {
@@ -538,5 +622,4 @@ def snapshot() -> dict:
         "reason": "环境指标取数失败",
         "today": {},
         "yesterday": {},
-        "placeholders": {"volume_vs_yesterday": True, "volume_5d_ratio": True},
     }

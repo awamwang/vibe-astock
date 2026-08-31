@@ -124,6 +124,69 @@ class TestShortBoardArchive:
 
 
 @pytest.mark.unit
+class TestVolumeRatios:
+    """5/20 日量比：当日成交额 ÷ 此前 N 日均额。"""
+
+    @pytest.fixture(autouse=True)
+    def _iso(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._cache.clear()
+        monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
+        yield
+        sb._cache.clear()
+
+    def test_ratio_vs_prev_ma(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        amounts = {
+            "2026-08-18": 100.0,
+            "2026-08-19": 100.0,
+            "2026-08-20": 100.0,
+            "2026-08-21": 100.0,
+            "2026-08-22": 100.0,
+            "2026-08-25": 150.0,
+        }
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.trade_dates_ending_at",
+            lambda end, n=10: [
+                "2026-08-18", "2026-08-19", "2026-08-20",
+                "2026-08-21", "2026-08-22", "2026-08-25",
+            ][-n:],
+        )
+        assert sb._ratio_vs_prev_ma("2026-08-25", 150.0, 5, amounts) == 1.5
+        assert sb._ratio_vs_prev_ma("2026-08-25", 150.0, 20, amounts) is None
+
+    def test_attach_prefers_live_v_ca_and_archives(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        days = [
+            "2026-07-31", "2026-08-01",
+            "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08",
+            "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15",
+            "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22",
+            "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-29",
+            "2026-09-01",
+        ]
+        for d in days[:-1]:
+            sb._save_archive(d, {"v_ca": 100e8})  # 100 亿
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.trade_dates_ending_at",
+            lambda end, n=10: [d for d in days if d <= end][-n:],
+        )
+        monkeypatch.setattr(sb, "_collect_amount_yi_by_date", lambda: {
+            d: 100.0 for d in days[:-1]
+        })
+        today = {"v_ca": 200e8}
+        yesterday = {"v_ca": 100e8}
+        sb._attach_volume_ratios("2026-09-01", "2026-08-29", today, yesterday)
+        assert today["vol_ratio_5d"] == 2.0
+        assert today["vol_ratio_20d"] == 2.0
+        assert yesterday["vol_ratio_5d"] == 1.0
+        assert yesterday["vol_ratio_20d"] == 1.0
+
+
+@pytest.mark.unit
 class TestZtDtFor:
     """情绪全景同口径：涨跌停优先趣财经。"""
 
