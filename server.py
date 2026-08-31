@@ -1242,6 +1242,41 @@ def api_zt_keywords_reset():
     return {"data": {"keywords": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/message-default-end-days")
+def api_message_default_end_days_get():
+    """读取消息默认有效期（天）。"""
+    from duanxian import message_default_end_days as mded
+
+    return {"data": mded.export_config()}
+
+
+@app.post("/api/config/message-default-end-days")
+def api_message_default_end_days_save(body: dict = Body(...)):
+    """保存消息默认有效期（1–15 天）。"""
+    from duanxian.message_default_end_days import MessageDefaultEndDaysError, save_days
+
+    raw = (body or {}).get("default_end_days")
+    try:
+        saved = save_days(raw)
+    except MessageDefaultEndDaysError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"default_end_days": saved}}
+
+
+@app.post("/api/config/message-default-end-days/reset")
+def api_message_default_end_days_reset():
+    """恢复内置默认有效期（5 天）。"""
+    from duanxian import message_default_end_days as mded
+
+    try:
+        saved = mded.reset_days()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"default_end_days": saved}}
+
+
 @app.get("/api/config/message-follow-keywords")
 def api_message_follow_keywords_get():
     """读取消息关注词配置。"""

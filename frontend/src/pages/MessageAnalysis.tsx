@@ -27,7 +27,7 @@ import {
 import {
   EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, TARGET_KIND_LABEL,
   effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
-  monthRange, setDefaultEndDays, targetHint, targetTitle,
+  monthRange, setDefaultEndDays, clampDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { chatStream } from "@/lib/llm";
@@ -653,6 +653,7 @@ export function MessageAnalysis() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [quickPatching, setQuickPatching] = useState(false);
   const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
+  const defaultEndDaysSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageItems = useMemo(() => buildPageItems(page, totalPages), [page, totalPages]);
@@ -662,6 +663,39 @@ export function MessageAnalysis() {
   useEffect(() => {
     listScrollRef.current?.scrollTo({ top: 0 });
   }, [page]);
+
+  // 从后端配置加载默认有效期；无落盘时把本地缓存迁过去
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.messageDefaultEndDays();
+        if (cancelled) return;
+        const serverDays = clampDefaultEndDays(cfg.default_end_days);
+        const localDays = getDefaultEndDays();
+        if (!cfg.from_disk && localDays !== serverDays) {
+          await api.saveMessageDefaultEndDays(localDays);
+          if (cancelled) return;
+          setDefaultEndDays(localDays);
+          setDefaultEndDaysState(localDays);
+        } else {
+          setDefaultEndDays(serverDays);
+          setDefaultEndDaysState(serverDays);
+        }
+      } catch {
+        /* 保留 localStorage 缓存 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (defaultEndDaysSaveTimer.current) clearTimeout(defaultEndDaysSaveTimer.current);
+    };
+  }, []);
 
   const hasActiveFilters = useMemo(
     () =>
@@ -689,8 +723,15 @@ export function MessageAnalysis() {
   };
 
   const onDefaultEndDaysChange = (days: number) => {
-    setDefaultEndDays(days);
-    setDefaultEndDaysState(days);
+    const n = clampDefaultEndDays(days);
+    setDefaultEndDays(n);
+    setDefaultEndDaysState(n);
+    if (defaultEndDaysSaveTimer.current) clearTimeout(defaultEndDaysSaveTimer.current);
+    defaultEndDaysSaveTimer.current = setTimeout(() => {
+      void api.saveMessageDefaultEndDays(n).catch(() => {
+        /* 落盘失败时仍保留本地缓存与当前筛选 */
+      });
+    }, 300);
   };
 
   const loadList = useCallback(async () => {

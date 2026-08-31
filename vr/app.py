@@ -826,7 +826,7 @@ def _list_query(
     followed: str = "",
     match_current_stock: str = "",
     include_history: str = "",
-    default_end_days: int = 5,
+    default_end_days: int | None = None,
     as_of: str = "",
     sort: str = "produced_at",
     order: str = "desc",
@@ -835,7 +835,15 @@ def _list_query(
 ) -> msg_layer.ListQuery:
     hist = {x.strip().lower() for x in include_history.split(",") if x.strip()}
     want_history = bool(hist & {"yes", "1", "true", "on"})
-    days = max(1, min(15, int(default_end_days or 5)))
+    if default_end_days is None:
+        try:
+            from duanxian.message_default_end_days import load_days
+
+            days = load_days()
+        except Exception:  # noqa: BLE001
+            days = 5
+    else:
+        days = max(1, min(15, int(default_end_days or 5)))
     return msg_layer.ListQuery(
         source=source or None,
         q=q or None,
@@ -956,7 +964,7 @@ def messages_analyzed_list(
     followed: str = "",
     match_current_stock: str = "",
     include_history: str = "",
-    default_end_days: int = 5,
+    default_end_days: int | None = None,
     as_of: str = "",
     sort: str = "produced_at",
     order: str = "desc",

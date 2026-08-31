@@ -4593,6 +4593,41 @@ class TestMessageFollowKeywords:
 
 
 @pytest.mark.unit
+class TestMessageDefaultEndDays:
+    """消息默认有效期：落盘与边界。"""
+
+    def test_default_without_file(self, tmp_path, monkeypatch):
+        from duanxian import message_default_end_days as mded
+
+        cfg = tmp_path / "message_default_end_days.json"
+        monkeypatch.setattr(mded, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mded, "_DAYS", None)
+        assert mded.load_days() == 5
+        env = mded.export_config()
+        assert env["default_end_days"] == 5
+        assert env["from_disk"] is False
+
+    def test_save_reload_and_clamp(self, tmp_path, monkeypatch):
+        from duanxian import message_default_end_days as mded
+
+        cfg = tmp_path / "message_default_end_days.json"
+        monkeypatch.setattr(mded, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mded, "_DAYS", None)
+        assert mded.save_days(10) == 10
+        monkeypatch.setattr(mded, "_DAYS", None)
+        assert mded.load_days() == 10
+        assert cfg.is_file()
+        env = mded.export_config()
+        assert env["from_disk"] is True
+        assert mded.clamp_days(0) == 1
+        assert mded.clamp_days(99) == 15
+        assert mded.clamp_days("x") == 5
+        with pytest.raises(mded.MessageDefaultEndDaysError):
+            mded.save_days(99)
+        assert mded.reset_days() == 5
+
+
+@pytest.mark.unit
 class TestMessageFollowBlocks:
     """消息关注板块：配置与目标命中。"""
 

@@ -85,6 +85,7 @@ export function getDefaultEndDays(): number {
   return DEFAULT_END_DAYS;
 }
 
+/** 写入本地缓存（正式落盘走后端配置 API） */
 export function setDefaultEndDays(days: number): void {
   const n = Math.min(15, Math.max(1, Math.round(days)));
   try {
@@ -92,6 +93,12 @@ export function setDefaultEndDays(days: number): void {
   } catch {
     /* 忽略 */
   }
+}
+
+/** 清洗为 1–15 的有效天数 */
+export function clampDefaultEndDays(days: number): number {
+  if (!Number.isFinite(days)) return DEFAULT_END_DAYS;
+  return Math.min(15, Math.max(1, Math.round(days)));
 }
 
 /** 将存储时间字符串加上指定天数 */

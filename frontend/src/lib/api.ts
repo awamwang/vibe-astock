@@ -738,6 +738,11 @@ export const api = {
     request<{ keywords: string[]; count: number }>("/config/zt-keywords", "POST", { keywords }),
   resetZtKeywords: () =>
     request<{ keywords: string[]; count: number }>("/config/zt-keywords/reset", "POST", {}),
+  messageDefaultEndDays: () => get<MessageDefaultEndDaysConfig>("/config/message-default-end-days"),
+  saveMessageDefaultEndDays: (default_end_days: number) =>
+    request<{ default_end_days: number }>("/config/message-default-end-days", "POST", { default_end_days }),
+  resetMessageDefaultEndDays: () =>
+    request<{ default_end_days: number }>("/config/message-default-end-days/reset", "POST", {}),
   messageFollowKeywords: () => get<MessageFollowKeywordConfig>("/config/message-follow-keywords"),
   saveMessageFollowKeywords: (keywords: string[]) =>
     request<{ keywords: string[]; count: number }>("/config/message-follow-keywords", "POST", { keywords }),
@@ -936,6 +941,14 @@ export interface ZtKeywordConfig {
   locked: string[];
   path: string;
   defaults: string[];
+}
+export interface MessageDefaultEndDaysConfig {
+  schema: number;
+  default_end_days: number;
+  min: number;
+  max: number;
+  from_disk: boolean;
+  path: string;
 }
 export interface MessageFollowKeywordConfig {
   schema: number;
