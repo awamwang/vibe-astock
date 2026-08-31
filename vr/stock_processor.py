@@ -125,3 +125,90 @@ def export_resolve(queries: list[dict[str, Any]]) -> dict[str, Any]:
         "by_key": {str(item.get("key") or ""): item for item in items if item.get("key")},
         "index": index_info(),
     }
+
+
+_CODE_IN_TEXT_RE = re.compile(r"(?<!\d)(\d{6})(?:\.(?:SZ|SH|BJ|sz|sh|bj))?(?!\d)")
+_NAME_CODE_RE = re.compile(
+    r"([\u4e00-\u9fffA-Za-z0-9·．.]{2,30}?)\s*[（(]\s*(\d{6})(?:\.(?:SZ|SH|BJ|sz|sh|bj))?\s*[）)]"
+)
+
+
+def _find_known_names(text: str, names: list[str], *, min_len: int = 3) -> list[str]:
+    """在正文中按最长优先、互不重叠扫描已知名称。"""
+    if not text or not names:
+        return []
+    ordered = sorted({n for n in names if n and len(n) >= min_len}, key=len, reverse=True)
+    occupied = [False] * len(text)
+    hits: list[str] = []
+    seen: set[str] = set()
+    for name in ordered:
+        start = 0
+        while True:
+            i = text.find(name, start)
+            if i < 0:
+                break
+            end = i + len(name)
+            if not any(occupied[i:end]):
+                for j in range(i, end):
+                    occupied[j] = True
+                if name not in seen:
+                    seen.add(name)
+                    hits.append(name)
+                break
+            start = i + 1
+    return hits
+
+
+def scan_text(text: str, *, min_name_len: int = 3) -> list[dict[str, Any]]:
+    """从正文扫描个股代码/名称，经 resolve 返回解析结果（去重）。"""
+    raw = text or ""
+    if not raw.strip():
+        return []
+
+    queries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(*, code: str | None = None, name: str | None = None) -> None:
+        key = make_key(code=code, name=name)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        queries.append({"code": code, "name": name})
+
+    for m in _NAME_CODE_RE.finditer(raw):
+        _add(code=m.group(2), name=m.group(1).strip())
+
+    for m in _CODE_IN_TEXT_RE.finditer(raw):
+        _add(code=m.group(1))
+
+    try:
+        stock_universe.ensure_loaded()
+        name_map = stock_universe.get_name_to_code()
+    except Exception:  # noqa: BLE001
+        name_map = {}
+    for name in _find_known_names(raw, list(name_map.keys()), min_len=min_name_len):
+        # 已按代码收录过的标的，不再用名称键重复加入
+        code = name_map.get(name)
+        if code and f"c:{code}" in seen:
+            continue
+        _add(name=name)
+
+    rows = resolve_many(queries)
+    out: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    seen_unmatched: set[str] = set()
+    for row in rows:
+        stock = row.get("stock") if isinstance(row.get("stock"), dict) else None
+        if stock and stock.get("code"):
+            code = str(stock["code"])
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            out.append(row)
+            continue
+        key = str(row.get("key") or "")
+        if key in seen_unmatched:
+            continue
+        seen_unmatched.add(key)
+        out.append(row)
+    return out

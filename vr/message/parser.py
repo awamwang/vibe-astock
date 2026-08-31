@@ -236,6 +236,10 @@ def parse_ingest(payload: IngestPayload, *, source_label: str = "") -> list[RawM
                     meta={"split_index": i, "split_mode": split_mode},
                 )
             )
+        from .content_targets import attach_targets_to_draft
+
+        for d in drafts:
+            attach_targets_to_draft(d)
         return drafts
 
     if fmt == "article":
@@ -378,7 +382,9 @@ def merge_drafts(drafts: list[RawMessageDraft], indices: list[int]) -> RawMessag
 
 def resplit_draft(draft: RawMessageDraft, mode: str = "blank") -> list[RawMessageDraft]:
     parts = _split_plain(draft.content, mode)
-    return [
+    from .content_targets import attach_targets_to_draft
+
+    out = [
         RawMessageDraft(
             draft_key=_draft_key(),
             source_id=draft.source_id,
@@ -392,6 +398,9 @@ def resplit_draft(draft: RawMessageDraft, mode: str = "blank") -> list[RawMessag
         )
         for p in parts
     ]
+    for d in out:
+        attach_targets_to_draft(d)
+    return out
 
 
 def _default_label(source_id: str) -> str:

@@ -26,6 +26,127 @@ def test_split_plain_blank(msg_db):
     assert "第二条" in drafts[1].content
 
 
+def test_plain_ingest_resolves_targets_per_chunk(msg_db, monkeypatch):
+    import stock_processor as sp
+    import stock_universe as su
+    from ths_block import cache as block_cache
+    from ths_block import linker
+    from ths_block import processor as bp
+
+    monkeypatch.setattr(su, "_by_code", {})
+    monkeypatch.setattr(su, "_name_to_code", {})
+    monkeypatch.setattr(su, "_loaded", False)
+    items = [
+        su.StockItem(code="002855", name="捷荣技术", market="SZ", types=("主板",)),
+        su.StockItem(code="600000", name="浦发银行", market="SH", types=("主板",)),
+    ]
+    su._apply_items(items, "cache", tried=("cache",), updated_at="2026-08-31 12:00:00", from_cache=True)
+
+    kinds = {}
+    for kind in linker.list_kinds():
+        label = {"conception": "概念", "industry": "行业"}.get(kind, kind)
+        blocks = {"D001": "折叠屏"} if kind == "conception" else {}
+        rows = [{"kind": kind, "kind_label": label, "id": bid, "name": name} for bid, name in blocks.items()]
+        kinds[kind] = {"kind": kind, "kind_label": label, "blocks": blocks, "rows": rows}
+    bp.clear_pending()
+    bp.invalidate_index()
+    block_cache.set_snapshot({"updated_at": "2026-08-31 12:00:00", "ths_dir": "/tmp", "kinds": kinds})
+    monkeypatch.setattr(
+        "duanxian.theme_normalize.canonicalize_tag",
+        lambda tag, aliases=None: str(tag or "").replace(" ", "").strip(),
+    )
+
+    text = (
+        "捷荣技术(002855.SZ)澄清AI液冷概念股。\n\n"
+        "浦发银行与折叠屏概念走势分化。"
+    )
+    drafts = parser.parse_ingest(IngestPayload(format="plain", source_id="manual", text=text))
+    assert len(drafts) == 2
+
+    t0 = drafts[0].targets
+    assert any(t.kind == "stock" and t.code == "002855" for t in t0)
+    assert any(t.kind == "sector" and t.name == "AI液冷" for t in t0)
+
+    t1 = drafts[1].targets
+    assert any(t.kind == "stock" and t.code == "600000" for t in t1)
+    assert any(t.kind == "sector" and t.name == "折叠屏" for t in t1)
+
+
+def test_xgb_content_targets_incremental(monkeypatch):
+    import stock_universe as su
+
+    monkeypatch.setattr(su, "_by_code", {})
+    monkeypatch.setattr(su, "_name_to_code", {})
+    monkeypatch.setattr(su, "_loaded", False)
+    su._apply_items(
+        [su.StockItem(code="601118", name="海南橡胶", market="SH", types=("主板",))],
+        "cache",
+        tried=("cache",),
+        updated_at="2026-08-31 12:00:00",
+        from_cache=True,
+    )
+    item = {
+        "Id": "xgb-body",
+        "Title": "农业股局部异动，海南橡胶触及涨停",
+        "Summary": "海南橡胶盘中涨停",
+        "AllStocks": [{"Name": "海南橡胶", "Symbol": "601118.SH"}],
+        "BkjInfoArr": [{"Id": "bk1", "Name": "农业"}],
+        "CreatedAtInSec": 1700000000,
+    }
+    draft = xgb.map_xgb_item(item)
+    stocks = [t for t in draft.targets if t.kind == "stock"]
+    assert len(stocks) == 1
+    assert stocks[0].code == "601118"
+    assert any(t.kind == "sector" and t.name == "农业" for t in draft.targets)
+
+
+def test_cls_content_targets_incremental(monkeypatch):
+    import stock_universe as su
+    from ths_block import cache as block_cache
+    from ths_block import linker
+    from ths_block import processor as bp
+
+    monkeypatch.setattr(su, "_by_code", {})
+    monkeypatch.setattr(su, "_name_to_code", {})
+    monkeypatch.setattr(su, "_loaded", False)
+    su._apply_items(
+        [su.StockItem(code="002855", name="捷荣技术", market="SZ", types=("主板",))],
+        "cache",
+        tried=("cache",),
+        updated_at="2026-08-31 12:00:00",
+        from_cache=True,
+    )
+    kinds = {}
+    for kind in linker.list_kinds():
+        label = {"conception": "概念"}.get(kind, kind)
+        blocks = {"D009": "折叠屏"} if kind == "conception" else {}
+        rows = [{"kind": kind, "kind_label": label, "id": bid, "name": name} for bid, name in blocks.items()]
+        kinds[kind] = {"kind": kind, "kind_label": label, "blocks": blocks, "rows": rows}
+    bp.clear_pending()
+    bp.invalidate_index()
+    block_cache.set_snapshot({"updated_at": "2026-08-31 12:00:00", "ths_dir": "/tmp", "kinds": kinds})
+    monkeypatch.setattr(
+        "duanxian.theme_normalize.canonicalize_tag",
+        lambda tag, aliases=None: str(tag or "").replace(" ", "").strip(),
+    )
+
+    item = {
+        "id": 3001,
+        "title": "捷荣技术：AI液冷相关收入占比极低",
+        "content": "【5连板捷荣技术：涉及AI液冷相关的精密结构件业务收入占公司营业收入比重极低】"
+        "财联社8月31日电，捷荣技术(002855.SZ)公告称，针对市场关注公司为“AI液冷概念股”的情况…"
+        "针对市场关注公司为“折叠屏概念股”的情况…",
+        "ctime": 1787752579,
+        "level": "B",
+        "subjects": [{"subject_name": "公司公告"}],
+    }
+    draft = cls.map_cls_item(item)
+    assert any(t.kind == "theme" and t.name == "公司公告" for t in draft.targets)
+    assert any(t.kind == "stock" and t.code == "002855" for t in draft.targets)
+    assert any(t.kind == "sector" and t.name == "AI液冷" for t in draft.targets)
+    assert any(t.kind == "sector" and t.name == "折叠屏" for t in draft.targets)
+
+
 def test_article_ingest_keeps_whole_text(msg_db):
     text = "白酒景气跟踪\n\n贵州茅台份额提升。\n\n行业集中度上行。"
     payload = IngestPayload(format="article", source_id="article", text=text)

@@ -100,6 +100,9 @@ def map_cls_item(item: dict[str, Any]) -> RawMessageDraft:
     elif level:
         marks.append(f"level:{level.lower()}")
     url = str(item.get("shareurl") or "")
+    from .content_targets import enrich_targets_from_content
+
+    targets = enrich_targets_from_content(f"{title}\n{body}", existing=extract_targets(item))
     return RawMessageDraft(
         draft_key=f"cls_{msg_id}",
         source_id="cls_telegraph",
@@ -111,11 +114,11 @@ def map_cls_item(item: dict[str, Any]) -> RawMessageDraft:
         marks=marks,
         external_ref=msg_id or None,
         produced_at=_ts_to_str(item.get("ctime")),
-        targets=extract_targets(item),
+        targets=targets,
         meta={
             "cls_raw": item,
             "cls_level": level or None,
-            "_targets_json": [t.model_dump() for t in extract_targets(item)],
+            "_targets_json": [t.model_dump() for t in targets],
         },
     )
 

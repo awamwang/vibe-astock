@@ -62,3 +62,15 @@ class TestStockProcessor:
         assert "c:600000" in data["by_key"]
         assert data["by_key"]["c:600000"]["status"] == "matched"
         assert data["by_key"]["n:半导体"]["status"] == "unmatched"
+
+    def test_scan_text_code_and_name(self):
+        rows = sp.scan_text("盘中浦发银行(600000.SH)走强，平安银行跟涨。")
+        codes = {r.get("stock", {}).get("code") for r in rows if r.get("status") == "matched"}
+        assert "600000" in codes
+        assert "000001" in codes
+
+    def test_scan_text_dedupes_name_code_pair(self):
+        rows = sp.scan_text("关注浦发银行（600000）")
+        matched = [r for r in rows if r.get("status") == "matched"]
+        assert len(matched) == 1
+        assert matched[0]["stock"]["code"] == "600000"

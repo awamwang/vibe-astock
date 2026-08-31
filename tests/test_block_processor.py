@@ -206,6 +206,19 @@ def test_resolve_many_and_index_info():
     assert exported["index"]["complete"] is True
 
 
+def test_scan_text_known_block_and_concept():
+    rows = bp.scan_text("市场关注华为概念与存储芯片，另有AI液冷概念股异动。", feed_unmatched=True)
+    matched_names = {
+        (r.get("block") or {}).get("name")
+        for r in rows
+        if r.get("status") == "matched"
+    }
+    assert "华为概念" in matched_names
+    assert "存储芯片" in matched_names
+    pending = bp.get_pending()
+    assert any(p.get("raw") == "AI液冷" or p.get("mapped") == "AI液冷" for p in pending)
+
+
 def test_schedule_ensure_kinds_cached_async(monkeypatch: pytest.MonkeyPatch):
     block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
     called: list[str] = []

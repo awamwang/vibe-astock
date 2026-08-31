@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -23,6 +24,7 @@ _SOURCE_SORT: dict[str, int] = {
     "firstboard_theme": 70,
     "firstboard_industry": 80,
     "article": 90,
+    "message_body": 95,
     "message_target": 100,
 }
 
@@ -37,8 +39,41 @@ _SOURCE_LABELS: dict[str, str] = {
     "firstboard_theme": "涨停分析·题材",
     "firstboard_industry": "涨停分析·行业",
     "article": "研报文章",
+    "message_body": "消息分析·正文",
     "message_target": "消息分析·关联标的",
 }
+
+_CONCEPT_SUFFIX_RE = re.compile(r"概念股|概念")
+_CONCEPT_FRAG_RE = re.compile(r"[A-Za-z0-9]{0,8}[\u4e00-\u9fff]{2,6}$")
+_CONCEPT_SPLIT_RE = re.compile(r"[，。；、！？\s「」『』\"'“”‘’\[\]（）()《》【】:：]")
+
+
+def _extract_concept_names(text: str) -> list[str]:
+    """从「xx概念股/概念」抽取题材名：在后缀前取尽可能短且合理的片段。"""
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _CONCEPT_SUFFIX_RE.finditer(text):
+        left = text[max(0, m.start() - 12) : m.start()]
+        left = _CONCEPT_SPLIT_RE.split(left)[-1]
+        if not left:
+            continue
+        candidates: list[str] = []
+        for i in range(len(left)):
+            frag = left[i:]
+            if _CONCEPT_FRAG_RE.fullmatch(frag):
+                candidates.append(frag)
+        if not candidates:
+            continue
+        ascii_start = [c for c in candidates if c and ("A" <= c[0] <= "Z" or "a" <= c[0] <= "z" or c[0].isdigit())]
+        pick = max(ascii_start, key=len) if ascii_start else min(candidates, key=len)
+        norm = _norm(pick)
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
+
 
 _LOCK = threading.Lock()
 _ENSURE_LOCK = threading.Lock()
@@ -347,6 +382,78 @@ def resolve_many(names: list[str]) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001
         index = {}
     return [resolve_one(raw, index=index) for raw in cleaned]
+
+
+def _find_known_names(text: str, names: list[str], *, min_len: int = 2) -> list[str]:
+    """在正文中按最长优先、互不重叠扫描已知板块名。"""
+    if not text or not names:
+        return []
+    ordered = sorted({n for n in names if n and len(n) >= min_len}, key=len, reverse=True)
+    occupied = [False] * len(text)
+    hits: list[str] = []
+    seen: set[str] = set()
+    for name in ordered:
+        start = 0
+        while True:
+            i = text.find(name, start)
+            if i < 0:
+                break
+            end = i + len(name)
+            if not any(occupied[i:end]):
+                for j in range(i, end):
+                    occupied[j] = True
+                if name not in seen:
+                    seen.add(name)
+                    hits.append(name)
+                break
+            start = i + 1
+    return hits
+
+
+def scan_text(
+    text: str,
+    *,
+    min_name_len: int = 2,
+    feed_unmatched: bool = True,
+) -> list[dict[str, Any]]:
+    """从正文扫描板块/题材名（含「xx概念股」），经 resolve 返回解析结果。"""
+    raw = text or ""
+    if not raw.strip():
+        return []
+    try:
+        index = _get_name_index(ensure=False)
+    except Exception:  # noqa: BLE001
+        index = {}
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        norm = _norm(name)
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        candidates.append(norm)
+
+    for name in _find_known_names(raw, list(index.keys()), min_len=min_name_len):
+        _add(name)
+    for name in _extract_concept_names(raw):
+        _add(name)
+
+    results = resolve_many(candidates)
+    if feed_unmatched:
+        pending_names = [
+            str(r.get("mapped") or r.get("raw") or "")
+            for r in results
+            if r.get("status") in ("unmatched", "partial")
+        ]
+        pending_names = [n for n in pending_names if n]
+        if pending_names:
+            try:
+                feed("message_body", pending_names)
+            except Exception:  # noqa: BLE001
+                pass
+    return results
 
 
 def export_resolve(names: list[str]) -> dict[str, Any]:

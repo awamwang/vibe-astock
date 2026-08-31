@@ -87,7 +87,9 @@ def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
             ts = int(dt.timestamp())
         except ValueError:
             ts = None
-    targets = extract_targets(item)
+    from .content_targets import enrich_targets_from_content
+
+    targets = enrich_targets_from_content(f"{title}\n{body}", existing=extract_targets(item))
     marks: list[str] = []
     if item.get("IsWithdrawn"):
         marks.append("withdrawn")
@@ -186,7 +188,8 @@ def fetch_pc_msgs(
 
 
 def resync_targets_from_meta(*, path: str | None = None, limit: int = 500) -> int:
-    """从历史 raw.meta（含 xgb_raw）重建关联标的到 analyzed。"""
+    """从历史 raw.meta（含 xgb_raw）重建关联标的到 analyzed，并增量合并正文扫描结果。"""
+    from .content_targets import enrich_targets_from_content
     from .schemas import ListQuery
 
     raws, _ = store.list_raw(ListQuery(source="xgb_msgs", limit=limit), path=path)
@@ -195,8 +198,10 @@ def resync_targets_from_meta(*, path: str | None = None, limit: int = 500) -> in
         targets: list[dict] = list(raw.meta.get("_targets_json") or [])
         if not targets and isinstance(raw.meta.get("xgb_raw"), dict):
             targets = [t.model_dump() for t in extract_targets(raw.meta["xgb_raw"])]
-        if not targets:
+        body = f"{raw.title}\n{raw.content}"
+        merged = enrich_targets_from_content(body, existing=targets)
+        if not merged:
             continue
-        store.upsert_analyzed_from_raw(raw, patch={"targets": targets}, path=path)
+        store.upsert_analyzed_from_raw(raw, patch={"targets": [t.model_dump() for t in merged]}, path=path)
         n += 1
     return n
