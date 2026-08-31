@@ -604,9 +604,16 @@ python -m duanxian.plugin_cli list
 
 **示例**（`on_register` 内绑定后上报）：
 
+引擎在激活前写入 `info` /「加载中…」（自动重启时为「正在自动重启…」）。`on_enable` 成功后：
+
+- 若插件已 `report_status` 为非占位文案（如「已连接 ths-linker」），保留插件上报；
+- 若仍为引擎占位或未上报，则恢复为 `ok` /「已加载」。
+
+插件若需展示自己的启动过程，可在连接前 `report_status("info", "加载中…")`，成功后再报 `ok`；**勿**在 `on_enable` 返回后仍停留在引擎占位文案上而不再更新。
+
 ```python
 def on_register(reg: HookRegistry) -> None:
-    reg.report_status("info", "等待 ths-linker 连接…")
+    reg.report_status("info", "加载中…")
     try:
         connect_external()
         reg.report_status("ok", "已连接外部服务")

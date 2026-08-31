@@ -777,6 +777,8 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
 
     registry.bind_plugin(lp.id)
     try:
+        # 启动过程占位；on_enable 成功后若插件未另行上报，则恢复为「已加载」
+        ps.set_status(lp.id, "info", ps.MSG_LOADING)
         activate_fn = lp.pack.on_enable or lp.pack.on_register
         if activate_fn is not None:
             try:
@@ -791,7 +793,11 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
             else:
                 st = ps.get_status(lp.id)
                 # 插件未上报，或仍是引擎占位/旧错误时，标为已加载
-                if st is None or st.level in ("error", "off") or st.message == "正在自动重启…":
+                if (
+                    st is None
+                    or st.level in ("error", "off")
+                    or ps.is_engine_transient(st)
+                ):
                     ps.set_status(lp.id, "ok", "已加载")
         else:
             ps.set_status(lp.id, "ok", "已加载")
@@ -897,7 +903,7 @@ def apply_plugin_restart(plugin_id: str) -> LoadedPlugin | None:
         _rebuild_metric_providers(PLUGINS)
         _unload_module(plugin_id)
 
-    ps.set_status(plugin_id, "info", "正在自动重启…")
+    ps.set_status(plugin_id, "info", ps.MSG_RESTARTING)
     print(f"ℹ️ 正在自动重启插件（id={plugin_id}）")
     return apply_plugin_enable(plugin_id)
 

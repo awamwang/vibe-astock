@@ -262,6 +262,9 @@ class ThsLinkerBridge:
         self._push_thread: threading.Thread | None = None
 
     def start(self) -> None:
+        from duanxian import plugin_status as ps
+
+        self._reg.report_status("info", ps.MSG_LOADING)
         self._client.connect()
         snap = self._client.drain_initial()
         if snap is None:
@@ -289,9 +292,7 @@ class ThsLinkerBridge:
         self._thread.start()
         self._push_thread = threading.Thread(target=self._push_worker, name="ths-linker-push", daemon=True)
         self._push_thread.start()
-        detail = f"pid={self._instance.get('id')} ths_dir={self._ths_dir}"
-        print(f"[vibe-ths-linker] 已绑定实例 {detail}")
-        self._reg.report_status("ok", "已连接 ths-linker", detail)
+        self._report_connected()
 
     def stop(self) -> None:
         self._stop.set()
@@ -315,6 +316,29 @@ class ThsLinkerBridge:
         if self._plugin_id:
             ps.set_status(self._plugin_id, level, message, detail)
 
+    def _connected_detail(self) -> str:
+        return f"pid={self._instance.get('id') if self._instance else ''} ths_dir={self._ths_dir}"
+
+    def _report_connected(self, *, log: bool = True) -> None:
+        detail = self._connected_detail()
+        if log:
+            print(f"[vibe-ths-linker] 已绑定实例 {detail}")
+        try:
+            self._reg.report_status("ok", "已连接 ths-linker", detail)
+        except RuntimeError:
+            # 后台线程中 registry 已解绑，直接写状态
+            self._report_status("ok", "已连接 ths-linker", detail)
+
+    def _restore_ok_if_needed(self) -> None:
+        """同步/重连成功后，若仍停在 warn/error/占位态则恢复为已连接。"""
+        from duanxian import plugin_status as ps
+
+        if not self._plugin_id:
+            return
+        st = ps.get_status(self._plugin_id)
+        if st is None or st.level in ("warn", "error") or ps.is_engine_transient(st):
+            self._report_connected(log=False)
+
     def _run_loop(self) -> None:
         last_sync = 0.0
         while not self._stop.is_set():
@@ -324,6 +348,7 @@ class ThsLinkerBridge:
                     self._sync_watchlist()
                     self._sync_risk_control()
                     last_sync = now
+                    self._restore_ok_if_needed()
             except Exception as exc:  # noqa: BLE001
                 err = f"{type(exc).__name__}: {exc}"
                 print(f"⚠️ [vibe-ths-linker] 同步异常：{err}")
@@ -340,6 +365,7 @@ class ThsLinkerBridge:
                         )
                     self._ready = True
                     self._flush_pending_pushes()
+                    self._report_connected(log=False)
                 except Exception as re_exc:  # noqa: BLE001
                     re_err = f"{type(re_exc).__name__}: {re_exc}"
                     print(f"⚠️ [vibe-ths-linker] 重连失败：{re_exc}")

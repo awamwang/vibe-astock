@@ -9,6 +9,11 @@ from .util import china_now
 
 _VALID_LEVELS = frozenset({"ok", "info", "warn", "error", "off"})
 
+# 引擎占位文案：启动/重启过程中写入；激活成功后若仍为此文案则恢复为「已加载」
+MSG_LOADING = "加载中…"
+MSG_RESTARTING = "正在自动重启…"
+_ENGINE_TRANSIENT_MESSAGES = frozenset({MSG_LOADING, MSG_RESTARTING})
+
 
 @dataclass(frozen=True)
 class PluginStatus:
@@ -26,6 +31,11 @@ def _now_iso() -> str:
     if len(now) > 5 and now[-5] in "+-":
         now = f"{now[:-2]}:{now[-2:]}"
     return now
+
+
+def is_engine_transient(st: PluginStatus | None) -> bool:
+    """是否为引擎启动/重启占位状态（加载完毕后应被覆盖）。"""
+    return st is not None and st.message in _ENGINE_TRANSIENT_MESSAGES
 
 
 def set_status(

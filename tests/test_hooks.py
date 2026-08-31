@@ -535,6 +535,52 @@ PACK = HookPack(
         st = pstat.get_status(rec.id)
         assert st is not None
         assert st.level == "ok"
+        assert st.message == "已加载"
+
+    def test_enable_recovers_from_loading_placeholder(self, plugin_home):
+        """启动占位「加载中…」在 on_enable 成功后必须恢复，不能一直停在加载态。"""
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import apply_plugin_enable
+
+        p = plugin_home / "loading_ok.py"
+        p.write_text(self._LIFECYCLE_SRC, encoding="utf-8")
+        rec = ps.register(str(p))
+        pstat.set_status(rec.id, "info", pstat.MSG_LOADING)
+        apply_plugin_enable(rec.id)
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "ok"
+        assert st.message == "已加载"
+        assert not pstat.is_engine_transient(st)
+
+    def test_enable_keeps_plugin_reported_ok(self, plugin_home):
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian.hooks import apply_plugin_enable
+
+        src = '''
+from duanxian.hooks import HookPack, HookRegistry
+
+def on_enable(reg: HookRegistry) -> None:
+    reg.report_status("info", "加载中…")
+    reg.report_status("ok", "已连接 ths-linker", "pid=1")
+
+PACK = HookPack(
+    name="report-ok",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+)
+'''
+        p = plugin_home / "report_ok.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "ok"
+        assert st.message == "已连接 ths-linker"
 
 
 @pytest.mark.unit

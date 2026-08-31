@@ -172,10 +172,27 @@ export function PluginManagement() {
       })
       .finally(() => setLoaded(true));
 
+  const needsStatusPoll = plugins.some((p) => {
+    const lv = p.runtime_status?.level;
+    const msg = p.runtime_status?.message || "";
+    return lv === "info" || lv === "warn" || lv === "error"
+      || msg.includes("加载中") || msg.includes("自动重启");
+  });
+
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 启动/重启占位或异常态时轮询，便于加载完毕后看到恢复后的状态
+  useEffect(() => {
+    if (!needsStatusPoll) return;
+    const t = window.setInterval(() => {
+      void reload();
+    }, 2000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsStatusPoll]);
 
   const busy = installing || picking || actingId !== null || openingId !== null;
 
