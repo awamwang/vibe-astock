@@ -8,10 +8,10 @@ import type {
   ConsecPremium, EmotionCycle, EmotionMetrics, LadderGap, MoneyEffect, Promotion,
 } from "@/lib/agent";
 
-/** 0~1 的比率 → 百分比文本 */
+/** 0~1 的比率 → 百分比文本（保留两位小数） */
 function rate(v?: number | null): string {
   const n = finite(v);
-  return n == null ? "—" : `${Math.round(n * 100)}%`;
+  return n == null ? "—" : `${(n * 100).toFixed(2)}%`;
 }
 /** 涨跌幅数字 → 带符号文本 */
 function signed(v?: number | null): string {

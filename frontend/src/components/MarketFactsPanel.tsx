@@ -26,6 +26,12 @@ function hhmm(t?: string | null): string {
   if (!t || t.length < 4) return "—";
   return `${t.slice(0, 2)}:${t.slice(2, 4)}`;
 }
+/** 历史分位着色：前 50% 红、后 50% 绿、恰好 50% 黄 */
+function percentileTone(p: number): { bar: string; text: string } {
+  if (p > 0.5) return { bar: "bg-danger", text: "text-danger" };
+  if (p < 0.5) return { bar: "bg-success", text: "text-success" };
+  return { bar: "bg-warning", text: "text-warning" };
+}
 
 /** 统计读数按 kind 格式化。裸值直接印会让同一列里"家数=61"和"炸板率=0.23"并排，
  *  读者分不清哪个是百分比 —— 后端喂 AI 的文本一直是格式化过的，界面也该一致。
@@ -233,22 +239,25 @@ export function StatsView({ c }: { c?: StatsContext }) {
       reason={c?.reason}
     >
       <div className="space-y-1.5">
-        {items.map((it) => (
+        {items.map((it) => {
+          const tone = it.percentile != null ? percentileTone(it.percentile) : null;
+          return (
           <div key={it.key} className="flex flex-wrap items-center gap-2 text-[12px] tabular-nums">
             <span className="w-24 shrink-0 text-muted-foreground">{it.label}</span>
             <span className="w-16 font-bold">{it.value_text}</span>
-            {it.percentile != null ? (
+            {it.percentile != null && tone ? (
               <>
-                {/* 分位条：位置比数字直观 */}
+                {/* 分位条：位置比数字直观；颜色按前/后 50% 分 */}
                 <span className="relative h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                  <span className={cn("absolute inset-y-0 left-0 rounded-full",
-                    it.extreme ? (it.extreme === "偏热" ? "bg-danger" : "bg-info") : "bg-primary/60")}
+                  <span className={cn("absolute inset-y-0 left-0 rounded-full", tone.bar)}
                     style={{ width: `${Math.max(2, it.percentile * 100)}%` }} />
                 </span>
-                <span className="w-10 text-muted-foreground">{Math.round(it.percentile * 100)}%</span>
+                <span className={cn("w-10 font-semibold", tone.text)}>
+                  {Math.round(it.percentile * 100)}%
+                </span>
                 {it.extreme && (
                   <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
-                    it.extreme === "偏热" ? "bg-danger/15 text-danger" : "bg-info/15 text-info")}>
+                    it.extreme === "偏热" ? "bg-danger/15 text-danger" : "bg-success/15 text-success")}>
                     {it.extreme}
                   </span>
                 )}
@@ -262,7 +271,8 @@ export function StatsView({ c }: { c?: StatsContext }) {
               </span>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
       <p className="mt-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
         对比近 <b className="text-foreground">{c?.sample_days ?? "—"}</b> 个交易日
@@ -296,12 +306,12 @@ export function DiffView({ d }: { d?: DayDiff }) {
             <div key={c.key} className="flex flex-wrap items-center gap-2 text-[12px] tabular-nums">
               <span className="w-24 shrink-0 text-muted-foreground">{c.label}</span>
               <span className="text-muted-foreground/70">{d?.prev_date || "昨日"} {c.prev_text}</span>
-              <span className={cn("font-bold", c.hotter ? "text-danger" : "text-info")}>
+              <span className={cn("font-bold", c.hotter ? "text-danger" : "text-success")}>
                 {c.delta > 0 ? "↑" : "↓"}
               </span>
               <span className="font-bold">{d?.date || "今日"} {c.cur_text}</span>
               <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-bold",
-                c.hotter ? "bg-danger/15 text-danger" : "bg-info/15 text-info")}>
+                c.hotter ? "bg-danger/15 text-danger" : "bg-success/15 text-success")}>
                 {c.hotter ? "转热" : "转冷"}
               </span>
             </div>
