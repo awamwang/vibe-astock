@@ -145,7 +145,7 @@ export function sortRowsByTreeOrder(rows: ThsBlockRow[]): ThsBlockRow[] {
 /** 板块映射成功时的标签样式 */
 export function blockMatchedClass(matched?: boolean): string {
   return matched
-    ? "border-emerald-500/40 bg-emerald-500/10 font-medium text-emerald-800 ring-1 ring-emerald-500/25 dark:text-emerald-300"
+    ? "border-blue-500/40 bg-blue-500/10 font-medium text-blue-800 ring-1 ring-blue-500/25 dark:text-blue-300"
     : "";
 }
 

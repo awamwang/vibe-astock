@@ -114,7 +114,7 @@ export function StockLabel({
       {menu && panel && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[80] min-w-[10.5rem] overflow-hidden rounded-lg border border-border/70 bg-popover py-1 text-sm shadow-lg"
+          className="fixed z-[80] min-w-[10.5rem] overflow-hidden rounded-lg border border-border bg-card py-1 text-sm text-foreground shadow-lg"
           style={{
             left: Math.min(menu.x, window.innerWidth - 180),
             top: Math.min(menu.y, window.innerHeight - 100),
