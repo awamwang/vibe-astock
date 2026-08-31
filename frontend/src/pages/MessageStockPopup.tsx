@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { MessageStockLinkPanel, useMessageStockLinkList } from "@/components/MessageStockPip";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { getDefaultEndDays } from "@/lib/messages";
+import { attachPopupGeometryPersistence } from "@/lib/sectionPopup";
 
 /** 独立路由页：/messages/pip，可单独打开或由「独立弹窗」按钮弹出 */
 export function MessageStockPopup() {
@@ -15,6 +16,8 @@ export function MessageStockPopup() {
   useEffect(() => {
     document.title = code ? `${code} · 消息联动` : "消息联动";
   }, [code]);
+
+  useEffect(() => attachPopupGeometryPersistence(), []);
 
   return (
     <MessageStockLinkPanel

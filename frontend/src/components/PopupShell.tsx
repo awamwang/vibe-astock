@@ -1,17 +1,17 @@
 import { useEffect, type ReactNode } from "react";
-import { X } from "lucide-react";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import { attachPopupGeometryPersistence } from "@/lib/sectionPopup";
 import { cn } from "@/lib/utils";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
-/** 独立弹窗页外壳：主题同步、标题栏、可关闭 */
+/** 独立弹窗页外壳：主题同步、文档标题、记住窗口大小（无应用内标题栏） */
 export function PopupShell({
   title,
-  subtitle,
   children,
   className,
   bodyClassName,
 }: {
   title: string;
+  /** 保留调用方兼容；不再渲染应用内标题栏 */
   subtitle?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -23,30 +23,10 @@ export function PopupShell({
     document.title = title;
   }, [title]);
 
+  useEffect(() => attachPopupGeometryPersistence(), []);
+
   return (
     <div className={cn("flex h-screen flex-col bg-background text-foreground", className)}>
-      <header className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">{title}</p>
-          {subtitle && (
-            <div className="truncate text-[11px] text-muted-foreground">{subtitle}</div>
-          )}
-        </div>
-        <button
-          type="button"
-          className="rounded-md p-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-          title="关闭"
-          onClick={() => {
-            try {
-              window.close();
-            } catch {
-              /* 非脚本打开的窗口可能关不掉 */
-            }
-          }}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
       <div className={cn("min-h-0 flex-1 overflow-auto p-3", bodyClassName)}>
         {children}
       </div>
