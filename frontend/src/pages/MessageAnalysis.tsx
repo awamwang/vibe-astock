@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
   Plus, Trash2, ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
@@ -53,10 +53,52 @@ const quickSelectCls =
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
+const SEARCH_DEBOUNCE_MS = 300;
 const HIDDEN_SOURCE_IDS = new Set(["paste", "structured"]);
 
 type ViewMode = "calendar" | "list";
 type NavFocusPane = "list" | "detail";
+
+/** 解析列表页码 URL 参数，非法或缺失时回退为第 1 页 */
+function parseListPage(raw: string | null): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.floor(n);
+}
+
+/** 解析逗号分隔的多选筛选参数 */
+function parseCsvParam(raw: string | null): string[] {
+  if (!raw?.trim()) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/** 解析布尔筛选参数（yes/1/true） */
+function parseFlagParam(raw: string | null): boolean {
+  const v = (raw || "").trim().toLowerCase();
+  return v === "yes" || v === "1" || v === "true";
+}
+
+function setCsvParam(params: URLSearchParams, key: string, values: string[]) {
+  if (values.length) params.set(key, values.join(","));
+  else params.delete(key);
+}
+
+function setFlagParam(params: URLSearchParams, key: string, on: boolean) {
+  if (on) params.set(key, "yes");
+  else params.delete(key);
+}
+
+type ListQueryPatch = {
+  q?: string;
+  page?: number | ((prev: number) => number);
+  source?: string[];
+  impact_level?: string[];
+  effect_status?: string[];
+  followed?: string[];
+  favorited?: string[];
+  follow_stock?: boolean;
+  include_history?: boolean;
+};
 
 /** 输入控件内不响应条目切换快捷键 */
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -610,6 +652,73 @@ function FollowStockHint({
 }
 
 export function MessageAnalysis() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = searchParams.get("q") ?? "";
+  const page = parseListPage(searchParams.get("page"));
+  const sourceParam = searchParams.get("source");
+  const impactParam = searchParams.get("impact_level");
+  const effectParam = searchParams.get("effect_status");
+  const followedParam = searchParams.get("followed");
+  const favoritedParam = searchParams.get("favorited");
+  const sourcesFilter = useMemo(() => parseCsvParam(sourceParam), [sourceParam]);
+  const impactLevels = useMemo(() => parseCsvParam(impactParam), [impactParam]);
+  const effectStatuses = useMemo(() => parseCsvParam(effectParam), [effectParam]);
+  const followedFilter = useMemo(() => parseCsvParam(followedParam), [followedParam]);
+  const favoritedFilter = useMemo(() => parseCsvParam(favoritedParam), [favoritedParam]);
+  const followStockChange = parseFlagParam(searchParams.get("follow_stock"));
+  const includeHistory = parseFlagParam(searchParams.get("include_history"));
+  const [qInput, setQInput] = useState(q);
+
+  /** 同步筛选条件 / 分页到 URL（缺省值不占参数） */
+  const patchListQuery = useCallback(
+    (patch: ListQueryPatch, replace = true) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if ("q" in patch) {
+          const v = patch.q ?? "";
+          if (v) next.set("q", v);
+          else next.delete("q");
+        }
+        if ("page" in patch) {
+          const cur = parseListPage(prev.get("page"));
+          const raw = patch.page!;
+          const resolved = typeof raw === "function" ? raw(cur) : raw;
+          const n = Math.max(1, Math.floor(Number(resolved) || 1));
+          if (n <= 1) next.delete("page");
+          else next.set("page", String(n));
+        }
+        if ("source" in patch) setCsvParam(next, "source", patch.source ?? []);
+        if ("impact_level" in patch) setCsvParam(next, "impact_level", patch.impact_level ?? []);
+        if ("effect_status" in patch) setCsvParam(next, "effect_status", patch.effect_status ?? []);
+        if ("followed" in patch) setCsvParam(next, "followed", patch.followed ?? []);
+        if ("favorited" in patch) setCsvParam(next, "favorited", patch.favorited ?? []);
+        if ("follow_stock" in patch) setFlagParam(next, "follow_stock", Boolean(patch.follow_stock));
+        if ("include_history" in patch) setFlagParam(next, "include_history", Boolean(patch.include_history));
+        if (next.toString() === prev.toString()) return prev;
+        return next;
+      }, { replace });
+    },
+    [setSearchParams],
+  );
+  const setPage = useCallback(
+    (value: number | ((prev: number) => number)) => patchListQuery({ page: value }),
+    [patchListQuery],
+  );
+
+  // URL → 输入框（后退 / 分享链接 / 重置）
+  useEffect(() => {
+    setQInput(q);
+  }, [q]);
+
+  // 输入框 → URL（防抖后再触发列表请求）
+  useEffect(() => {
+    if (qInput === q) return;
+    const timer = window.setTimeout(() => {
+      patchListQuery({ q: qInput, page: 1 });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [qInput, q, patchListQuery]);
+
   const [sources, setSources] = useState<MessageSourceInfo[]>([]);
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
@@ -618,19 +727,10 @@ export function MessageAnalysis() {
   const [pollingCls, setPollingCls] = useState(false);
   const pollInFlight = useRef(false);
 
-  const [q, setQ] = useState("");
-  const [sourcesFilter, setSourcesFilter] = useState<string[]>([]);
-  const [impactLevels, setImpactLevels] = useState<string[]>([]);
-  const [effectStatuses, setEffectStatuses] = useState<string[]>([]);
-  const [followedFilter, setFollowedFilter] = useState<string[]>([]);
-  const [favoritedFilter, setFavoritedFilter] = useState<string[]>([]);
-  const [followStockChange, setFollowStockChange] = useState(false);
-  const [includeHistory, setIncludeHistory] = useState(false);
   const { code: currentStockCode, status: currentStockStatus, error: currentStockError } =
     usePluginCurrentStock(followStockChange);
   const [sort, setSort] = useState("produced_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
-  const [page, setPage] = useState(1);
   const listScrollRef = useRef<HTMLDivElement>(null);
   const listPaneRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLDivElement>(null);
@@ -714,6 +814,7 @@ export function MessageAnalysis() {
   const hasActiveFilters = useMemo(
     () =>
       q.trim() !== "" ||
+      qInput.trim() !== "" ||
       sourcesFilter.length > 0 ||
       impactLevels.length > 0 ||
       effectStatuses.length > 0 ||
@@ -721,19 +822,22 @@ export function MessageAnalysis() {
       favoritedFilter.length > 0 ||
       followStockChange ||
       includeHistory,
-    [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory],
+    [q, qInput, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory],
   );
 
   const resetFilters = () => {
-    setPage(1);
-    setQ("");
-    setSourcesFilter([]);
-    setImpactLevels([]);
-    setEffectStatuses([]);
-    setFollowedFilter([]);
-    setFavoritedFilter([]);
-    setFollowStockChange(false);
-    setIncludeHistory(false);
+    setQInput("");
+    patchListQuery({
+      q: "",
+      page: 1,
+      source: [],
+      impact_level: [],
+      effect_status: [],
+      followed: [],
+      favorited: [],
+      follow_stock: false,
+      include_history: false,
+    });
   };
 
   const onDefaultEndDaysChange = (days: number) => {
@@ -1452,12 +1556,13 @@ export function MessageAnalysis() {
             <input
               className={inputCls}
               placeholder="搜索标题、摘要、关键词…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                if (qInput !== q) patchListQuery({ q: qInput, page: 1 });
+                else void refreshMessages();
               }}
-              onKeyDown={(e) => e.key === "Enter" && refreshMessages()}
             />
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 lg:gap-3">
@@ -1465,28 +1570,19 @@ export function MessageAnalysis() {
               placeholder="全部来源"
               options={sourceFilterOptions}
               selected={sourcesFilter}
-              onChange={(v) => {
-                setPage(1);
-                setSourcesFilter(v);
-              }}
+              onChange={(v) => patchListQuery({ source: v, page: 1 })}
             />
             <FilterMultiSelect
               placeholder="全部级别"
               options={Object.entries(IMPACT_LABEL).map(([k, v]) => ({ value: k, label: v }))}
               selected={impactLevels}
-              onChange={(v) => {
-                setPage(1);
-                setImpactLevels(v);
-              }}
+              onChange={(v) => patchListQuery({ impact_level: v, page: 1 })}
             />
             <FilterMultiSelect
               placeholder="全部生效"
               options={EFFECT_STATUS_OPTIONS.map((k) => ({ value: k, label: EFFECT_LABEL[k] }))}
               selected={effectStatuses}
-              onChange={(v) => {
-                setPage(1);
-                setEffectStatuses(v);
-              }}
+              onChange={(v) => patchListQuery({ effect_status: v, page: 1 })}
             />
             <FilterMultiSelect
               placeholder="全部关注"
@@ -1495,10 +1591,7 @@ export function MessageAnalysis() {
                 { value: "no", label: "未关注" },
               ]}
               selected={followedFilter}
-              onChange={(v) => {
-                setPage(1);
-                setFollowedFilter(v);
-              }}
+              onChange={(v) => patchListQuery({ followed: v, page: 1 })}
             />
             <FilterMultiSelect
               placeholder="全部收藏"
@@ -1507,10 +1600,7 @@ export function MessageAnalysis() {
                 { value: "no", label: "未收藏" },
               ]}
               selected={favoritedFilter}
-              onChange={(v) => {
-                setPage(1);
-                setFavoritedFilter(v);
-              }}
+              onChange={(v) => patchListQuery({ favorited: v, page: 1 })}
             />
             <label
               className={cn(
@@ -1525,10 +1615,7 @@ export function MessageAnalysis() {
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
                 checked={followStockChange}
-                onChange={(e) => {
-                  setPage(1);
-                  setFollowStockChange(e.target.checked);
-                }}
+                onChange={(e) => patchListQuery({ follow_stock: e.target.checked, page: 1 })}
               />
               <span>跟随股票变化</span>
               {followStockChange && (
@@ -1554,10 +1641,7 @@ export function MessageAnalysis() {
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
                 checked={includeHistory}
-                onChange={(e) => {
-                  setPage(1);
-                  setIncludeHistory(e.target.checked);
-                }}
+                onChange={(e) => patchListQuery({ include_history: e.target.checked, page: 1 })}
               />
               <span>包含历史消息</span>
             </label>
