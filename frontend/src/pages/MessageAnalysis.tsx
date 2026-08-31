@@ -56,6 +56,16 @@ const CALENDAR_LIMIT = 1000;
 const HIDDEN_SOURCE_IDS = new Set(["paste", "structured"]);
 
 type ViewMode = "calendar" | "list";
+type NavFocusPane = "list" | "detail";
+
+/** 输入控件内不响应条目切换快捷键 */
+function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  return Boolean(el.closest("[contenteditable='true']"));
+}
 
 function nowStorageDatetime(): string {
   const d = new Date();
@@ -622,6 +632,10 @@ export function MessageAnalysis() {
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const listScrollRef = useRef<HTMLDivElement>(null);
+  const listPaneRef = useRef<HTMLDivElement>(null);
+  const detailPaneRef = useRef<HTMLDivElement>(null);
+  const detailReqId = useRef(0);
+  const [navFocus, setNavFocus] = useState<NavFocusPane | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const nowInit = useMemo(() => new Date(), []);
   const [calendarYear, setCalendarYear] = useState(nowInit.getFullYear());
@@ -828,25 +842,36 @@ export function MessageAnalysis() {
   }, [viewMode, loadCalendar, loadList]);
 
   const loadDetail = useCallback(async (item: AnalyzedMessage) => {
+    const reqId = ++detailReqId.current;
     setSelected(item);
     setRawMessages([]);
     setDetailLoading(true);
     try {
       const detail = await api.messageAnalyzedDetail(item.id);
+      if (reqId !== detailReqId.current) return;
       setSelected(detail);
       setRawMessages(detail.raw_messages || []);
     } catch (e) {
+      if (reqId !== detailReqId.current) return;
       notify.error(e instanceof ApiError ? e.message : "加载详情失败");
     } finally {
-      setDetailLoading(false);
+      if (reqId === detailReqId.current) setDetailLoading(false);
     }
   }, []);
 
-  const selectItem = (item: AnalyzedMessage) => {
+  const focusNavPane = useCallback((pane: NavFocusPane) => {
+    setNavFocus(pane);
+    const el = pane === "list" ? listPaneRef.current : detailPaneRef.current;
+    el?.focus({ preventScroll: true });
+  }, []);
+
+  const selectItem = useCallback((item: AnalyzedMessage, focus: NavFocusPane = "list") => {
     setEditing(false);
     setEditDraft(null);
     void loadDetail(item);
-  };
+    // 下一帧聚焦，避免点击行时焦点落在不可导航区域
+    requestAnimationFrame(() => focusNavPane(focus));
+  }, [loadDetail, focusNavPane]);
 
   /** 详情左右切换所依据的当前可见列表（列表页 / 日历月内） */
   const detailNavItems = viewMode === "calendar" ? calendarItems : items;
@@ -856,12 +881,14 @@ export function MessageAnalysis() {
   const canNavPrev = detailNavIndex > 0;
   const canNavNext = detailNavIndex >= 0 && detailNavIndex < detailNavItems.length - 1;
 
-  const selectAdjacent = (delta: -1 | 1) => {
-    if (detailNavIndex < 0) return;
-    const next = detailNavItems[detailNavIndex + delta];
+  const selectAdjacent = useCallback((delta: -1 | 1, focus: NavFocusPane = "detail") => {
+    const list = viewMode === "calendar" ? calendarItems : items;
+    const idx = selected ? list.findIndex((x) => x.id === selected.id) : -1;
+    if (idx < 0) return;
+    const next = list[idx + delta];
     if (!next) return;
-    selectItem(next);
-  };
+    selectItem(next, focus);
+  }, [viewMode, calendarItems, items, selected, selectItem]);
 
   // 选中项变化时，列表行滚入可视区
   useEffect(() => {
@@ -871,6 +898,48 @@ export function MessageAnalysis() {
     );
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selected?.id, viewMode, page]);
+
+  // 列表聚焦：↑↓；详情聚焦：←→（录入弹层 / 编辑输入中不抢键）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (ingestOpen || editing) return;
+      if (isTypingTarget(e.target)) return;
+      if (navFocus !== "list" && navFocus !== "detail") return;
+
+      const pane = navFocus === "list" ? listPaneRef.current : detailPaneRef.current;
+      const active = document.activeElement;
+      // 焦点已离开列表/详情区域时不响应（例如点到顶部筛选）
+      if (pane && active && active !== pane && !pane.contains(active)) return;
+
+      let delta: -1 | 1 | null = null;
+      if (navFocus === "list") {
+        if (e.key === "ArrowUp") delta = -1;
+        else if (e.key === "ArrowDown") delta = 1;
+      } else if (navFocus === "detail") {
+        if (e.key === "ArrowLeft") delta = -1;
+        else if (e.key === "ArrowRight") delta = 1;
+      }
+      if (delta == null) return;
+
+      const list = viewMode === "calendar" ? calendarItems : items;
+      const idx = selected ? list.findIndex((x) => x.id === selected.id) : -1;
+      if (idx < 0) {
+        if (list.length === 0) return;
+        e.preventDefault();
+        selectItem(list[0], navFocus);
+        return;
+      }
+      const next = list[idx + delta];
+      if (!next) return;
+      e.preventDefault();
+      selectItem(next, navFocus);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    ingestOpen, editing, navFocus, viewMode,
+    calendarItems, items, selected, selectItem,
+  ]);
 
   const startEdit = () => {
     if (!selected) return;
@@ -1627,7 +1696,22 @@ export function MessageAnalysis() {
           </div>
         </div>
         <div className="grid w-full min-w-0 gap-4 xl:grid-cols-3">
-          <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-2">
+          <div
+            ref={listPaneRef}
+            tabIndex={0}
+            aria-label="消息列表"
+            className={cn(
+              "glass min-w-0 overflow-hidden rounded-2xl outline-none xl:col-span-2",
+              navFocus === "list" && "ring-2 ring-primary/35",
+            )}
+            onMouseDown={() => setNavFocus("list")}
+            onFocus={() => setNavFocus("list")}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setNavFocus((f) => (f === "list" ? null : f));
+              }
+            }}
+          >
             {viewMode === "calendar" ? (
               <div className="max-h-[calc(100vh-220px)] overflow-auto p-4">
                 <MessageCalendar
@@ -1846,7 +1930,22 @@ export function MessageAnalysis() {
             )}
           </div>
 
-          <div className="glass min-w-0 rounded-2xl p-4 xl:col-span-1 max-h-[calc(100vh-220px)] overflow-auto">
+          <div
+            ref={detailPaneRef}
+            tabIndex={0}
+            aria-label="消息详情"
+            className={cn(
+              "glass max-h-[calc(100vh-220px)] min-w-0 overflow-auto rounded-2xl p-4 outline-none xl:col-span-1",
+              navFocus === "detail" && "ring-2 ring-primary/35",
+            )}
+            onMouseDown={() => setNavFocus("detail")}
+            onFocus={() => setNavFocus("detail")}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setNavFocus((f) => (f === "detail" ? null : f));
+              }
+            }}
+          >
             {!selected ? (
               <p className="py-12 text-center text-sm text-muted-foreground">选择消息查看详情</p>
             ) : (
@@ -1871,10 +1970,10 @@ export function MessageAnalysis() {
                         <button
                           type="button"
                           aria-label="上一条"
-                          title="上一条"
-                          disabled={!canNavPrev || detailLoading}
+                          title="上一条（←）"
+                          disabled={!canNavPrev}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
-                          onClick={() => selectAdjacent(-1)}
+                          onClick={() => selectAdjacent(-1, "detail")}
                         >
                           <ChevronLeft className="h-4 w-4" />
                         </button>
@@ -1884,10 +1983,10 @@ export function MessageAnalysis() {
                         <button
                           type="button"
                           aria-label="下一条"
-                          title="下一条"
-                          disabled={!canNavNext || detailLoading}
+                          title="下一条（→）"
+                          disabled={!canNavNext}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
-                          onClick={() => selectAdjacent(1)}
+                          onClick={() => selectAdjacent(1, "detail")}
                         >
                           <ChevronRight className="h-4 w-4" />
                         </button>
