@@ -1003,6 +1003,21 @@ export function MessageAnalysis() {
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selected?.id, viewMode, page]);
 
+  /** 按相对位移切换当前可见列表中的消息（键盘 / 滚轮共用） */
+  const navigateByDelta = useCallback((delta: -1 | 1, focus: NavFocusPane) => {
+    const list = viewMode === "calendar" ? calendarItems : items;
+    const idx = selected ? list.findIndex((x) => x.id === selected.id) : -1;
+    if (idx < 0) {
+      if (list.length === 0) return false;
+      selectItem(list[0], focus);
+      return true;
+    }
+    const next = list[idx + delta];
+    if (!next) return false;
+    selectItem(next, focus);
+    return true;
+  }, [viewMode, calendarItems, items, selected, selectItem]);
+
   // 列表聚焦：↑↓；详情聚焦：←→（录入弹层 / 编辑输入中不抢键）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1024,26 +1039,56 @@ export function MessageAnalysis() {
         else if (e.key === "ArrowRight") delta = 1;
       }
       if (delta == null) return;
-
-      const list = viewMode === "calendar" ? calendarItems : items;
-      const idx = selected ? list.findIndex((x) => x.id === selected.id) : -1;
-      if (idx < 0) {
-        if (list.length === 0) return;
-        e.preventDefault();
-        selectItem(list[0], navFocus);
-        return;
-      }
-      const next = list[idx + delta];
-      if (!next) return;
+      if (!navigateByDelta(delta, navFocus)) return;
       e.preventDefault();
-      selectItem(next, navFocus);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
-    ingestOpen, editing, navFocus, viewMode,
-    calendarItems, items, selected, selectItem,
+    ingestOpen, editing, navFocus, navigateByDelta,
   ]);
+
+  // 列表/详情聚焦时：滚轮上下或左右各波动一下切换一条（录入弹层 / 编辑输入中不抢轮）
+  useEffect(() => {
+    if (ingestOpen || editing) return;
+    if (navFocus !== "list" && navFocus !== "detail") return;
+
+    const pane = navFocus === "list" ? listPaneRef.current : detailPaneRef.current;
+    if (!pane) return;
+
+    const WHEEL_THRESHOLD = 40;
+    const WHEEL_COOLDOWN_MS = 140;
+    let acc = 0;
+    let lastSwitchAt = 0;
+
+    const onWheel = (e: WheelEvent) => {
+      if (isTypingTarget(e.target)) return;
+
+      const dominant =
+        Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (dominant === 0) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const now = Date.now();
+      if (now - lastSwitchAt < WHEEL_COOLDOWN_MS) {
+        acc = 0;
+        return;
+      }
+
+      acc += dominant;
+      if (Math.abs(acc) < WHEEL_THRESHOLD) return;
+
+      const delta: -1 | 1 = acc > 0 ? 1 : -1;
+      acc = 0;
+      if (!navigateByDelta(delta, navFocus)) return;
+      lastSwitchAt = now;
+    };
+
+    pane.addEventListener("wheel", onWheel, { passive: false });
+    return () => pane.removeEventListener("wheel", onWheel);
+  }, [ingestOpen, editing, navFocus, navigateByDelta]);
 
   const startEdit = () => {
     if (!selected) return;
@@ -2054,7 +2099,7 @@ export function MessageAnalysis() {
                         <button
                           type="button"
                           aria-label="上一条"
-                          title="上一条（←）"
+                          title="上一条（← / 滚轮）"
                           disabled={!canNavPrev}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
                           onClick={() => selectAdjacent(-1, "detail")}
@@ -2067,7 +2112,7 @@ export function MessageAnalysis() {
                         <button
                           type="button"
                           aria-label="下一条"
-                          title="下一条（→）"
+                          title="下一条（→ / 滚轮）"
                           disabled={!canNavNext}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
                           onClick={() => selectAdjacent(1, "detail")}
