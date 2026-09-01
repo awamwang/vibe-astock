@@ -1001,7 +1001,7 @@ export function MessageAnalysis() {
       `[data-message-id="${CSS.escape(selected.id)}"]`,
     );
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [selected?.id, viewMode, page]);
+  }, [selected?.id, viewMode]);
 
   /** 按相对位移切换当前可见列表中的消息（键盘 / 滚轮共用） */
   const navigateByDelta = useCallback((delta: -1 | 1, focus: NavFocusPane) => {
