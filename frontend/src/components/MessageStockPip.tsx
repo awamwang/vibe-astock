@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink, Loader2, PictureInPicture2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type AnalyzedMessage } from "@/lib/api";
-import { getDefaultEndDays, IMPACT_LABEL, targetTitle } from "@/lib/messages";
+import { effectiveAt, getDefaultEndDays, IMPACT_LABEL, targetTitle } from "@/lib/messages";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
 import { openSectionPopup, appUrl } from "@/lib/sectionPopup";
 import { cn } from "@/lib/utils";
@@ -94,7 +94,7 @@ function PipTargets({
           return 0;
         });
   return (
-    <div className="flex flex-wrap gap-1">
+    <>
       {ordered.map((t, i) => {
         const blockName = (t.name || "").replace(/\s+/g, "").trim();
         const isStockHitBlock =
@@ -117,7 +117,7 @@ function PipTargets({
           </span>
         );
       })}
-    </div>
+    </>
   );
 }
 
@@ -222,10 +222,15 @@ export function MessageStockLinkPanel({
                     {item.title || "—"}
                   </p>
                 </div>
-                <PipTargets
-                  targets={item.targets}
-                  stockHitBlockNames={item.matched_current_stock_blocks}
-                />
+                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    生效时间 {effectiveAt(item)}
+                  </span>
+                  <PipTargets
+                    targets={item.targets}
+                    stockHitBlockNames={item.matched_current_stock_blocks}
+                  />
+                </div>
               </li>
             ))}
           </ul>
