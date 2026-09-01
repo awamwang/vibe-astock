@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from profile_paths import astock_dir
+
 _BEIJING = timezone(timedelta(hours=8))
 
 
@@ -18,7 +20,7 @@ def _target_path() -> str:
     env = os.environ.get("THS_CUSTOM_BLOCKS_JSON", "").strip()
     if env:
         return env
-    return os.path.expanduser("~/.vibe-astock/同花顺自定义板块.json")
+    return str(astock_dir() / "同花顺自定义板块.json")
 
 
 def extract_dynamic_blocks(entry: dict[str, Any]) -> dict[str, dict[str, Any]]:

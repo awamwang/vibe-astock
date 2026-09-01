@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Literal
 
 import astock
+from profile_paths import agents_dir
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ A_SHARE_FS = (
 
 _DEFAULT_SOURCES: tuple[SourceId, ...] = ("eastmoney", "akshare")
 _CACHE_SCHEMA = 1
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache")
+_CACHE_DIR = str(agents_dir() / "cache")
 _EM_UT = "b2884a393a59ad64002292a3e90d46a5"
 _EM_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
 

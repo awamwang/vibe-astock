@@ -2,12 +2,23 @@
 
 用法：
     .venv/bin/python main.py [YYYY-MM-DD]
+    .venv/bin/python main.py --profile /path/to/home [YYYY-MM-DD]
     不带日期则用今天。
 """
 
 from __future__ import annotations
 
 import sys
+
+from duanxian.paths import bootstrap, consume_profile_arg, is_custom_profile
+
+_rest, _profile_arg = consume_profile_arg(sys.argv[1:])
+if _profile_arg is not None:
+    sys.argv = [sys.argv[0], *_rest]
+    bootstrap(profile=_profile_arg)
+elif is_custom_profile():
+    bootstrap()
+
 import time
 
 from duanxian import preflight, reflection, review_store

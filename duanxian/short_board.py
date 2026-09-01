@@ -27,8 +27,15 @@ from typing import Any
 
 from . import trade_calendar
 from .util import china_now
+from . import paths as _paths
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'short_board')
 _TTL = 20.0  # 盘中指标条刷新间隔略长于 5 秒轮询，挡住叠请求
 _OFFSESSION_TTL = 86400.0  # 非实时场次：已定稿，日内刷新不打上游
 _cache: dict[str, tuple[float, object]] = {}

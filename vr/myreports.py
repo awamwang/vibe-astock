@@ -22,8 +22,10 @@ import time
 import uuid
 from pathlib import Path
 
+from profile_paths import research_dir
+
 _OLD_DEFAULT_DIR = Path(__file__).resolve().parent / ".cache" / "myreports"  # ≤v0.1.1 旧位置
-_DATA_DIR = Path(os.environ.get("VR_DATA_DIR") or Path.home() / ".vibe-research")
+_DATA_DIR = research_dir()
 _DEFAULT_DIR = _DATA_DIR / "myreports"
 # 空串视同未设置（与 VR_DATA_DIR 语义一致，避免 Path("") 落到进程工作目录）
 REPORTS_DIR = Path(os.environ.get("VR_REPORTS_DIR") or str(_DEFAULT_DIR))

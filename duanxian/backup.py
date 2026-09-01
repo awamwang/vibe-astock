@@ -19,11 +19,18 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from . import paths as _paths
 from .util import china_now
 
 FORMAT_ID = "vibe-astock-backup"
 ARCHIVE_VERSION = 1
-DATA_ROOT = os.path.expanduser("~/.duanxian-agents")
+DATA_ROOT = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global DATA_ROOT
+    DATA_ROOT = str(_paths.agents_dir())
 
 SKIP_DIR_NAMES = frozenset({"logs", "log", "__pycache__", ".git"})
 SKIP_FILE_NAMES = frozenset({".ds_store", "thumbs.db"})
@@ -229,7 +236,7 @@ def _resolve_dest_dir(raw: str) -> Path:
         raise BackupError("请填写导出目录")
     dest = Path(text).expanduser()
     if not dest.is_absolute():
-        dest = Path.home() / dest
+        dest = _paths.profile_root() / dest
     try:
         dest = dest.resolve()
     except OSError as exc:
@@ -245,7 +252,7 @@ def _resolve_import_path(raw: str) -> Path:
         raise BackupError("请填写要导入的压缩包或文件夹路径")
     path = Path(text).expanduser()
     if not path.is_absolute():
-        path = Path.home() / path
+        path = _paths.profile_root() / path
     try:
         path = path.resolve()
     except OSError as exc:

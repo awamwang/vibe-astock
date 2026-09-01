@@ -1,6 +1,6 @@
 """定档阈值（硬规则 + S 区间）—— 可落盘覆盖。
 
-配置落盘：`~/.duanxian-agents/config/trade_thresholds.json`
+配置落盘：`{profile}/.duanxian-agents/config/trade_thresholds.json`
 未改字段沿用内置默认（与原先写死在 classify 里的数字一致）。
 """
 
@@ -11,13 +11,21 @@ import os
 import threading
 from typing import Any, Optional
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "trade_thresholds.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 1
 _LOCK = threading.Lock()
 _CACHE: Optional[dict[str, float]] = None
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "trade_thresholds.json")
 
 # value_kind: ratio=0–1；number=可正负；count=家数；boards=板数；score=0–100
 # ref_key 对齐 risk_stance.gather_readings / trade_budget.classify_rule_phase

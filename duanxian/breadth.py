@@ -12,10 +12,17 @@ from typing import Optional
 
 from . import trade_calendar
 from .util import atomic_write_json
+from . import paths as _paths
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/breadth")
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'breadth')
 _SCHEMA = 1
 
 _UA = {"User-Agent": "Mozilla/5.0"}

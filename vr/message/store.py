@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from duanxian.message_follow_blocks import build_follow_blocks_sql, load_blocks
 from duanxian.message_follow_keywords import build_follow_sql, load_keywords
+from profile_paths import agents_dir as _agents_dir
 
 from .current_stock_match import CurrentStockMatchIds, collect_match_ids, enrich_current_stock
 from .follow import enrich_follow, initial_impact_with_follow
@@ -26,7 +27,7 @@ from .schemas import (
     RawMessageDraft,
 )
 
-DATA_ROOT = os.path.expanduser("~/.duanxian-agents")
+DATA_ROOT = str(_agents_dir())
 MSG_DIR = os.path.join(DATA_ROOT, "messages")
 DB_PATH = os.path.join(MSG_DIR, "messages.db")
 BEIJING = timezone(timedelta(hours=8))

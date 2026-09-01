@@ -75,7 +75,9 @@ def _guard_vr_userdata() -> None:
     """启动时给 VR 的**不可再生用户数据**留一份备份"""
     import shutil
 
-    vr_home = os.path.expanduser("~/.vibe-research")
+    from . import paths as _paths
+
+    vr_home = str(_paths.research_dir())
     pf = os.path.join(vr_home, "portfolio.json")
     if not os.path.isfile(pf):
         return

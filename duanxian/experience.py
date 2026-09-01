@@ -12,7 +12,17 @@ from typing import Any, Optional
 
 from .util import china_now, safe_join
 
-DIR = os.path.expanduser("~/.duanxian-agents/experience")
+from . import paths as _paths
+
+DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global DIR
+    DIR = str(_paths.agents_dir() / "experience")
+
+
 INDEX_NAME = "index.md"
 _LOCK = threading.Lock()
 

@@ -10,13 +10,20 @@ import uuid
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from . import paths as _paths
 from . import reflection
 from .roles import ROLES
 from .util import china_now, is_degraded_report, safe_join
 
-DIR = os.path.expanduser("~/.duanxian-agents/reviews")
+DIR = ""
+REJECT_DIR = ""
 
-REJECT_DIR = os.path.join(DIR, "_rejected")
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global DIR, REJECT_DIR
+    DIR = str(_paths.agents_dir() / "reviews")
+    REJECT_DIR = os.path.join(DIR, "_rejected")
 
 SCHEMA_VERSION = 1
 

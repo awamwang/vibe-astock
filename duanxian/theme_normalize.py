@@ -1,7 +1,7 @@
 """题材标签归一 —— 统计涨停事件数时把等价写法合并到同一 canonical 名。
 
 只走**显式别名表**，不做 token 替换或语义相似度合并。
-配置落盘：`~/.duanxian-agents/config/theme_aliases.json`
+配置落盘：`{profile}/.duanxian-agents/config/theme_aliases.json`
 """
 
 from __future__ import annotations
@@ -11,13 +11,21 @@ import os
 import threading
 from typing import Optional
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "theme_aliases.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 2
 _MAX_LEN = 20
 _LOCK = threading.Lock()
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "theme_aliases.json")
 
 # 内置默认：仅收录已确认等价的写法
 _DEFAULT_ALIASES: dict[str, str] = {

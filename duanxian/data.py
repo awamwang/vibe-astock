@@ -11,10 +11,19 @@ from collections import Counter
 
 from . import fetchers as dr
 from .util import is_today, safe_join
+from . import paths as _paths
 
 socket.setdefaulttimeout(45)
 
-_LEADER_DIR = os.path.expanduser("~/.duanxian-agents/leaders")
+_LEADER_DIR = ""
+_PREV_POOL_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _LEADER_DIR, _PREV_POOL_DIR
+    _LEADER_DIR = str(_paths.agents_dir() / "leaders")
+    _PREV_POOL_DIR = str(_paths.agents_dir() / "cache" / "prev_pool")
 
 _MACRO_GROUPS = {
     "AI算力": ["算力", "CPO", "光模块", "光通信", "液冷", "PCB", "铜连接", "服务器"],
@@ -342,7 +351,6 @@ def get_leader_data(date: str) -> str:
 
 # ---------- 前日涨停池（复盘的昨日反馈 / 晋级率 / 多日趋势都要用）----------
 
-_PREV_POOL_DIR = os.path.expanduser("~/.duanxian-agents/cache/prev_pool")
 
 
 def is_limit_up(row: dict) -> "Optional[bool]":

@@ -16,19 +16,27 @@ import os
 import threading
 from typing import Any, Optional
 
+from . import paths as _paths
 from . import series_store as store
 from .util import atomic_write_json, china_now
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "sentiment_s.json")
-_SERIES_PATH = os.path.expanduser("~/.duanxian-agents/cache/sentiment_s/series.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
+_SERIES_PATH = ""
 _SERIES_NAME = store.SERIES_SENTIMENT
-_XGB_BROKEN_PATH = os.path.expanduser(
-    "~/.duanxian-agents/cache/xgb_broken_rate/series.json"
-)
-_FUSION_CACHE_PATH = os.path.expanduser(
-    "~/.duanxian-agents/cache/sentiment_s/fusionintel.json"
-)
+_XGB_BROKEN_PATH = ""
+_FUSION_CACHE_PATH = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH, _SERIES_PATH, _XGB_BROKEN_PATH, _FUSION_CACHE_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "sentiment_s.json")
+    cache = _paths.agents_dir() / "cache"
+    _SERIES_PATH = str(cache / "sentiment_s" / "series.json")
+    _XGB_BROKEN_PATH = str(cache / "xgb_broken_rate" / "series.json")
+    _FUSION_CACHE_PATH = str(cache / "sentiment_s" / "fusionintel.json")
 _SCHEMA = 1
 _LOCK = threading.Lock()
 # 测试可改写为临时 db 路径

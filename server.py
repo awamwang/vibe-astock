@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
+# 必须在其它会缓存落盘路径的模块 import 之前解析 --profile / VIBE_PROFILE
+from duanxian.paths import bootstrap, consume_profile_arg, is_custom_profile
+
+_profile_rest, _profile_arg = consume_profile_arg(sys.argv[1:])
+if _profile_arg is not None:
+    sys.argv = [sys.argv[0], *_profile_rest]
+    bootstrap(profile=_profile_arg)
+elif is_custom_profile():
+    bootstrap()
+
 import html
 import json
-import os
 import queue
 from contextlib import asynccontextmanager
 import asyncio
 import re
-import sys
 import threading
 import time
 import uuid
@@ -34,14 +45,15 @@ from duanxian.util import (
     safe_join, strip_model_noise, validate_trade_date,
 )
 from duanxian.prompts import PACK
+from duanxian import paths as _paths
 
 SCHEMA_VERSION = 1
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # React 构建产物：存在就优先服务它，单端口即可访问全部界面，不必另起 vite dev。
 # 构建：cd frontend && npm run build
 _DIST = os.path.join(_HERE, "frontend", "dist")
-_REVIEW_DIR = os.path.expanduser("~/.duanxian-agents/reviews")
-_WK_DIR = os.path.expanduser("~/.duanxian-agents/weekly")
+_REVIEW_DIR = str(_paths.agents_dir() / "reviews")
+_WK_DIR = str(_paths.agents_dir() / "weekly")
 os.makedirs(_REVIEW_DIR, exist_ok=True)
 os.makedirs(_WK_DIR, exist_ok=True)
 # 允许写操作（POST/DELETE）的 Host。默认只认本机；挂到域名下访问时，用
@@ -2092,6 +2104,10 @@ if __name__ == "__main__":
 
     # 端口可用 VIBE_PORT 覆盖，默认 8910（被占时不必改代码）
     port = int(os.environ.get("VIBE_PORT", "8910"))
+    from duanxian.paths import describe as _profile_describe
+
+    _prof = _profile_describe()
+    print(f"📁 profile={_prof['profile']}  agents={_prof['agents']}")
     if _DISABLED_CLIS:
         # 有声地说出限制：不说的话，"少了几个可选项"看起来像 bug 而不是有意为之
         print(f"🔒 已禁用自动批准 CLI：{', '.join(_DISABLED_CLIS)}"

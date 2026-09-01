@@ -33,7 +33,7 @@ Vibe-Astock 是 **单进程、本机自托管** 的 A 股短线复盘看板：Fa
                     ▼
          外部数据源（东财 / akshare / 问财 / AKTools …）
                     ▼
-         ~/.duanxian-agents/  ~/.vibe-research/  ~/.vibe-astock/
+         {profile}/.duanxian-agents/  .vibe-research/  .vibe-astock/
 ```
 
 **独立入口**：`main.py` 可在命令行直接跑单日复盘（不经 `server.py`），与 Web 共用 `duanxian` 领域逻辑。
@@ -96,14 +96,19 @@ hooks.RUNNER.emit_after_review（插件推送）
 
 ## 3. 数据落盘
 
+落盘根由 **profile** 决定（默认当前用户主目录；可用 `--profile` / 环境变量 `VIBE_PROFILE` 指定）：
+
 | 目录 | 内容 |
 |------|------|
-| `~/.duanxian-agents/reviews/` | 日复盘 JSON |
-| `~/.duanxian-agents/weekly/` | 近 N 日热度缓存 |
-| `~/.duanxian-agents/cache/` | 市场序列 SQLite、广度、短板等 |
-| `~/.duanxian-agents/messages/` | 消息分析 SQLite（`messages.db`） |
-| `~/.vibe-research/` | 持仓、自选、部分 VR 缓存（`VR_DATA_DIR` 可覆盖） |
-| `~/.vibe-astock/` | 插件注册表、`prompts_local.py` |
+| `{profile}/.duanxian-agents/reviews/` | 日复盘 JSON |
+| `{profile}/.duanxian-agents/weekly/` | 近 N 日热度缓存 |
+| `{profile}/.duanxian-agents/cache/` | 市场序列 SQLite、广度、短板等 |
+| `{profile}/.duanxian-agents/config/` | 定档阈值、仓位档位、关注词等配置 |
+| `{profile}/.duanxian-agents/messages/` | 消息分析 SQLite（`messages.db`） |
+| `{profile}/.vibe-research/` | 持仓、自选、部分 VR 缓存（`VR_DATA_DIR` 可覆盖） |
+| `{profile}/.vibe-astock/` | 插件注册表、`prompts_local.py` |
+
+指定自定义 profile 且其中尚无配置文件时，启动会按内置默认初始化生成（不覆盖已有文件）。
 
 写盘惯例：**临时文件 + `os.replace` 原子替换**（如 `server._atomic_write`、持仓迁移），读方不会看到半截 JSON。
 

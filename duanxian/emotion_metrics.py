@@ -8,6 +8,7 @@ import urllib.request
 from statistics import mean, median
 from typing import Optional
 
+from . import paths as _paths
 from . import trade_calendar
 from .util import atomic_write_json
 
@@ -430,7 +431,13 @@ def ladder_gap(date: str) -> dict:
     }
 
 
-_SUMMARY_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_summary")
+_SUMMARY_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _SUMMARY_CACHE_DIR
+    _SUMMARY_CACHE_DIR = str(_paths.agents_dir() / "cache" / "zt_summary")
 
 _SUMMARY_SCHEMA = 2
 _SUMMARY_SOURCE = "akshare_zt_pool"

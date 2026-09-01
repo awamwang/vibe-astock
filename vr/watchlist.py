@@ -12,7 +12,9 @@ import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".vibe-research")
+from profile_paths import research_dir
+
+CACHE_DIR = str(research_dir())
 WL_FILE = os.path.join(CACHE_DIR, "watchlist.json")
 _SCHEMA = 1
 _MAX_CODES = 100

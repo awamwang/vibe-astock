@@ -106,7 +106,7 @@ def _cmd_disable(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m duanxian.plugin_cli",
-        description="管理 vibe-astock 钩子插件（注册表在用户目录 ~/.vibe-astock/plugins.json）",
+        description="管理 vibe-astock 钩子插件（注册表在 profile 下 .vibe-astock/plugins.json）",
     )
     sub = p.add_subparsers(dest="command", required=True)
 

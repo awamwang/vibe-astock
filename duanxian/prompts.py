@@ -28,7 +28,15 @@ from pydantic import BaseModel
 
 from . import schemas
 
-_LOCAL_PACK_PATH = Path.home() / ".vibe-astock" / "prompts_local.py"
+from . import paths as _paths
+
+_LOCAL_PACK_PATH = Path()
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _LOCAL_PACK_PATH
+    _LOCAL_PACK_PATH = _paths.astock_dir() / "prompts_local.py"
 
 
 @dataclass(frozen=True)

@@ -278,13 +278,20 @@ set VIBE_LLM_CLI=claude
 **定稿记录**（已收盘的日子落盘缓存，否则走东财昨日涨停池），不依赖实时行情 ——
 所以盘中也能翻上周三那份复盘。
 
-数据落在 `~/.duanxian-agents/`（复盘 / 热度 / 缓存），盘面数据那几个分栏落 `~/.vibe-research/`。
+数据默认落在用户主目录下的 `~/.duanxian-agents/`（复盘 / 热度 / 缓存）与 `~/.vibe-research/`（盘面分栏）。
+可用 `--profile <目录>` 或环境变量 `VIBE_PROFILE` 换成其它根目录（相对该路径建立上述子目录；若尚无配置则自动初始化）。
+
+```bash
+.venv/bin/python server.py --profile /path/to/home
+.venv/bin/python main.py --profile /path/to/home 2026-08-19
+```
 
 ### 环境变量
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `VIBE_PORT` | `8910` | 后端端口 |
+| `VIBE_PROFILE` | 当前用户主目录 | 写盘根目录；其下建 `.duanxian-agents` / `.vibe-research` / `.vibe-astock` |
 | `VIBE_LLM_CLI` | 未设 | 用本机 CLI 当 LLM（`claude` / `codex` …），设了就不需要 API key |
 | `VIBE_ALLOW_UNSAFE_CLI` | 未设 | 放开 `claude` 以外的 CLI，逗号分隔（见上面那条提醒） |
 | `VIBE_ASTOCK_PROMPTS` | `~/.vibe-astock/prompts_local.py` | 换一套分析口径（见「自定义分析口径」） |

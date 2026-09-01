@@ -16,8 +16,15 @@ import re
 from typing import Optional
 
 from .util import atomic_write_json, china_now
+from . import paths as _paths
 
-_IMPORT_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_reasons_import")
+_IMPORT_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _IMPORT_DIR
+    _IMPORT_DIR = str(_paths.agents_dir() / 'cache' / 'zt_reasons_import')
 
 _DATE_IN_COL = re.compile(r"\[(\d{8})\]")
 _CODE_TOKEN = re.compile(r"^(?:SH|SZ|BJ)(\d{6})$", re.I)

@@ -11,15 +11,22 @@ import os
 import threading
 from typing import Any, Optional
 
+from . import paths as _paths
 from . import trade_budget as tb
 from . import trade_calendar
 from .util import atomic_write_json, china_now
 
-_TRADE_DIR = os.path.expanduser("~/.duanxian-agents/trade")
-_ACCOUNT_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(
-    os.path.expanduser("~"), ".vibe-research"
-)
-_ACCOUNT_FILE = os.path.join(_ACCOUNT_DIR, "trade_account.json")
+_TRADE_DIR = ""
+_ACCOUNT_DIR = ""
+_ACCOUNT_FILE = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _TRADE_DIR, _ACCOUNT_DIR, _ACCOUNT_FILE
+    _TRADE_DIR = str(_paths.agents_dir() / "trade")
+    _ACCOUNT_DIR = str(_paths.research_dir())
+    _ACCOUNT_FILE = os.path.join(_ACCOUNT_DIR, "trade_account.json")
 _SCHEMA = 1
 _LOCK = threading.Lock()
 

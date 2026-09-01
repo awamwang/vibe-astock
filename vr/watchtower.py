@@ -23,11 +23,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import astock
+from profile_paths import research_dir
 
 BEIJING = timezone(timedelta(hours=8))
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
 
-_DATA_DIR = Path(os.environ.get("VR_DATA_DIR") or Path.home() / ".vibe-research") / "monitor"
+_DATA_DIR = research_dir() / "monitor"
 
 POLL_SECONDS = 3          # L1 快照 3 秒一帧（沪深两所官方口径），更快无意义
 SURGE_WINDOW = 180        # 急拉急跌观察窗（秒）

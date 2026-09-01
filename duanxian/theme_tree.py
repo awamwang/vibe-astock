@@ -48,8 +48,15 @@ from typing import Optional
 
 from . import trade_calendar
 from .util import atomic_write_json
+from . import paths as _paths
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_reasons")
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'zt_reasons')
 _SCHEMA = 1
 
 _GENERIC = {

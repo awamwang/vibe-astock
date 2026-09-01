@@ -19,8 +19,17 @@ from . import trade_calendar
 
 from . import fetchers as dr
 
-_SHORT_BOARD_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
-_LIVE_EMOTION_DIR = os.path.expanduser("~/.duanxian-agents/cache/live_emotion")
+from . import paths as _paths
+
+_SHORT_BOARD_DIR = ""
+_LIVE_EMOTION_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _SHORT_BOARD_DIR, _LIVE_EMOTION_DIR
+    _SHORT_BOARD_DIR = str(_paths.agents_dir() / "cache" / "short_board")
+    _LIVE_EMOTION_DIR = str(_paths.agents_dir() / "cache" / "live_emotion")
 
 _QCJ_LEVEL_ORD: dict[str, int] = {
     "冰点": 1, "修复": 2, "发酵": 3, "亢奋": 4, "退潮": 5,

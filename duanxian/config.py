@@ -17,8 +17,15 @@ from dotenv import dotenv_values
 from langchain_openai import ChatOpenAI
 
 from . import cli_llm
+from . import paths as _paths
 
-_MIMO_ENV = Path.home() / ".config" / "mimo" / "mimo.env"
+_MIMO_ENV = Path()
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _MIMO_ENV
+    _MIMO_ENV = _paths.mimo_env_path()
 
 _CREDS: dict[str, str] | None = None
 

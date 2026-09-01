@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from . import trade_calendar
 from .util import china_now
+from . import paths as _paths
 
 # 取一次要打四个池（涨停/炸板/跌停/昨日涨停），实测约 8 秒 ——
 # 而界面是 5 秒一刷，不缓存就会请求叠着堆（日志里能看到并发好几条），
@@ -47,7 +48,13 @@ _OFFSESSION_TTL = 86400.0
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/live_emotion")
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'live_emotion')
 # 写入归档的字段（不含 date / as_of 等元数据）
 _ARCHIVE_KEYS = (
     "zt_count", "dt_count", "zb_count", "max_boards", "lianban_count",

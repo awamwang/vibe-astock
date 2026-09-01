@@ -403,9 +403,16 @@ def extract_items(llm, focus_md: str, phase: str = "") -> list[dict]:
 
 import os
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_USER_DIR = os.path.expanduser("~/.duanxian-agents/verification")
+_USER_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _USER_DIR
+    _USER_DIR = str(_paths.agents_dir() / "verification")
 _USER_SCHEMA = 1
 
 

@@ -24,8 +24,17 @@ logger = logging.getLogger(__name__)
 from . import trade_calendar
 from .util import china_today, is_a_share_closed, safe_join, validate_trade_date
 
-_REVIEW_DIR = os.path.expanduser("~/.duanxian-agents/reviews")
-_REFLECT_DIR = os.path.expanduser("~/.duanxian-agents/reflections")
+from . import paths as _paths
+
+_REVIEW_DIR = ""
+_REFLECT_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _REVIEW_DIR, _REFLECT_DIR
+    _REVIEW_DIR = str(_paths.agents_dir() / "reviews")
+    _REFLECT_DIR = str(_paths.agents_dir() / "reflections")
 
 
 def _name_code_map() -> dict:

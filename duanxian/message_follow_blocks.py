@@ -11,13 +11,21 @@ import os
 import threading
 from typing import Any
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "message_follow_blocks.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 1
 _LOCK = threading.Lock()
 _BLOCKS: list[dict[str, str]] | None = None
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "message_follow_blocks.json")
 
 _TARGET_KINDS = frozenset({"sector", "theme"})
 

@@ -34,7 +34,16 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 _TZ = ZoneInfo("Asia/Shanghai")
-DEFAULT_OUT = Path.home() / ".duanxian-agents" / "cache" / "xgb_broken_rate" / "series.json"
+def _default_out() -> Path:
+    try:
+        from duanxian.paths import agents_dir
+
+        return agents_dir() / "cache" / "xgb_broken_rate" / "series.json"
+    except Exception:  # noqa: BLE001
+        return Path.home() / ".duanxian-agents" / "cache" / "xgb_broken_rate" / "series.json"
+
+
+DEFAULT_OUT = _default_out()
 LINE_URL = "https://flash-api.xuangubao.cn/api/market_indicator/line"
 FIELDS = (
     "market_temperature,limit_up_broken_count,limit_up_broken_ratio,"

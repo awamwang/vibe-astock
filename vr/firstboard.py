@@ -19,10 +19,11 @@ from datetime import datetime, timedelta
 
 import astock
 from market import BEIJING, _num
+from profile_paths import agents_dir
 
 _CACHE: dict = {}
 _TTL = 600  # 10 分钟；涨停原因盘中变化不快
-_ZT_REASONS_DIR = os.path.expanduser("~/.duanxian-agents/cache/zt_reasons")
+_ZT_REASONS_DIR = str(agents_dir() / "cache" / "zt_reasons")
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

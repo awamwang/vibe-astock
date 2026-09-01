@@ -9,10 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import paths as _paths
 from .util import atomic_write_json, china_now
 
-_USER_DIR = os.path.expanduser("~/.vibe-astock")
-_REGISTRY_FILE = os.path.join(_USER_DIR, "plugins.json")
+_USER_DIR = ""
+_REGISTRY_FILE = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _USER_DIR, _REGISTRY_FILE
+    _USER_DIR = str(_paths.astock_dir())
+    _REGISTRY_FILE = os.path.join(_USER_DIR, "plugins.json")
 _SCHEMA = 1
 
 
@@ -265,7 +273,7 @@ def override_registry_dir(tmp_dir: str | None) -> None:
     """测试用：重定向注册表目录。"""
     global _USER_DIR, _REGISTRY_FILE
     if tmp_dir is None:
-        _USER_DIR = os.path.expanduser("~/.vibe-astock")
+        _USER_DIR = str(_paths.astock_dir())
     else:
         _USER_DIR = tmp_dir
     _REGISTRY_FILE = os.path.join(_USER_DIR, "plugins.json")

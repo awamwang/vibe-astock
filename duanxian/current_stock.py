@@ -9,10 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import paths as _paths
 from .util import china_now
 
-_STATE_DIR = Path.home() / ".vibe-astock"
-_LEGACY_STATE_FILE = _STATE_DIR / "ths-linker-current.json"
+_STATE_DIR = Path()
+_LEGACY_STATE_FILE = Path()
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _STATE_DIR, _LEGACY_STATE_FILE
+    _STATE_DIR = _paths.astock_dir()
+    _LEGACY_STATE_FILE = _STATE_DIR / "ths-linker-current.json"
 
 _lock = threading.Lock()
 _current: CurrentStock | None = None

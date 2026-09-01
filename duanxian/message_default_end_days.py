@@ -9,16 +9,24 @@ import json
 import os
 import threading
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "message_default_end_days.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 1
 _DEFAULT_DAYS = 5
 _MIN_DAYS = 1
 _MAX_DAYS = 15
 _LOCK = threading.Lock()
 _DAYS: int | None = None
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "message_default_end_days.json")
 
 
 class MessageDefaultEndDaysError(ValueError):

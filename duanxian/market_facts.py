@@ -8,8 +8,15 @@ from typing import Optional
 from . import data as _data  # noqa: F401  仅为副作用：注入项目根 sys.path
 from . import trade_calendar
 from .util import atomic_write_json
+from . import paths as _paths
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_facts")
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'market_facts')
 
 _FACTS_SCHEMA = 3
 _FACTS_SCHEMA_READABLE = (2, 3)

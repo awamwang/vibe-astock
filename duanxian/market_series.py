@@ -14,16 +14,29 @@ from typing import Any, Optional
 
 from . import aktools_client as akc
 from . import series_store as store
+from . import paths as _paths
 
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_series")
-_MARGIN_PATH = os.path.join(_CACHE_DIR, "margin_sse.json")
-_INDEX_PATH = os.path.join(_CACHE_DIR, "sh000001.json")
-_AMOUNT_PATH = os.path.join(_CACHE_DIR, "market_amount.json")
+_CACHE_DIR = ""
+_MARGIN_PATH = ""
+_INDEX_PATH = ""
+_AMOUNT_PATH = ""
 _MARGIN_SERIES = store.SERIES_MARGIN
 _INDEX_SERIES = store.SERIES_INDEX
 _AMOUNT_SERIES = store.SERIES_AMOUNT
-_BREADTH_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/breadth")
-_SHORT_BOARD_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/short_board")
+_BREADTH_CACHE_DIR = ""
+_SHORT_BOARD_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR, _MARGIN_PATH, _INDEX_PATH, _AMOUNT_PATH
+    global _BREADTH_CACHE_DIR, _SHORT_BOARD_CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / "cache" / "market_series")
+    _MARGIN_PATH = os.path.join(_CACHE_DIR, "margin_sse.json")
+    _INDEX_PATH = os.path.join(_CACHE_DIR, "sh000001.json")
+    _AMOUNT_PATH = os.path.join(_CACHE_DIR, "market_amount.json")
+    _BREADTH_CACHE_DIR = str(_paths.agents_dir() / "cache" / "breadth")
+    _SHORT_BOARD_CACHE_DIR = str(_paths.agents_dir() / "cache" / "short_board")
 _AMOUNT_MA_WINDOW = 20
 _AMOUNT_PCT_LOOKBACK = 220
 _SCHEMA = 1

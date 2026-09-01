@@ -20,11 +20,12 @@ import time
 from datetime import datetime, timezone, timedelta
 
 import astock
+from profile_paths import research_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧位置
 # CACHE_DIR 名字保留（测试/外部按此名 monkeypatch），实际已是用户数据目录
-CACHE_DIR = os.environ.get("VR_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".vibe-research")
+CACHE_DIR = str(research_dir())
 PF_FILE = os.path.join(CACHE_DIR, "portfolio.json")
 BEIJING = timezone(timedelta(hours=8))
 _LOCK = threading.Lock()

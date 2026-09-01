@@ -15,12 +15,13 @@ from datetime import datetime, timezone, timedelta
 
 import astock
 import gstock
+from profile_paths import agents_dir
 
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
 _TTL = 300  # 5 分钟；全站共享，省数据源压力
 _OFFSESSION_TTL = 86400.0
-_CACHE_DIR = os.path.expanduser("~/.duanxian-agents/cache/market_sentiment")
+_CACHE_DIR = str(agents_dir() / "cache" / "market_sentiment")
 _ARCHIVE_KEYS = ("breadth", "speculation", "up", "down", "flat", "active")
 
 

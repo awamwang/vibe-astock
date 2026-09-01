@@ -13,11 +13,20 @@ import threading
 from contextlib import closing
 from typing import Any, Optional
 
+from . import paths as _paths
 from .util import china_now
 
-DATA_ROOT = os.path.expanduser("~/.duanxian-agents")
-_CACHE_DIR = os.path.join(DATA_ROOT, "cache")
-DB_PATH = os.path.join(_CACHE_DIR, "series.db")
+DATA_ROOT = ""
+_CACHE_DIR = ""
+DB_PATH = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global DATA_ROOT, _CACHE_DIR, DB_PATH
+    DATA_ROOT = str(_paths.agents_dir())
+    _CACHE_DIR = os.path.join(DATA_ROOT, "cache")
+    DB_PATH = os.path.join(_CACHE_DIR, "series.db")
 
 SERIES_MARGIN = "margin_sse"
 SERIES_INDEX = "sh000001"
@@ -269,7 +278,7 @@ def export_json_bundle(
         raise ValueError("请填写导出目录")
     dest = Path(text).expanduser()
     if not dest.is_absolute():
-        dest = Path.home() / dest
+        dest = _paths.profile_root() / dest
     dest = dest.resolve()
     if dest.exists() and not dest.is_dir():
         raise ValueError(f"导出路径不是目录：{dest}")

@@ -1,6 +1,6 @@
 """仓位预算六档的总仓、单票、提示词 —— 可分别落盘覆盖。
 
-配置落盘：`~/.duanxian-agents/config/trade_phases.json`
+配置落盘：`{profile}/.duanxian-agents/config/trade_phases.json`
 未改的字段沿用内置默认：总仓用硬规则表，单票为总仓一半。
 """
 
@@ -11,15 +11,23 @@ import os
 import threading
 from typing import Any, Optional
 
+from . import paths as _paths
 from .trade_budget import PHASES, default_caps, default_prompt
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "trade_phases.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 1
 _MAX_PROMPT = 500
 _LOCK = threading.Lock()
 _TABLE: Optional[dict[str, dict[str, Any]]] = None
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "trade_phases.json")
 
 
 class TradePhaseConfigError(ValueError):

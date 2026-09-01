@@ -9,10 +9,11 @@ import json
 import os
 import threading
 
+from . import paths as _paths
 from .util import atomic_write_json
 
-_CONFIG_DIR = os.path.expanduser("~/.duanxian-agents/config")
-_CONFIG_PATH = os.path.join(_CONFIG_DIR, "zt_keywords.json")
+_CONFIG_DIR = ""
+_CONFIG_PATH = ""
 _SCHEMA = 1
 _MAX_LEN = 10
 _LOCKED = ("无原因", "其他")
@@ -22,6 +23,13 @@ _DEFAULT: list[str] = [
 ]
 _LOCK = threading.Lock()
 _KEYWORDS: list[str] | None = None
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CONFIG_DIR, _CONFIG_PATH
+    _CONFIG_DIR = str(_paths.config_dir())
+    _CONFIG_PATH = os.path.join(_CONFIG_DIR, "zt_keywords.json")
 
 
 class ZtKeywordError(ValueError):

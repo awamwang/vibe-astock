@@ -8,6 +8,7 @@ from statistics import median
 from typing import Callable, Optional
 
 from . import trade_calendar
+from . import paths as _paths
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ def _cached_days_per_dir() -> tuple[frozenset[str], ...]:
 
     out = []
     for name in _CACHE_DIRS:
-        d = os.path.expanduser(f"~/.duanxian-agents/cache/{name}")
+        d = str(_paths.agents_dir() / "cache" / name)
         try:
             out.append(frozenset(f[:-5] for f in os.listdir(d) if f.endswith(".json")))
         except FileNotFoundError:
@@ -140,7 +141,7 @@ def _file_fingerprint(dir_name: str, day: str) -> tuple:
     """某天那个缓存文件的指纹 `(mtime_ns, size)`。**这是测试用的接缝，测试 patch 它。**"""
     import os
 
-    path = os.path.expanduser(f"~/.duanxian-agents/cache/{dir_name}/{day}.json")
+    path = str(_paths.agents_dir() / "cache" / dir_name / f"{day}.json")
     try:
         st = os.stat(path)
         return (st.st_mtime_ns, st.st_size)
