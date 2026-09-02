@@ -25,6 +25,7 @@ import {
 } from "@/lib/agent";
 import { fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { api, type TradeBudget } from "@/lib/api";
+import { GlobalPulseCards } from "@/components/GlobalPulseCards";
 
 
 /** 验证条件里的读数与阈值怎么显示。
@@ -278,6 +279,8 @@ export function AgentReview() {
   const [fallback, setFallback] = useState(false);
   const datesMeta = useRef<ReviewDatesMeta | null>(null);
   const [tradeBudget, setTradeBudget] = useState<TradeBudget | null>(null);
+  // 复盘生成成功后递增，驱动全球事件概率强制重拉
+  const [pulseRefreshToken, setPulseRefreshToken] = useState(0);
   // polling: 防重入（React state 在同一轮渲染里读到的是旧值，双击能穿过去）
   // timer / alive: 卸载后停掉轮询，别再 setState
   // reqId: 只接受最后一次请求的响应，防止慢的旧响应覆盖新结果
@@ -440,7 +443,11 @@ export function AgentReview() {
       if (st.running) { timer.current = setTimeout(pollOnce, 3000); return; }
       stopPolling();
       if (st.error) setErr(st.error);
-      else { loadLatest(date || undefined); void loadDates(); }
+      else {
+        loadLatest(date || undefined);
+        void loadDates();
+        setPulseRefreshToken((n) => n + 1);
+      }
     } catch { stopPolling(); if (alive.current) setErr("状态查询失败"); }
   }
 
@@ -474,6 +481,7 @@ export function AgentReview() {
       stopPolling();
       setNotice(`${body.date} 已复盘，下面就是那天的结果`);
       setDate(body.date); loadLatest(body.date); void loadDates();
+      setPulseRefreshToken((n) => n + 1);
       return;
     }
     pollOnce();
@@ -509,7 +517,7 @@ export function AgentReview() {
             <Swords className="h-6 w-6 text-primary" /> 短线复盘看板
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            情绪温度 · 上期验证 · 明日验证条件
+            情绪温度 · 外围事件概率 · 上期验证 · 明日验证条件
             {showContent && (
               fallback
                 ? ` · 展示 ${loadedDay} 复盘（${date} 收盘后可生成） · 生成于 ${data?.generated_at}`
@@ -643,7 +651,10 @@ export function AgentReview() {
         <CycleCard cy={em.cy} />
       </section>
 
-      {/* AI 研判（放在事实之后）*/}
+      {/* 全球事件概率：插在「明天关注点」正前方 */}
+      <GlobalPulseCards refreshToken={pulseRefreshToken} />
+
+      {/* AI 研判（位置不变）*/}
       {focus && (
         <section>
           <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.2em] text-primary">明天关注点 · Tomorrow</div>
@@ -681,7 +692,7 @@ export function AgentReview() {
               </div>
             </div>
 
-            <VerificationResults reflection={showContent ? data?.reflection : undefined} />
+            <VerificationResults reflection={data?.reflection} />
 
             {safeArray<VerificationItem>(focus.verification_items).length > 0 && (
               <div className="mt-5 border-t-2 border-foreground pt-2.5">
@@ -709,7 +720,7 @@ export function AgentReview() {
         </section>
       )}
 
-      {showContent && data && (
+      {data && (
         <AgentChat
           // 换交易日即重建组件，避免旧对话串到新复盘
           key={loadedDay}
@@ -719,7 +730,7 @@ export function AgentReview() {
         />
       )}
 
-      {showContent && <p className="border-t border-border pt-4 text-xs text-muted-foreground/70"><Target className="mr-1 inline h-3 w-3" /> {DISCLAIMER}</p>}
+      <p className="border-t border-border pt-4 text-xs text-muted-foreground/70"><Target className="mr-1 inline h-3 w-3" /> {DISCLAIMER}</p>
 
       </>)}
     </div>
