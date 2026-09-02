@@ -42,6 +42,7 @@
 | [自选股深入分析-AI提示词调研.md](./development/research/自选股深入分析-AI提示词调研.md) | 自选股深入分析提示词调研 |
 | [消息优先级-AI判定方法.md](./development/research/消息优先级-AI判定方法.md) | 单条消息优先级（影响档）AI 判定调研 |
 | [消息新旧程度-AI判定方法.md](./development/research/消息新旧程度-AI判定方法.md) | 消息新旧 / 是否炒过：主张指纹 + 召回差分；第三方仅记组合建议 |
+| [龙虎榜营业部标记与Tushare游资名录.md](./inner/research/龙虎榜营业部标记与Tushare游资名录.md) | 席位标签/风格/体量来源；Tushare `hm_list` 请求与本机权限实测 |
 
 ---
 
