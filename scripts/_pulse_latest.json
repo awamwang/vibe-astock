@@ -1,0 +1,1937 @@
+{
+  "as_of": "2026-09-02T17:04:24",
+  "sources": [
+    "polymarket",
+    "kalshi"
+  ],
+  "module_order": [
+    "货币政策",
+    "宏观经济",
+    "地缘政治",
+    "政治选举",
+    "股指大宗",
+    "AI科技",
+    "加密",
+    "体育",
+    "娱乐",
+    "其他"
+  ],
+  "core_modules": [
+    "货币政策",
+    "宏观经济",
+    "地缘政治",
+    "政治选举",
+    "股指大宗",
+    "AI科技"
+  ],
+  "modules": [
+    {
+      "key": "货币政策",
+      "core": true,
+      "market_count": 8,
+      "volume_24h": 4152167.98548,
+      "source_counts": {
+        "polymarket": 8
+      },
+      "markets": [
+        {
+          "question": "Will there be no change in Fed interest rates after the September 2026 meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.395,
+            0.605
+          ],
+          "prob_yes": 0.395,
+          "pick_label": null,
+          "change_24h": -0.02,
+          "change_7d": -0.28,
+          "volume_24h": 1198046.3727689988,
+          "liquidity": 340622.5981,
+          "end_date": "2026-09-16",
+          "slug": "will-there-be-no-change-in-fed-interest-rates-after-the-september-2026-meeting-615",
+          "token_id_yes": "5615282760875985231868508008056959876238536896643315063916840237042205273721",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the Fed decrease interest rates by 50+ bps after the September 2026 meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.002,
+          "volume_24h": 1106801.570163,
+          "liquidity": 1495802.48182,
+          "end_date": "2026-09-16",
+          "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-september-2026-meeting-863",
+          "token_id_yes": "97186030785608128217926542396950266594898339988989015155120280107165449433603",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the Fed increase interest rates by 25 bps after the September 2026 meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.595,
+            0.405
+          ],
+          "prob_yes": 0.595,
+          "pick_label": null,
+          "change_24h": 0.03,
+          "change_7d": 0.27,
+          "volume_24h": 614069.9149580009,
+          "liquidity": 439913.1108,
+          "end_date": "2026-09-16",
+          "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-september-2026-meeting-649",
+          "token_id_yes": "63842529068710005716169325380315470359047749786610778647370693404952498013178",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the Fed decrease interest rates by 25 bps after the September 2026 meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0055,
+            0.9945
+          ],
+          "prob_yes": 0.0055,
+          "pick_label": null,
+          "change_24h": null,
+          "change_7d": -0.007,
+          "volume_24h": 513076.1206349999,
+          "liquidity": 1091969.96699,
+          "end_date": "2026-09-16",
+          "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-september-2026-meeting-586",
+          "token_id_yes": "57748138085022719760345772310040703848567377822400132842014290209986511882046",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the Fed increase interest rates by 50+ bps after the September 2026 meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0095,
+            0.9905
+          ],
+          "prob_yes": 0.0095,
+          "pick_label": null,
+          "change_24h": 0.002,
+          "change_7d": 0.006,
+          "volume_24h": 477290.11474900006,
+          "liquidity": 974934.70195,
+          "end_date": "2026-09-16",
+          "slug": "will-the-fed-increase-interest-rates-by-50-bps-after-the-september-2026-meeting-664",
+          "token_id_yes": "88912926533493988427719291698947688154042720958310632316541141466409683822293",
+          "source": "polymarket"
+        },
+        {
+          "question": "Fed rate hike in 2026?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.715,
+            0.285
+          ],
+          "prob_yes": 0.715,
+          "pick_label": null,
+          "change_24h": 0.01,
+          "change_7d": 0.15,
+          "volume_24h": 102695.83518200004,
+          "liquidity": 120370.7053,
+          "end_date": "2026-12-09",
+          "slug": "fed-rate-hike-in-2026",
+          "token_id_yes": "75028752776148090296091099469912621384650554615761384992997579209329182670110",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will no Fed rate cuts happen in 2026?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.8885,
+            0.1115
+          ],
+          "prob_yes": 0.8885,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": 0.024,
+          "volume_24h": 91018.26366199998,
+          "liquidity": 299783.59019,
+          "end_date": "2026-12-31",
+          "slug": "will-no-fed-rate-cuts-happen-in-2026",
+          "token_id_yes": "12403602920039269077597917340921667997547115084613238528792639013246536343316",
+          "source": "polymarket"
+        },
+        {
+          "question": "Fed Rate Hike by September 2026 Meeting?",
+          "question_zh": null,
+          "topic": "货币政策",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.595,
+            0.405
+          ],
+          "prob_yes": 0.595,
+          "pick_label": null,
+          "change_24h": 0.035,
+          "change_7d": 0.26,
+          "volume_24h": 49169.793362000004,
+          "liquidity": 112981.3159,
+          "end_date": "2026-12-09",
+          "slug": "fed-rate-hike-by-september-2026-meeting",
+          "token_id_yes": "85779851379341776458330036851548114381176093953202542863538086591922931585951",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "宏观经济",
+      "core": true,
+      "market_count": 8,
+      "volume_24h": 14942.68,
+      "source_counts": {
+        "kalshi": 8
+      },
+      "markets": [
+        {
+          "question": "Rhode Island commercial quahog landings in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 250,000 meat pounds",
+            "No"
+          ],
+          "prices": [
+            0.45,
+            0.55
+          ],
+          "prob_yes": 0.45,
+          "pick_label": "Above 250,000 meat pounds",
+          "change_24h": 0.07,
+          "change_7d": null,
+          "volume_24h": 3954.0,
+          "liquidity": 0.0,
+          "end_date": "2027-06-30T13:59:00Z",
+          "slug": "KXRIQUAHOG-27JUN30",
+          "series_ticker": "KXRIQUAHOG",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Recession in 2027?",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.32,
+            0.6799999999999999
+          ],
+          "prob_yes": 0.32,
+          "pick_label": null,
+          "change_24h": 0.010000000000000009,
+          "change_7d": null,
+          "volume_24h": 3855.56,
+          "liquidity": 0.0,
+          "end_date": "2028-01-31T13:25:00Z",
+          "slug": "KXRECSSNBER-27",
+          "series_ticker": "KXRECSSNBER",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Connecticut multifamily housing permits in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 5,000 units",
+            "No"
+          ],
+          "prices": [
+            0.47,
+            0.53
+          ],
+          "prob_yes": 0.47,
+          "pick_label": "Above 5,000 units",
+          "change_24h": null,
+          "change_7d": null,
+          "volume_24h": 2081.0,
+          "liquidity": 0.0,
+          "end_date": "2027-05-03T11:54:00Z",
+          "slug": "KXCTMFPERMITS-27MAY03",
+          "series_ticker": "KXCTMFPERMITS",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Washington aerospace manufacturing employment average in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 85,000 jobs",
+            "No"
+          ],
+          "prices": [
+            0.4,
+            0.6
+          ],
+          "prob_yes": 0.4,
+          "pick_label": "Above 85,000 jobs",
+          "change_24h": 0.0,
+          "change_7d": null,
+          "volume_24h": 1765.85,
+          "liquidity": 0.0,
+          "end_date": "2027-04-30T15:29:00Z",
+          "slug": "KXWAAEROEMP-27APR30",
+          "series_ticker": "KXWAAEROEMP",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Wisconsin manufacturing employment average in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 455,000 jobs",
+            "No"
+          ],
+          "prices": [
+            0.6,
+            0.4
+          ],
+          "prob_yes": 0.6,
+          "pick_label": "Above 455,000 jobs",
+          "change_24h": 0.0,
+          "change_7d": null,
+          "volume_24h": 1482.73,
+          "liquidity": 0.0,
+          "end_date": "2027-04-30T15:29:00Z",
+          "slug": "KXWIMFGEMP-27APR30",
+          "series_ticker": "KXWIMFGEMP",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Will Missouri manufacturing employment rise YoY?",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.35,
+            0.65
+          ],
+          "prob_yes": 0.35,
+          "pick_label": null,
+          "change_24h": 0.06999999999999995,
+          "change_7d": null,
+          "volume_24h": 1018.0,
+          "liquidity": 0.0,
+          "end_date": "2027-04-30T13:59:00Z",
+          "slug": "KXMOMFGEMP-27APR30",
+          "series_ticker": "KXMOMFGEMP",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Vermont total milk production in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 2.50 billion pounds",
+            "No"
+          ],
+          "prices": [
+            0.58,
+            0.42000000000000004
+          ],
+          "prob_yes": 0.58,
+          "pick_label": "Above 2.50 billion pounds",
+          "change_24h": 0.0,
+          "change_7d": null,
+          "volume_24h": 436.0,
+          "liquidity": 0.0,
+          "end_date": "2027-04-30T20:29:00Z",
+          "slug": "KXVTMILK-27APR30",
+          "series_ticker": "KXVTMILK",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        },
+        {
+          "question": "Housing units authorized in Vermont in 2026",
+          "question_zh": null,
+          "topic": "宏观经济",
+          "outcomes": [
+            "Above 1,900 units",
+            "No"
+          ],
+          "prices": [
+            0.38,
+            0.62
+          ],
+          "prob_yes": 0.38,
+          "pick_label": "Above 1,900 units",
+          "change_24h": -0.010000000000000009,
+          "change_7d": null,
+          "volume_24h": 349.54,
+          "liquidity": 0.0,
+          "end_date": "2027-05-03T11:54:00Z",
+          "slug": "KXVTPERMITS-27MAY03",
+          "series_ticker": "KXVTPERMITS",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        }
+      ]
+    },
+    {
+      "key": "地缘政治",
+      "core": true,
+      "market_count": 12,
+      "volume_24h": 1999382.4027109994,
+      "source_counts": {
+        "polymarket": 12
+      },
+      "markets": [
+        {
+          "question": "Will the U.S. invade Iran before 2027?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.165,
+            0.835
+          ],
+          "prob_yes": 0.165,
+          "pick_label": null,
+          "change_24h": 0.01,
+          "change_7d": 0.01,
+          "volume_24h": 647122.4963999998,
+          "liquidity": 857973.725,
+          "end_date": "2027-01-01",
+          "slug": "will-the-us-invade-iran-before-2027",
+          "token_id_yes": "55115078421062885512539156303747803058407616201213034911037320915726138659123",
+          "source": "polymarket"
+        },
+        {
+          "question": "Israel x Iran ceasefire continues through September 30?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.815,
+            0.185
+          ],
+          "prob_yes": 0.815,
+          "pick_label": null,
+          "change_24h": -0.05,
+          "change_7d": -0.06,
+          "volume_24h": 220902.09302899972,
+          "liquidity": 53263.8481,
+          "end_date": "2026-09-30",
+          "slug": "israel-x-iran-ceasefire-continues-through-september-30",
+          "token_id_yes": "110124369154659006328320349797831539154282530245624469518430389053088403535939",
+          "source": "polymarket"
+        },
+        {
+          "question": "Strait of Hormuz traffic returns to normal by September 30?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0275,
+            0.9725
+          ],
+          "prob_yes": 0.0275,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.0775,
+          "volume_24h": 208704.0207509999,
+          "liquidity": 506472.54777,
+          "end_date": "2026-09-30",
+          "slug": "strait-of-hormuz-traffic-returns-to-normal-by-september-30-20260702154339440",
+          "token_id_yes": "23545193122217391289335133742859160842475987880562465754342378273033942179195",
+          "source": "polymarket"
+        },
+        {
+          "question": "Putin meets with Iranian officials by August 31?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.997,
+            0.003
+          ],
+          "prob_yes": 0.997,
+          "pick_label": null,
+          "change_24h": 0.859,
+          "change_7d": 0.538,
+          "volume_24h": 179385.028325,
+          "liquidity": 36977.03024,
+          "end_date": "2026-09-01",
+          "slug": "putin-meets-with-iranian-officials-by-august-31-20260702174616624",
+          "token_id_yes": "91588779458591357114628602773673481739881049739657147971548278588503159856994",
+          "source": "polymarket"
+        },
+        {
+          "question": "US announces end of Iranian blockade by September 14, 2026?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.045,
+            0.955
+          ],
+          "prob_yes": 0.045,
+          "pick_label": null,
+          "change_24h": -0.045,
+          "change_7d": -0.21,
+          "volume_24h": 127629.20848,
+          "liquidity": 156427.8438,
+          "end_date": "2026-09-15",
+          "slug": "us-announces-end-of-iranian-blockade-by-september-14-2026",
+          "token_id_yes": "5704535028627813610807450987863678382834984459808017027367262166853701331994",
+          "source": "polymarket"
+        },
+        {
+          "question": "US announces end of Iranian blockade by September 7, 2026?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.016,
+            0.984
+          ],
+          "prob_yes": 0.016,
+          "pick_label": null,
+          "change_24h": -0.0225,
+          "change_7d": -0.164,
+          "volume_24h": 126868.14923099996,
+          "liquidity": 204031.96922,
+          "end_date": "2026-09-08",
+          "slug": "us-announces-end-of-iranian-blockade-by-september-7-2026",
+          "token_id_yes": "85537695086136451841213091961585038790379342143882045014518113758321124798550",
+          "source": "polymarket"
+        },
+        {
+          "question": "Iran full airspace closure by September 30?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.095,
+            0.905
+          ],
+          "prob_yes": 0.095,
+          "pick_label": null,
+          "change_24h": 0.02,
+          "change_7d": 0.03,
+          "volume_24h": 98436.41673200001,
+          "liquidity": 21128.9515,
+          "end_date": "2026-10-01",
+          "slug": "iran-full-airspace-closure-by-september-30-20260727170320670",
+          "token_id_yes": "93933627431532002514968810193191024181932079727276543084062068006935365748672",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will United Russia (ER) gain the most seats in the next Russian parliamentary election?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.71,
+            0.29
+          ],
+          "prob_yes": 0.71,
+          "pick_label": null,
+          "change_24h": 0.005,
+          "change_7d": -0.005,
+          "volume_24h": 85955.38997499998,
+          "liquidity": 539330.5488,
+          "end_date": "2026-09-30",
+          "slug": "will-united-russia-er-gain-the-most-seats-in-the-next-russian-parliamentary-election",
+          "token_id_yes": "20915769520649892253891152116814645067070024223185517956799957803974344024878",
+          "source": "polymarket"
+        },
+        {
+          "question": "US-Iran Final Nuclear Deal by September 30, 2026?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0075,
+            0.9925
+          ],
+          "prob_yes": 0.0075,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.011,
+          "volume_24h": 79099.104695,
+          "liquidity": 100749.64036,
+          "end_date": "2026-10-01",
+          "slug": "us-iran-final-nuclear-deal-by-september-30-2026",
+          "token_id_yes": "14466055037608627931561046129222135087821973151712155655664112537759623167836",
+          "source": "polymarket"
+        },
+        {
+          "question": "Israel closes its airspace by September 30?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.115,
+            0.885
+          ],
+          "prob_yes": 0.115,
+          "pick_label": null,
+          "change_24h": 0.06,
+          "change_7d": 0.05,
+          "volume_24h": 78998.92508600003,
+          "liquidity": 26806.6546,
+          "end_date": "2026-10-01",
+          "slug": "israel-closes-its-airspace-by-september-30",
+          "token_id_yes": "101040420236481079077393026772174192261262803877417817462744147440746788606483",
+          "source": "polymarket"
+        },
+        {
+          "question": "US announces end of Iranian blockade by September 30, 2026?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.195,
+            0.805
+          ],
+          "prob_yes": 0.195,
+          "pick_label": null,
+          "change_24h": 0.01,
+          "change_7d": -0.235,
+          "volume_24h": 75634.73405100002,
+          "liquidity": 126753.5488,
+          "end_date": "2026-10-01",
+          "slug": "us-announces-end-of-iranian-blockade-by-september-30-2026-20260727171615364-722-649-646-561-213-644-414-831",
+          "token_id_yes": "88752597571738831347942513760817776151125290177540731190810686943474863159303",
+          "source": "polymarket"
+        },
+        {
+          "question": "Strait of Hormuz traffic returns to normal by December 31?",
+          "question_zh": null,
+          "topic": "地缘政治",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.265,
+            0.735
+          ],
+          "prob_yes": 0.265,
+          "pick_label": null,
+          "change_24h": -0.02,
+          "change_7d": -0.11,
+          "volume_24h": 70646.83595600004,
+          "liquidity": 382587.0536,
+          "end_date": "2026-12-31",
+          "slug": "strait-of-hormuz-traffic-returns-to-normal-by-december-31",
+          "token_id_yes": "83783489454659420807679723574840032660002326710045123865554753994450797728825",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "政治选举",
+      "core": true,
+      "market_count": 8,
+      "volume_24h": 3518939.551314,
+      "source_counts": {
+        "polymarket": 5,
+        "kalshi": 3
+      },
+      "markets": [
+        {
+          "question": "Will John Fetterman win the 2028 Democratic presidential nomination?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.002,
+          "change_7d": -0.002,
+          "volume_24h": 1024967.503663,
+          "liquidity": 1787820.62189,
+          "end_date": "2028-11-07",
+          "slug": "will-john-fetterman-win-the-2028-democratic-presidential-nomination-941",
+          "token_id_yes": "71289010523270989807437428651002770360280908813019627976988032260868574107425",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Tulsi Gabbard win the 2028 US Presidential Election?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.001,
+          "volume_24h": 642590.8155,
+          "liquidity": 1694208.37833,
+          "end_date": "2028-11-07",
+          "slug": "will-tulsi-gabbard-win-the-2028-us-presidential-election",
+          "token_id_yes": "97633418272282627828834872960145259034624388719803091466146359304286851612172",
+          "source": "polymarket"
+        },
+        {
+          "question": "2028 Democratic presidential nominee",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Alexandria Ocasio-Cortez",
+            "No"
+          ],
+          "prices": [
+            0.17,
+            0.83
+          ],
+          "prob_yes": 0.17,
+          "pick_label": "Alexandria Ocasio-Cortez",
+          "change_24h": 0.010000000000000009,
+          "change_7d": null,
+          "volume_24h": 603401.32,
+          "liquidity": 0.0,
+          "end_date": "2028-11-07T15:00:00Z",
+          "slug": "KXPRESNOMD-28",
+          "series_ticker": "KXPRESNOMD",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Elections"
+        },
+        {
+          "question": "2028 Republican presidential nominee",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "J.D. Vance",
+            "No"
+          ],
+          "prices": [
+            0.46,
+            0.54
+          ],
+          "prob_yes": 0.46,
+          "pick_label": "J.D. Vance",
+          "change_24h": 0.010000000000000009,
+          "change_7d": null,
+          "volume_24h": 411632.27,
+          "liquidity": 0.0,
+          "end_date": "2028-11-07T15:00:00Z",
+          "slug": "KXPRESNOMR-28",
+          "series_ticker": "KXPRESNOMR",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Elections"
+        },
+        {
+          "question": "Will George Clooney win the 2028 Democratic presidential nomination?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.001,
+          "volume_24h": 265854.106,
+          "liquidity": 2811717.96051,
+          "end_date": "2028-11-07",
+          "slug": "will-george-clooney-win-the-2028-democratic-presidential-nomination",
+          "token_id_yes": "48218088132821386640274752564592889805082274744128282833036735027928992155024",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Kristi Noem win the 2028 Republican presidential nomination?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.001,
+          "volume_24h": 224966.3765,
+          "liquidity": 1893603.0359,
+          "end_date": "2028-11-07",
+          "slug": "will-kristi-noem-win-the-2028-republican-presidential-nomination",
+          "token_id_yes": "46777072088650922464797852907503479539785178123001199763117403684202580813104",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Augusto Cury win the 2026 Brazilian presidential election?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0235,
+            0.9765
+          ],
+          "prob_yes": 0.0235,
+          "pick_label": null,
+          "change_24h": 0.005,
+          "change_7d": null,
+          "volume_24h": 194434.039651,
+          "liquidity": 610098.76703,
+          "end_date": "2026-10-04",
+          "slug": "will-augusto-cury-win-the-2026-brazilian-presidential-election",
+          "token_id_yes": "61078489744701316174218443335134825688547680779921710765642429680039972907213",
+          "source": "polymarket"
+        },
+        {
+          "question": "2028 U.S. Presidential Election winner?",
+          "question_zh": null,
+          "topic": "政治选举",
+          "outcomes": [
+            "J.D. Vance",
+            "No"
+          ],
+          "prices": [
+            0.22,
+            0.78
+          ],
+          "prob_yes": 0.22,
+          "pick_label": "J.D. Vance",
+          "change_24h": 0.0,
+          "change_7d": null,
+          "volume_24h": 151093.12,
+          "liquidity": 0.0,
+          "end_date": "2029-11-07T15:00:00Z",
+          "slug": "KXPRESPERSON-28",
+          "series_ticker": "KXPRESPERSON",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Elections"
+        }
+      ]
+    },
+    {
+      "key": "股指大宗",
+      "core": true,
+      "market_count": 8,
+      "volume_24h": 300629.253615,
+      "source_counts": {
+        "polymarket": 8
+      },
+      "markets": [
+        {
+          "question": "Will Crude Oil reach a new all-time high by December 31?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.12,
+            0.88
+          ],
+          "prob_yes": 0.12,
+          "pick_label": null,
+          "change_24h": -0.005,
+          "change_7d": 0.005,
+          "volume_24h": 50651.199064,
+          "liquidity": 113290.4198,
+          "end_date": "2027-01-01",
+          "slug": "will-crude-oil-reach-a-new-all-time-high-by-december-31",
+          "token_id_yes": "89220876555191016916241799318314090743516702009053928118059298766028257434413",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Crude Oil reach a new all-time high by September 30?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.024,
+            0.976
+          ],
+          "prob_yes": 0.024,
+          "pick_label": null,
+          "change_24h": 0.008,
+          "change_7d": 0.0065,
+          "volume_24h": 43654.967196,
+          "liquidity": 102289.3044,
+          "end_date": "2026-10-01",
+          "slug": "will-crude-oil-reach-a-new-all-time-high-by-september-30",
+          "token_id_yes": "99854297587081815138313853193420814111300083263132357130852297048771575220765",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $120 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0295,
+            0.9705
+          ],
+          "prob_yes": 0.0295,
+          "pick_label": null,
+          "change_24h": 0.012,
+          "change_7d": 0.003,
+          "volume_24h": 43152.632526,
+          "liquidity": 29596.00801,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-120-in-september-2026",
+          "token_id_yes": "85797993472362091401856274154836281530871600716798983546575102666947228162289",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $105 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.155,
+            0.845
+          ],
+          "prob_yes": 0.155,
+          "pick_label": null,
+          "change_24h": 0.063,
+          "change_7d": null,
+          "volume_24h": 36707.550647,
+          "liquidity": 10725.07147,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-105-in-september-2026",
+          "token_id_yes": "71199490957924041886735411161957276777778685991536415526722488030509401889440",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $100 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.35,
+            0.65
+          ],
+          "prob_yes": 0.35,
+          "pick_label": null,
+          "change_24h": 0.145,
+          "change_7d": 0.15,
+          "volume_24h": 34214.05741000001,
+          "liquidity": 29321.8313,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-100-in-september-2026",
+          "token_id_yes": "25226335382418878811139704494216585223785182281144462662587056114275058883989",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $130 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0185,
+            0.9815
+          ],
+          "prob_yes": 0.0185,
+          "pick_label": null,
+          "change_24h": 0.0055,
+          "change_7d": -0.004,
+          "volume_24h": 33528.847986,
+          "liquidity": 34315.89494,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-130-in-september-2026",
+          "token_id_yes": "87828771569365613252707530995233213348172504759462422743743553754403273380618",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $115 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.053,
+            0.947
+          ],
+          "prob_yes": 0.053,
+          "pick_label": null,
+          "change_24h": 0.0265,
+          "change_7d": null,
+          "volume_24h": 31357.901023999995,
+          "liquidity": 17083.56067,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-115-in-september-2026",
+          "token_id_yes": "25846511357344947422285438161630770076911554211585141844165210290421263502462",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will WTI Crude Oil (WTI) hit (HIGH) $95 in September?",
+          "question_zh": null,
+          "topic": "股指大宗",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.56,
+            0.44
+          ],
+          "prob_yes": 0.56,
+          "pick_label": null,
+          "change_24h": 0.115,
+          "change_7d": null,
+          "volume_24h": 27362.09776199999,
+          "liquidity": 11299.97,
+          "end_date": "2026-10-01",
+          "slug": "will-wti-reach-95-in-september-2026",
+          "token_id_yes": "7430927207119859717448422604218470104532558655553578048452394954885232677914",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "AI科技",
+      "core": true,
+      "market_count": 8,
+      "volume_24h": 206944.05983800002,
+      "source_counts": {
+        "polymarket": 7,
+        "kalshi": 1
+      },
+      "markets": [
+        {
+          "question": "Will Anthropic have the best AI model at the end of September 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.905,
+            0.095
+          ],
+          "prob_yes": 0.905,
+          "pick_label": null,
+          "change_24h": -0.03,
+          "change_7d": 0.01,
+          "volume_24h": 46210.014508000015,
+          "liquidity": 76347.5413,
+          "end_date": "2026-10-01",
+          "slug": "will-anthropic-have-the-best-ai-model-at-the-end-of-september-2026-20260717143137053",
+          "token_id_yes": "114976310403134140071475285729050128086700898119247346798479138721789575328536",
+          "source": "polymarket"
+        },
+        {
+          "question": "Next Google Gemini Flash Model (3.8+) released by September 2, 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.9255,
+            0.0745
+          ],
+          "prob_yes": 0.9255,
+          "pick_label": null,
+          "change_24h": 0.2555,
+          "change_7d": null,
+          "volume_24h": 41656.931114000006,
+          "liquidity": 16391.10962,
+          "end_date": "2026-09-02",
+          "slug": "next-google-gemini-flash-model-3pt8-released-by-september-2-2026",
+          "token_id_yes": "54573156394017117853809752310710055798717605967684667896028376018413436357630",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Alibaba have the best AI model at the end of September 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.002,
+            0.998
+          ],
+          "prob_yes": 0.002,
+          "pick_label": null,
+          "change_24h": 0.0005,
+          "change_7d": -0.0005,
+          "volume_24h": 25765.236000000004,
+          "liquidity": 39594.5823,
+          "end_date": "2026-10-01",
+          "slug": "will-alibaba-have-the-best-ai-model-at-the-end-of-september-2026-20260717143137056",
+          "token_id_yes": "52935426946029321091735429056863671866847421629936228050378338324576325484328",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Anthropic IPO by September 30, 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.065,
+            0.935
+          ],
+          "prob_yes": 0.065,
+          "pick_label": null,
+          "change_24h": -0.015,
+          "change_7d": -0.07,
+          "volume_24h": 24875.839046999998,
+          "liquidity": 19396.63,
+          "end_date": "2027-07-01",
+          "slug": "will-anthropic-ipo-by-september-30-2026-733",
+          "token_id_yes": "100810566713159522284942057467208361746688416322049201839803236482344990086418",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will OpenAI have the best AI model at the end of September 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0695,
+            0.9305
+          ],
+          "prob_yes": 0.0695,
+          "pick_label": null,
+          "change_24h": 0.0395,
+          "change_7d": 0.017,
+          "volume_24h": 24172.228905000004,
+          "liquidity": 73724.59973,
+          "end_date": "2026-10-01",
+          "slug": "will-openai-have-the-best-ai-model-at-the-end-of-september-2026-20260717143137058",
+          "token_id_yes": "48064644016748051623863502303978953029188647675635554834116598068703884527741",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will GPT-6 be released by September 30, 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.585,
+            0.415
+          ],
+          "prob_yes": 0.585,
+          "pick_label": null,
+          "change_24h": 0.095,
+          "change_7d": 0.35,
+          "volume_24h": 22111.234497999998,
+          "liquidity": 5901.1694,
+          "end_date": "2026-10-01",
+          "slug": "will-gpt-6-be-released-by-september-30-2026-543-325-933-952-413",
+          "token_id_yes": "82971863320043891986833367061104360861631939120244984019114322661700297642048",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will OpenAI’s Astra model be released by September 3, 2026?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.71,
+            0.29
+          ],
+          "prob_yes": 0.71,
+          "pick_label": null,
+          "change_24h": 0.45,
+          "change_7d": null,
+          "volume_24h": 21188.135766000003,
+          "liquidity": 9391.1555,
+          "end_date": "2026-09-03",
+          "slug": "will-openais-astra-model-be-released-by-september-3-2026",
+          "token_id_yes": "44594434312080273238373281652478191239834303635624528692669492510057505725365",
+          "source": "polymarket"
+        },
+        {
+          "question": "When will OpenAI officially announce an IPO?",
+          "question_zh": null,
+          "topic": "AI科技",
+          "outcomes": [
+            "Before Apr 1, 2027",
+            "No"
+          ],
+          "prices": [
+            0.54,
+            0.45999999999999996
+          ],
+          "prob_yes": 0.54,
+          "pick_label": "Before Apr 1, 2027",
+          "change_24h": 0.0,
+          "change_7d": null,
+          "volume_24h": 964.4399999999999,
+          "liquidity": 0.0,
+          "end_date": "2027-04-01T03:59:00Z",
+          "slug": "KXIPOOPENAI",
+          "series_ticker": "KXIPOOPENAI",
+          "token_id_yes": null,
+          "source": "kalshi",
+          "kalshi_category": "Economics"
+        }
+      ]
+    },
+    {
+      "key": "加密",
+      "core": false,
+      "market_count": 6,
+      "volume_24h": 746732.4771319999,
+      "source_counts": {
+        "polymarket": 6
+      },
+      "markets": [
+        {
+          "question": "Will the price of Bitcoin be above $72,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.9965,
+            0.0035
+          ],
+          "prob_yes": 0.9965,
+          "pick_label": null,
+          "change_24h": 0.0025,
+          "change_7d": null,
+          "volume_24h": 187531.22357,
+          "liquidity": 29282.01866,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-72k-on-september-2-2026",
+          "token_id_yes": "44300649947887639682126479353017393935953913443560319487529735419363258612778",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the price of Bitcoin be above $76,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.845,
+            0.155
+          ],
+          "prob_yes": 0.845,
+          "pick_label": null,
+          "change_24h": -0.04,
+          "change_7d": null,
+          "volume_24h": 134044.14097699994,
+          "liquidity": 35868.4162,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-76k-on-september-2-2026",
+          "token_id_yes": "52771377590894351447006846327533647844927668464596667430949092486814812817062",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the price of Bitcoin be above $82,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": -0.014,
+          "change_7d": null,
+          "volume_24h": 114352.38848899998,
+          "liquidity": 33130.42563,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-82k-on-september-2-2026",
+          "token_id_yes": "10045543325797730200208827012727951296221998391453968558923160910425175306273",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the price of Bitcoin be above $74,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.983,
+            0.017
+          ],
+          "prob_yes": 0.983,
+          "pick_label": null,
+          "change_24h": 0.0045,
+          "change_7d": null,
+          "volume_24h": 112361.27852999998,
+          "liquidity": 28691.20861,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-74k-on-september-2-2026",
+          "token_id_yes": "10704405034250471221886537425106116527746259464073144528648084840101708087964",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the price of Bitcoin be above $84,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0005,
+            0.9995
+          ],
+          "prob_yes": 0.0005,
+          "pick_label": null,
+          "change_24h": -0.0055,
+          "change_7d": null,
+          "volume_24h": 100302.9124,
+          "liquidity": 27411.3103,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-84k-on-september-2-2026",
+          "token_id_yes": "3865807454436350516357528835373440792168021088582717171980492577306377864294",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will the price of Bitcoin be above $70,000 on September 2?",
+          "question_zh": null,
+          "topic": "加密",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.9995,
+            0.0005
+          ],
+          "prob_yes": 0.9995,
+          "pick_label": null,
+          "change_24h": 0.001,
+          "change_7d": null,
+          "volume_24h": 98140.533166,
+          "liquidity": 17948.69392,
+          "end_date": "2026-09-02",
+          "slug": "bitcoin-above-70k-on-september-2-2026",
+          "token_id_yes": "42927283073261863967350554228348011071281655938099478147892110586869430589113",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "体育",
+      "core": false,
+      "market_count": 6,
+      "volume_24h": 3574347.39085,
+      "source_counts": {
+        "polymarket": 6
+      },
+      "markets": [
+        {
+          "question": "LoL: Hanwha Life Esports vs T1 - Game 1 Winner",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "Hanwha Life Esports",
+            "T1"
+          ],
+          "prices": [
+            0.0005,
+            0.9995
+          ],
+          "prob_yes": 0.0005,
+          "pick_label": null,
+          "change_24h": -0.5545,
+          "change_7d": null,
+          "volume_24h": 1415577.8275850005,
+          "liquidity": 1730265.66183,
+          "end_date": "2026-09-02",
+          "slug": "lol-hle1-t1-2026-09-02-game1",
+          "token_id_yes": "10734641664948630564119188299000087308360542360331775061020614529623331903474",
+          "source": "polymarket"
+        },
+        {
+          "question": "LoL: Hanwha Life Esports vs T1 (BO5) - LCK Playoffs",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "Hanwha Life Esports",
+            "T1"
+          ],
+          "prices": [
+            0.455,
+            0.545
+          ],
+          "prob_yes": 0.455,
+          "pick_label": null,
+          "change_24h": -0.19,
+          "change_7d": null,
+          "volume_24h": 811971.853575,
+          "liquidity": 94726.6113,
+          "end_date": "2026-09-02",
+          "slug": "lol-hle1-t1-2026-09-02",
+          "token_id_yes": "17602226504684346368510501060478122888791385343970378097785516838620659389931",
+          "source": "polymarket"
+        },
+        {
+          "question": "US Open WTA: Daria Kasatkina vs Paula Badosa",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "Daria Kasatkina",
+            "Paula Badosa"
+          ],
+          "prices": [
+            0.085,
+            0.915
+          ],
+          "prob_yes": 0.085,
+          "pick_label": null,
+          "change_24h": -0.375,
+          "change_7d": null,
+          "volume_24h": 480358.35227399995,
+          "liquidity": 17005.4608,
+          "end_date": "2026-09-06",
+          "slug": "wta-kasatki-badosa-2026-08-30",
+          "token_id_yes": "44090333602803645823612817447297539777781970662827539587518880756289785630627",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Shakhtar Donetsk win the 2026-27 UEFA Champions League Championship?",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0015,
+            0.9985
+          ],
+          "prob_yes": 0.0015,
+          "pick_label": null,
+          "change_24h": null,
+          "change_7d": null,
+          "volume_24h": 344491.42,
+          "liquidity": 289418.83717,
+          "end_date": "2027-05-30",
+          "slug": "will-shakhtar-donetsk-win-the-2026-27-uefa-champions-league-championship-20260701202025578",
+          "token_id_yes": "33339798372916037220786136133406478491116150628220441951753426683441228279665",
+          "source": "polymarket"
+        },
+        {
+          "question": "US Open ATP: Jesper de Jong vs Francesco Passaro",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "Jesper de Jong",
+            "Francesco Passaro"
+          ],
+          "prices": [
+            0.315,
+            0.685
+          ],
+          "prob_yes": 0.315,
+          "pick_label": null,
+          "change_24h": -0.24,
+          "change_7d": null,
+          "volume_24h": 313198.7312229999,
+          "liquidity": 6816.6801,
+          "end_date": "2026-09-06",
+          "slug": "atp-jong-passaro-2026-08-30",
+          "token_id_yes": "29798959263918011102017342838447015426884806920071888841562982551130680990430",
+          "source": "polymarket"
+        },
+        {
+          "question": "Counter-Strike: magic vs K27 (BO3) - IEM Beijing: Global Qualifier Playoffs",
+          "question_zh": null,
+          "topic": "体育",
+          "outcomes": [
+            "magic",
+            "K27"
+          ],
+          "prices": [
+            0.595,
+            0.405
+          ],
+          "prob_yes": 0.595,
+          "pick_label": null,
+          "change_24h": -0.05,
+          "change_7d": null,
+          "volume_24h": 208749.20619299996,
+          "liquidity": 63502.8024,
+          "end_date": "2026-09-02",
+          "slug": "cs2-mgc-k271-2026-09-02",
+          "token_id_yes": "26420257686826316292903691104305359013472817379803333631774421891275403142701",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "娱乐",
+      "core": false,
+      "market_count": 5,
+      "volume_24h": 365852.100623,
+      "source_counts": {
+        "polymarket": 5
+      },
+      "markets": [
+        {
+          "question": "Will Elon Musk post 40-64 tweets from August 31 to September 2, 2026?",
+          "question_zh": null,
+          "topic": "娱乐",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.845,
+            0.155
+          ],
+          "prob_yes": 0.845,
+          "pick_label": null,
+          "change_24h": 0.33,
+          "change_7d": null,
+          "volume_24h": 95918.87425299999,
+          "liquidity": 2107.9753,
+          "end_date": "2026-09-02",
+          "slug": "elon-musk-of-tweets-august-31-september-2-2026-40-64",
+          "token_id_yes": "51641366058943919952284270925800929442717370239819007591053800787003907153229",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Elon Musk post 160-179 tweets from August 28 to September 4, 2026?",
+          "question_zh": null,
+          "topic": "娱乐",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.049,
+            0.951
+          ],
+          "prob_yes": 0.049,
+          "pick_label": null,
+          "change_24h": -0.186,
+          "change_7d": -0.056,
+          "volume_24h": 72059.14395400001,
+          "liquidity": 26057.57992,
+          "end_date": "2026-09-04",
+          "slug": "elon-musk-of-tweets-august-28-september-4-2026-160-179",
+          "token_id_yes": "85299070006342800643211176985803097218866489121704039338367469157101479458136",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Elon Musk post 140-159 tweets from August 28 to September 4, 2026?",
+          "question_zh": null,
+          "topic": "娱乐",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0045,
+            0.9955
+          ],
+          "prob_yes": 0.0045,
+          "pick_label": null,
+          "change_24h": -0.078,
+          "change_7d": -0.0705,
+          "volume_24h": 70734.68073600001,
+          "liquidity": 32503.74948,
+          "end_date": "2026-09-04",
+          "slug": "elon-musk-of-tweets-august-28-september-4-2026-140-159",
+          "token_id_yes": "43654578116711546119916521845710572771244482289783067024251908312194847432194",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Elon Musk post 65-89 tweets from August 31 to September 2, 2026?",
+          "question_zh": null,
+          "topic": "娱乐",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.135,
+            0.865
+          ],
+          "prob_yes": 0.135,
+          "pick_label": null,
+          "change_24h": 0.02,
+          "change_7d": null,
+          "volume_24h": 65804.81852900001,
+          "liquidity": 1857.381,
+          "end_date": "2026-09-02",
+          "slug": "elon-musk-of-tweets-august-31-september-2-2026-65-89",
+          "token_id_yes": "94677742720937994627446195651925815786275185783956680436676360452973750248950",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Elon Musk post 90-114 tweets from August 31 to September 2, 2026?",
+          "question_zh": null,
+          "topic": "娱乐",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0045,
+            0.9955
+          ],
+          "prob_yes": 0.0045,
+          "pick_label": null,
+          "change_24h": -0.01,
+          "change_7d": null,
+          "volume_24h": 61334.583151000006,
+          "liquidity": 11840.30799,
+          "end_date": "2026-09-02",
+          "slug": "elon-musk-of-tweets-august-31-september-2-2026-90-114",
+          "token_id_yes": "62144062021036601298035355698694381754672438509259554916417953971375127670613",
+          "source": "polymarket"
+        }
+      ]
+    },
+    {
+      "key": "其他",
+      "core": false,
+      "market_count": 6,
+      "volume_24h": 748409.7237809999,
+      "source_counts": {
+        "polymarket": 6
+      },
+      "markets": [
+        {
+          "question": "Will Tropical Storm Saudel make landfall in Japan?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0025,
+            0.9975
+          ],
+          "prob_yes": 0.0025,
+          "pick_label": null,
+          "change_24h": -0.007,
+          "change_7d": -0.125,
+          "volume_24h": 270384.98775699997,
+          "liquidity": 32816.50252,
+          "end_date": "2026-09-01",
+          "slug": "will-tropical-storm-saudel-make-landfall-in-japan-1787177922936",
+          "token_id_yes": "57733839027760232791068731312494028194788086540425584045487379165405063431484",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Grand Theft Auto VI Extended Look get less than 20 million views on week 1?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.765,
+            0.235
+          ],
+          "prob_yes": 0.765,
+          "pick_label": null,
+          "change_24h": -0.085,
+          "change_7d": null,
+          "volume_24h": 116454.59810800002,
+          "liquidity": 11894.9054,
+          "end_date": "2026-09-03",
+          "slug": "will-grand-theft-auto-vi-extended-look-get-less-than-20-million-views-on-week-1",
+          "token_id_yes": "53967861473705641468116203294259059274377972235301687793639549234478668375381",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will LDU Quito win on 2026-09-01?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0005,
+            0.9995
+          ],
+          "prob_yes": 0.0005,
+          "pick_label": null,
+          "change_24h": -0.5545,
+          "change_7d": null,
+          "volume_24h": 106766.50114400001,
+          "liquidity": 7256.78394,
+          "end_date": "2026-09-02",
+          "slug": "ecu1-ldu-mur-2026-09-01-ldu",
+          "token_id_yes": "37839051157083803171297588206168827528964740328732830845966185847773593854459",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Cruzeiro EC win on 2026-09-01?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0005,
+            0.9995
+          ],
+          "prob_yes": 0.0005,
+          "pick_label": null,
+          "change_24h": -0.2945,
+          "change_7d": -0.2845,
+          "volume_24h": 95936.82458399996,
+          "liquidity": 53472.78589,
+          "end_date": "2026-09-02",
+          "slug": "brco-cam-cru-2026-09-01-cru",
+          "token_id_yes": "95284152883234941877588566571088671781326395604372340048074617512662697281976",
+          "source": "polymarket"
+        },
+        {
+          "question": "Will Grand Theft Auto VI Extended Look get between 20 and 22 million views on week 1?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.235,
+            0.765
+          ],
+          "prob_yes": 0.235,
+          "pick_label": null,
+          "change_24h": 0.11,
+          "change_7d": null,
+          "volume_24h": 80749.86602799997,
+          "liquidity": 9653.224,
+          "end_date": "2026-09-03",
+          "slug": "will-grand-theft-auto-vi-extended-look-get-between-20-and-22-million-views-on-week-1",
+          "token_id_yes": "39381566232217222821721472802482775384097848090886906057870314111538038829774",
+          "source": "polymarket"
+        },
+        {
+          "question": "Bab el-Mandeb Strait effectively closed by September 30?",
+          "question_zh": null,
+          "topic": "其他",
+          "outcomes": [
+            "Yes",
+            "No"
+          ],
+          "prices": [
+            0.0455,
+            0.9545
+          ],
+          "prob_yes": 0.0455,
+          "pick_label": null,
+          "change_24h": -0.001,
+          "change_7d": -0.0195,
+          "volume_24h": 78116.94615999999,
+          "liquidity": 138221.81849,
+          "end_date": "2026-10-01",
+          "slug": "bab-el-mandeb-strait-effectively-closed-by-september-30-999-671-939",
+          "token_id_yes": "79492971912420892776290893910148058147353983898749011679176479416889510526578",
+          "source": "polymarket"
+        }
+      ]
+    }
+  ],
+  "highlights": [
+    {
+      "key": "polymarket:will-there-be-no-change-in-fed-interest-rates-after-the-september-2026-meeting-615",
+      "topic": "货币政策",
+      "title": "Will there be no change in Fed interest rates after the September 2026 meeting?",
+      "title_en": "Will there be no change in Fed interest rates after the September 2026 meeting?",
+      "pick_label": null,
+      "prob_yes": 0.395,
+      "change_24h": -0.02,
+      "volume_24h": 1198046.3727689988,
+      "source": "polymarket"
+    },
+    {
+      "key": "polymarket:will-the-us-invade-iran-before-2027",
+      "topic": "地缘政治",
+      "title": "Will the U.S. invade Iran before 2027?",
+      "title_en": "Will the U.S. invade Iran before 2027?",
+      "pick_label": null,
+      "prob_yes": 0.165,
+      "change_24h": 0.01,
+      "volume_24h": 647122.4963999998,
+      "source": "polymarket"
+    },
+    {
+      "key": "polymarket:will-anthropic-have-the-best-ai-model-at-the-end-of-september-2026-20260717143137053",
+      "topic": "AI科技",
+      "title": "Will Anthropic have the best AI model at the end of September 2026?",
+      "title_en": "Will Anthropic have the best AI model at the end of September 2026?",
+      "pick_label": null,
+      "prob_yes": 0.905,
+      "change_24h": -0.03,
+      "volume_24h": 46210.014508000015,
+      "source": "polymarket"
+    },
+    {
+      "key": "polymarket:bitcoin-above-72k-on-september-2-2026",
+      "topic": "加密",
+      "title": "Will the price of Bitcoin be above $72,000 on September 2?",
+      "title_en": "Will the price of Bitcoin be above $72,000 on September 2?",
+      "pick_label": null,
+      "prob_yes": 0.9965,
+      "change_24h": 0.0025,
+      "volume_24h": 187531.22357,
+      "source": "polymarket"
+    }
+  ],
+  "summary": "Fed 下次按兵不动约 39.5%；地缘热门「Will the U.S. invade Iran be」约 16.5%；预测市场价格=概率，作外围情绪对照，非交易建议。"
+}

@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from .http_client import make_async_client
+
 logger = logging.getLogger(__name__)
 
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
@@ -76,7 +78,7 @@ async def pull_raw_markets(pages: int = 3, force: bool = False) -> list[dict[str
     raw_list: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0 (vibe-astock)"}
-    async with httpx.AsyncClient(timeout=45.0, headers=headers) as client:
+    async with make_async_client(timeout=45.0, headers=headers) as client:
         for page in range(pages):
             params = {
                 "active": "true",
@@ -122,7 +124,7 @@ async def fetch_history(token_id: str, interval: str = "1w", fidelity: int = 720
     if cached is not None:
         return cached
     params = {"market": token_id, "interval": interval, "fidelity": str(fidelity)}
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with make_async_client(timeout=30.0) as client:
         resp = await client.get(
             CLOB_HISTORY_URL,
             params=params,

@@ -542,7 +542,37 @@ export interface PulseOverviewLite {
     source?: string;
   }>;
   updating?: boolean;
+  stale?: boolean;
+  fresh?: boolean;
+  stale_reason?: string | null;
+  age_hours?: number | null;
+  proxy_configured?: boolean;
+  last_refresh_ok?: boolean | null;
+  last_refresh_error?: string | null;
 }
+
+export interface ProxyConfig {
+  schema?: number;
+  enabled: boolean;
+  url: string;
+  env_override?: string | null;
+  effective_url?: string | null;
+  effective_source?: "env" | "config" | null;
+}
+
+export interface ProxyTestProbe {
+  ok?: boolean;
+  status?: number;
+  error?: string;
+}
+
+export interface ProxyTestResult {
+  proxy?: string | null;
+  polymarket?: ProxyTestProbe | null;
+  kalshi?: ProxyTestProbe | null;
+  ok: boolean;
+}
+
 export interface GlobalQuote {
   code: string; name: string;
   price: number | null; open: number | null; high: number | null; low: number | null;
@@ -769,6 +799,11 @@ export const api = {
     request<TradeThresholdConfig>("/config/trade-thresholds", "POST", { thresholds }),
   resetTradeThresholdConfig: () =>
     request<TradeThresholdConfig>("/config/trade-thresholds/reset", "POST", {}),
+  proxyConfig: () => get<ProxyConfig>("/config/proxy"),
+  saveProxyConfig: (body: { enabled: boolean; url: string }) =>
+    request<ProxyConfig>("/config/proxy", "POST", body),
+  testProxyConfig: (body?: { enabled?: boolean; url?: string }) =>
+    request<ProxyTestResult>("/config/proxy/test", "POST", body ?? {}),
   sentimentSConfig: () => get<SentimentSConfig>("/config/sentiment-s"),
   saveSentimentSConfig: (method: string, opts?: { fusionintelApiKey?: string }) => {
     const body: Record<string, string> = { method };

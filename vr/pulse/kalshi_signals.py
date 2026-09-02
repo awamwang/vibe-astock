@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from . import market_taxonomy
+from .http_client import make_async_client
 from .paths import get_pulse_data_dir
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ async def pull_raw_events(force: bool = False) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     cursor = ""
     headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0 (vibe-astock)"}
-    async with httpx.AsyncClient(timeout=_PAGE_TIMEOUT, headers=headers) as client:
+    async with make_async_client(timeout=_PAGE_TIMEOUT, headers=headers) as client:
         for page in range(_MAX_PAGES):
             params: dict[str, str] = {
                 "limit": "200",

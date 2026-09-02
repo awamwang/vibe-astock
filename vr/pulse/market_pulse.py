@@ -4,16 +4,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from . import kalshi_signals, market_taxonomy, polymarket_signals
+from .http_client import pulse_proxy_url
 from .paths import get_pulse_data_dir
 
 logger = logging.getLogger(__name__)
 
 _rebuilding = False
+# 最近一次重建结果（进程内）；供前端标注「非最新」
+_last_build: dict[str, Any] = {"ok": None, "error": None, "at": None}
+# 快照超过此时长视为过期（即使曾成功）
+_STALE_AFTER = timedelta(hours=24)
 
 
 def _snapshot_path() -> Path:
@@ -156,6 +161,55 @@ async def _translate(markets: list[dict[str, Any]]) -> None:
         pass
 
 
+def _mark_build(ok: bool, error: str | None = None) -> None:
+    _last_build["ok"] = ok
+    _last_build["error"] = error
+    _last_build["at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def _parse_as_of(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00").split("+")[0])
+    except ValueError:
+        return None
+
+
+def _annotate(overview: dict[str, Any], *, updating: bool = False) -> dict[str, Any]:
+    """附加 freshness / 代理元数据（不写回快照文件）。"""
+    out = dict(overview)
+    as_of_dt = _parse_as_of(out.get("as_of"))
+    age_hours: float | None = None
+    if as_of_dt is not None:
+        age_hours = max(0.0, (datetime.now() - as_of_dt).total_seconds() / 3600.0)
+
+    refresh_failed = _last_build.get("ok") is False
+    age_stale = age_hours is not None and age_hours >= _STALE_AFTER.total_seconds() / 3600.0
+    no_data = not (out.get("modules") or out.get("highlights"))
+    stale = bool(refresh_failed or age_stale or (no_data and not updating))
+
+    reason = None
+    if refresh_failed:
+        reason = _last_build.get("error") or "最近一次拉取失败，仍展示上次快照"
+    elif age_stale and age_hours is not None:
+        reason = f"快照已超过 {int(age_hours)} 小时，可能不是最新"
+    elif no_data and not updating:
+        reason = "暂无可用快照"
+
+    proxy = pulse_proxy_url()
+    out["stale"] = stale
+    out["fresh"] = bool(as_of_dt and not stale and not updating)
+    out["stale_reason"] = reason
+    out["age_hours"] = round(age_hours, 1) if age_hours is not None else None
+    out["proxy_configured"] = bool(proxy)
+    out["last_refresh_ok"] = _last_build.get("ok")
+    out["last_refresh_error"] = _last_build.get("error")
+    if updating:
+        out["updating"] = True
+    return out
+
+
 async def _build() -> dict[str, Any]:
     pm, ks = await asyncio.gather(
         _shaped_polymarket(force=True),
@@ -166,8 +220,10 @@ async def _build() -> dict[str, Any]:
         prev = _load_snapshot()
         if prev and (prev.get("modules") or prev.get("highlights")):
             logger.warning("pulse rebuild empty; keeping previous snapshot")
+            _mark_build(False, "双源拉取为空（网络不通或需代理），已保留上次快照")
             return prev
         logger.warning("pulse rebuild empty and no usable snapshot")
+        _mark_build(False, "双源拉取为空且无历史快照")
         return _empty_updating()
 
     await _translate(merged)
@@ -177,7 +233,9 @@ async def _build() -> dict[str, Any]:
         prev = _load_snapshot()
         if prev and (prev.get("modules") or prev.get("highlights")):
             logger.warning("pulse modules empty after classify; keeping previous snapshot")
+            _mark_build(False, "拉取结果无法归类，已保留上次快照")
             return prev
+        _mark_build(False, "拉取结果无法归类且无历史快照")
         return _empty_updating()
 
     highlights = _pick_highlights(modules)
@@ -191,6 +249,7 @@ async def _build() -> dict[str, Any]:
         "summary": _build_summary(modules, highlights),
     }
     _save_snapshot(overview)
+    _mark_build(True)
     return overview
 
 
@@ -200,19 +259,19 @@ async def _background_rebuild() -> None:
         await _build()
     except Exception as exc:  # noqa: BLE001
         logger.warning("pulse background rebuild failed: %s", exc)
+        _mark_build(False, f"重建异常：{exc}")
     finally:
         _rebuilding = False
 
 
 def _empty_updating() -> dict[str, Any]:
-    return {
+    return _annotate({
         "as_of": None,
         "sources": ["polymarket", "kalshi"],
         "modules": [],
         "highlights": [],
         "summary": "正在拉取 Polymarket / Kalshi 公开概率（首次较慢）…",
-        "updating": True,
-    }
+    }, updating=True)
 
 
 async def fetch_overview(force: bool = False) -> dict[str, Any]:
@@ -236,6 +295,4 @@ async def fetch_overview(force: bool = False) -> dict[str, Any]:
         _rebuilding = True
         asyncio.create_task(_background_rebuild())
 
-    if force or _rebuilding:
-        return {**snap, "updating": True}
-    return snap
+    return _annotate(snap, updating=bool(force or _rebuilding))

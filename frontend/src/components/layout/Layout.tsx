@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info, Settings2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
@@ -45,6 +45,7 @@ const SETTINGS_NAV = [
   { to: "/settings/keywords", icon: Tags, label: "自定义配置" },
   { to: "/settings/plugins", icon: Plug, label: "插件管理" },
   { to: "/settings/data", icon: FolderOpen, label: "数据管理" },
+  { to: "/settings/system", icon: Settings2, label: "系统设置" },
   { to: "/settings/about", icon: Info, label: "关于项目" },
 ];
 
@@ -55,10 +56,11 @@ function MainShell() {
   const blockOpen = !!blockPanel?.target;
   const { pathname } = useLocation();
   const widePage = pathname === "/heat" || pathname === "/messages" || pathname === "/blocks";
-  const settingsKeywordsPage = pathname === "/settings/keywords";
+  const settingsWidePage =
+    pathname === "/settings/keywords" || pathname === "/settings/system";
   const contentMaxWidth = widePage
     ? "max-w-none w-full"
-    : settingsKeywordsPage
+    : settingsWidePage
       ? "max-w-[85rem] w-full"
       : "max-w-6xl";
 

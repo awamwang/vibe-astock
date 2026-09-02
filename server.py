@@ -1564,6 +1564,106 @@ def api_trade_threshold_config_reset():
     return {"data": ttc.export_config()}
 
 
+@app.get("/api/config/proxy")
+def api_proxy_config_get():
+    """读取系统代理配置（GlobalPercent 等出境拉取）。"""
+    from duanxian import proxy_config as pc
+
+    return {"data": pc.export_config()}
+
+
+@app.post("/api/config/proxy")
+def api_proxy_config_save(body: dict = Body(...)):
+    """保存系统代理配置。"""
+    from duanxian.proxy_config import ProxyConfigError, save_config
+
+    raw = body or {}
+    try:
+        saved = save_config(
+            enabled=bool(raw.get("enabled")),
+            url=str(raw.get("url") or ""),
+        )
+    except ProxyConfigError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": saved}
+
+
+@app.post("/api/config/proxy/test")
+async def api_proxy_config_test(body: dict | None = Body(None)):
+    """用当前或请求体中的代理试连 Polymarket / Kalshi。"""
+    from duanxian.proxy_config import ProxyConfigError, export_config, validate_proxy_url
+
+    raw = body or {}
+    override = None
+    if "url" in raw:
+        try:
+            override = validate_proxy_url(str(raw.get("url") or ""))
+        except ProxyConfigError as exc:
+            return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+        if raw.get("enabled") is False:
+            override = ""
+        elif raw.get("enabled") and not override:
+            return JSONResponse(
+                {"error": "启用代理时须填写代理地址", "detail": "启用代理时须填写代理地址"},
+                status_code=400,
+            )
+
+    # 未传 url 时用生效配置
+    if override is None:
+        override = export_config().get("effective_url") or ""
+
+    import httpx
+
+    headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0 (vibe-astock)"}
+    results: dict = {"proxy": override or None, "polymarket": None, "kalshi": None, "ok": False}
+    client_kwargs: dict = {"timeout": 20.0, "headers": headers}
+    if override:
+        client_kwargs["proxy"] = override
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            try:
+                r = await client.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={
+                        "active": "true",
+                        "closed": "false",
+                        "limit": "1",
+                        "order": "volume24hr",
+                        "ascending": "false",
+                    },
+                )
+                results["polymarket"] = {
+                    "ok": r.status_code == 200,
+                    "status": r.status_code,
+                }
+            except Exception as exc:  # noqa: BLE001
+                results["polymarket"] = {"ok": False, "error": str(exc)}
+            try:
+                r2 = await client.get(
+                    "https://api.elections.kalshi.com/trade-api/v2/events",
+                    params={"limit": "1", "status": "open"},
+                )
+                results["kalshi"] = {
+                    "ok": r2.status_code == 200,
+                    "status": r2.status_code,
+                }
+            except Exception as exc:  # noqa: BLE001
+                results["kalshi"] = {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"error": f"代理客户端异常：{exc}", "detail": f"代理客户端异常：{exc}", "data": results},
+            status_code=502,
+        )
+
+    results["ok"] = bool(
+        (results.get("polymarket") or {}).get("ok")
+        or (results.get("kalshi") or {}).get("ok")
+    )
+    return {"data": results}
+
+
 @app.get("/api/experience/meta")
 def api_experience_meta():
     """经验记忆库根路径与主题列表。"""
