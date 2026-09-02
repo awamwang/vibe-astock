@@ -232,3 +232,102 @@ export function formatMarkLabel(mark: string): string {
   if (mark === "withdrawn") return "已撤回";
   return mark;
 }
+
+/** 将消息结构化信息打包为「问 AI」上下文 */
+export function buildMessageAiContext(
+  msg: {
+    title: string;
+    source_label: string;
+    source_id: string;
+    status: string;
+    url?: string;
+    keywords: string[];
+    marks: string[];
+    summary: string;
+    detail: string;
+    produced_at: string;
+    effective_mode?: string;
+    effective_at?: string | null;
+    end_at?: string | null;
+    impact_level: string;
+    initial_impact_level?: string;
+    impact_manual?: boolean;
+    freshness: string;
+    effect_status: string;
+    targets: { kind: string; name: string; code?: string | null }[];
+    favorited?: boolean;
+    followed?: boolean;
+    matched_follow_keywords?: string[];
+    matched_follow_blocks?: string[];
+    matched_current_stock_blocks?: string[];
+  },
+  opts?: {
+    defaultEndDays?: number;
+    rawMessages?: { source_label: string; title: string; content: string; produced_at: string }[];
+  },
+): string {
+  const lines: string[] = [];
+  const endDays = opts?.defaultEndDays ?? getDefaultEndDays();
+
+  lines.push("【消息分析】");
+  lines.push(`标题：${msg.title || "—"}`);
+  lines.push(`来源：${msg.source_label}（${msg.source_id}）· 状态：${STATUS_LABEL[msg.status] || msg.status}`);
+  if (msg.url) lines.push(`链接：${msg.url}`);
+
+  lines.push("");
+  lines.push("【分级标注】");
+  lines.push(`级别：${IMPACT_LABEL[msg.impact_level] || msg.impact_level}${msg.impact_manual ? "（手动指定）" : ""}`);
+  if (msg.initial_impact_level && msg.initial_impact_level !== msg.impact_level) {
+    lines.push(`初始级别：${IMPACT_LABEL[msg.initial_impact_level] || msg.initial_impact_level}`);
+  }
+  lines.push(`新旧：${FRESHNESS_LABEL[msg.freshness] || msg.freshness}`);
+  lines.push(`炒作阶段：${EFFECT_LABEL[msg.effect_status] || msg.effect_status}`);
+  if (msg.favorited) lines.push("已收藏");
+  if (msg.followed) {
+    const parts: string[] = [];
+    if (msg.matched_follow_keywords?.length) parts.push(`关键词 ${msg.matched_follow_keywords.join("、")}`);
+    if (msg.matched_follow_blocks?.length) parts.push(`板块 ${msg.matched_follow_blocks.join("、")}`);
+    lines.push(`关注命中：${parts.length ? parts.join("；") : "是"}`);
+  }
+
+  lines.push("");
+  lines.push("【时间】");
+  lines.push(`产生：${msg.produced_at}`);
+  lines.push(
+    `生效：${msg.effective_mode === "scheduled" && msg.effective_at ? msg.effective_at : "立即（回测按产生时间）"}`,
+  );
+  lines.push(
+    `结束：${hasExplicitEndAt(msg) ? msg.end_at : `${endAt(msg, endDays)}（默认 ${endDays} 天）`}`,
+  );
+
+  if (msg.keywords.length) lines.push(`\n【关键词】${msg.keywords.join("、")}`);
+  if (msg.marks.length) lines.push(`【标记】${msg.marks.map(formatMarkLabel).join("、")}`);
+
+  if (msg.targets.length) {
+    lines.push("\n【影响标的】");
+    for (const t of msg.targets) {
+      const kind = TARGET_KIND_LABEL[t.kind] || t.kind;
+      lines.push(`- ${kind}：${t.name}${t.code ? `（${t.code}）` : ""}`);
+    }
+  }
+  if (msg.matched_current_stock_blocks?.length) {
+    lines.push(`焦点股关联板块：${msg.matched_current_stock_blocks.join("、")}`);
+  }
+
+  if (msg.summary) lines.push(`\n【摘要】\n${msg.summary}`);
+  if (msg.detail) lines.push(`\n【详情】\n${msg.detail}`);
+
+  const raw = opts?.rawMessages;
+  if (raw?.length) {
+    lines.push(`\n【原始消息 ${raw.length} 条】`);
+    for (const r of raw.slice(0, 5)) {
+      lines.push(`--- ${r.source_label} · ${r.produced_at}`);
+      if (r.title) lines.push(`标题：${r.title}`);
+      const content = r.content.trim();
+      lines.push(content.length > 800 ? `${content.slice(0, 800)}…` : content);
+    }
+    if (raw.length > 5) lines.push(`（另有 ${raw.length - 5} 条未展示）`);
+  }
+
+  return lines.join("\n");
+}

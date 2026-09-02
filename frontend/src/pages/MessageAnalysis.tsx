@@ -15,6 +15,7 @@ import {
 import { MessageCalendar } from "@/components/MessageCalendar";
 import { MessageStockPipButton, MessageStockPopupButton } from "@/components/MessageStockPip";
 import { toast } from "sonner";
+import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
@@ -26,7 +27,7 @@ import {
 } from "@/lib/api";
 import {
   EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, TARGET_KIND_LABEL,
-  effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
+  buildMessageAiContext, effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
   monthRange, setDefaultEndDays, clampDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
@@ -1471,6 +1472,11 @@ export function MessageAnalysis() {
     return names;
   }, [items, calendarItems, selected]);
 
+  const messageAiContext = useMemo(() => {
+    if (!selected) return "";
+    return buildMessageAiContext(selected, { defaultEndDays, rawMessages });
+  }, [selected, defaultEndDays, rawMessages]);
+
   return (
     <StockResolveScope queries={stockQueries}>
     <BlockResolveScope names={blockNames}>
@@ -2161,6 +2167,15 @@ export function MessageAnalysis() {
                         {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                         AI 分析
                       </button>
+                      <AskAiButton
+                        context={messageAiContext}
+                        label="问 AI"
+                        suggestions={[
+                          "这条消息对相关标的有什么影响",
+                          "炒作阶段和级别怎么理解",
+                          "有什么风险或需要注意的点",
+                        ]}
+                      />
                       {!editing ? (
                         <button
                           type="button"
