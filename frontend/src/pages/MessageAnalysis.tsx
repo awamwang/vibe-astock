@@ -9,7 +9,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
   Plus, Trash2, ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
-  RotateCcw, Pencil, LayoutList, CalendarDays,
+  RotateCcw, Pencil, LayoutList, CalendarDays, Volume2, Square,
 } from "lucide-react";
 import {
   MessageDetailEdit,
@@ -50,6 +50,9 @@ import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope, useBlockResolveOptional } from "@/components/block/BlockResolveContext";
 import { isStockMatched } from "@/lib/stocks";
 import { isBlockMatched } from "@/lib/thsBlocks";
+import {
+  isSpeechSupported, speakTexts, stopSpeech, warmSpeechVoices,
+} from "@/lib/speech";
 
 const IMPACT_LEVELS: ImpactLevel[] = ["critical", "high", "medium", "low", "noise"];
 const FRESHNESS_VALUES: Freshness[] = ["new", "follow_up", "duplicate", "rumor"];
@@ -730,8 +733,12 @@ export function MessageAnalysis() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [speakNewOnRefresh, setSpeakNewOnRefresh] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [pollingCls, setPollingCls] = useState(false);
   const pollInFlight = useRef(false);
+  const speakNewOnRefreshRef = useRef(false);
+  const speechSupported = useMemo(() => isSpeechSupported(), []);
 
   const { code: currentStockCode, status: currentStockStatus, error: currentStockError } =
     usePluginCurrentStock(followStockChange);
@@ -862,7 +869,7 @@ export function MessageAnalysis() {
     }, 300);
   };
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (): Promise<AnalyzedMessage[]> => {
     setLoading(true);
     try {
       const data = await api.messageAnalyzedList({
@@ -880,16 +887,19 @@ export function MessageAnalysis() {
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
       });
-      setItems(data.items || []);
+      const list = data.items || [];
+      setItems(list);
       setTotal(data.total || 0);
+      return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "加载失败");
+      return [];
     } finally {
       setLoading(false);
     }
   }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode, sort, order, page]);
 
-  const loadCalendar = useCallback(async () => {
+  const loadCalendar = useCallback(async (): Promise<AnalyzedMessage[]> => {
     setCalendarLoading(true);
     try {
       const range = monthRange(calendarYear, calendarMonth);
@@ -910,10 +920,13 @@ export function MessageAnalysis() {
         limit: CALENDAR_LIMIT,
         offset: 0,
       });
-      setCalendarItems(data.items || []);
+      const list = data.items || [];
+      setCalendarItems(list);
       setCalendarTotal(data.total || 0);
+      return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "日历加载失败");
+      return [];
     } finally {
       setCalendarLoading(false);
     }
@@ -950,10 +963,55 @@ export function MessageAnalysis() {
     if (viewMode === "calendar") loadCalendar();
   }, [loadCalendar, viewMode]);
 
-  const refreshMessages = useCallback(async () => {
-    if (viewMode === "calendar") await loadCalendar();
-    else await loadList();
+  const refreshMessages = useCallback(async (): Promise<AnalyzedMessage[]> => {
+    if (viewMode === "calendar") return await loadCalendar();
+    return await loadList();
   }, [viewMode, loadCalendar, loadList]);
+
+  useEffect(() => {
+    warmSpeechVoices();
+    return () => {
+      stopSpeech();
+    };
+  }, []);
+
+  useEffect(() => {
+    speakNewOnRefreshRef.current = speakNewOnRefresh;
+  }, [speakNewOnRefresh]);
+
+  /** 依次播报标题（仅标题文本） */
+  const queueSpeakTitles = useCallback((titles: string[]) => {
+    if (!isSpeechSupported()) {
+      notify.error("当前环境不支持浏览器语音播报");
+      return;
+    }
+    const cleaned = titles.map((t) => String(t || "").trim()).filter(Boolean);
+    if (!cleaned.length) {
+      notify.info("没有可播报的标题");
+      return;
+    }
+    setSpeaking(true);
+    speakTexts(cleaned, {
+      onDone: () => setSpeaking(false),
+    });
+  }, []);
+
+  const stopSpeak = useCallback(() => {
+    stopSpeech();
+    setSpeaking(false);
+  }, []);
+
+  /** 按当前列表顺序播报勾选消息的标题 */
+  const speakSelected = useCallback(() => {
+    const pool = viewMode === "calendar" ? calendarItems : items;
+    const titles = pool.filter((x) => selectedIds.has(x.id)).map((x) => x.title);
+    queueSpeakTitles(titles);
+  }, [viewMode, calendarItems, items, selectedIds, queueSpeakTitles]);
+
+  const itemsRef = useRef(items);
+  const calendarItemsRef = useRef(calendarItems);
+  itemsRef.current = items;
+  calendarItemsRef.current = calendarItems;
 
   const loadDetail = useCallback(async (item: AnalyzedMessage) => {
     const reqId = ++detailReqId.current;
@@ -1283,11 +1341,36 @@ export function MessageAnalysis() {
     pollInFlight.current = true;
     setPollingCls(true);
     try {
+      const prevIds = new Set(
+        (viewMode === "calendar" ? calendarItemsRef.current : itemsRef.current).map((x) => x.id),
+      );
       const r = await api.messagePollCls({ backfill: opts?.backfill });
       if (r.inserted > 0) {
         notify.success(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
-        await refreshMessages();
+        const nextItems = await refreshMessages();
         await loadSources();
+        // 自动刷新且开启「新到播报」时，依次朗读本页新出现条目的标题
+        if (opts?.silent && speakNewOnRefreshRef.current) {
+          let titles = nextItems.filter((x) => !prevIds.has(x.id)).map((x) => x.title);
+          // 当前页/筛选未覆盖新条目时，按时间倒序补拉标题
+          if (!titles.length) {
+            try {
+              const latest = await api.messageAnalyzedList({
+                sort: "produced_at",
+                order: "desc",
+                limit: Math.min(Math.max(r.inserted, 1), 30),
+                default_end_days: defaultEndDays,
+              });
+              titles = (latest.items || [])
+                .filter((x) => !prevIds.has(x.id))
+                .slice(0, r.inserted)
+                .map((x) => x.title);
+            } catch {
+              /* 补拉失败则跳过播报 */
+            }
+          }
+          if (titles.length) queueSpeakTitles(titles);
+        }
       } else if (!opts?.silent) {
         const backfillHint = r.backfill_today ? " · 已补拉当日" : "";
         notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增${backfillHint}`);
@@ -1298,7 +1381,7 @@ export function MessageAnalysis() {
       pollInFlight.current = false;
       setPollingCls(false);
     }
-  }, [refreshMessages, loadSources]);
+  }, [refreshMessages, loadSources, viewMode, defaultEndDays, queueSpeakTitles]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -1568,7 +1651,13 @@ export function MessageAnalysis() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setAutoRefresh((v) => !v)}
+            onClick={() => {
+              setAutoRefresh((v) => {
+                const next = !v;
+                if (!next) setSpeakNewOnRefresh(false);
+                return next;
+              });
+            }}
             className={cn(
               "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
               autoRefresh
@@ -1583,6 +1672,38 @@ export function MessageAnalysis() {
             )}
             {autoRefresh ? "自动刷新中 · 5s" : "自动刷新"}
           </button>
+          {speechSupported && (
+            <button
+              type="button"
+              onClick={() => {
+                setSpeakNewOnRefresh((v) => {
+                  const next = !v;
+                  if (next) setAutoRefresh(true);
+                  return next;
+                });
+              }}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
+                speakNewOnRefresh
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-background text-foreground",
+              )}
+              title="配合自动刷新：有新拉取消息时依次播报标题（浏览器语音）"
+            >
+              <Volume2 className="h-4 w-4" />
+              {speakNewOnRefresh ? "新到播报中" : "新到播报"}
+            </button>
+          )}
+          {speaking && (
+            <button
+              type="button"
+              onClick={stopSpeak}
+              className="flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger transition-opacity hover:bg-danger/15"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" />
+              停止播报
+            </button>
+          )}
           <button
             type="button"
             onClick={() => pollCls({ backfill: true })}
@@ -1752,6 +1873,17 @@ export function MessageAnalysis() {
             </div>
             {selectedIds.size > 0 && (
               <>
+                {speechSupported && (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:bg-muted/50"
+                    onClick={speakSelected}
+                    title="依次播报选中消息的标题"
+                  >
+                    <Volume2 className="h-4 w-4" />
+                    播报 ({selectedIds.size})
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={analyzing}
