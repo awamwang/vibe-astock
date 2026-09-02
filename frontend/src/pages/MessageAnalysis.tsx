@@ -7,32 +7,25 @@ import {
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  Search, RefreshCw, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-  Plus, Trash2, ExternalLink, Sparkles, Check, Newspaper, Radio, X, Star,
-  RotateCcw, Pencil, LayoutList, CalendarDays, Volume2, Square,
+  Search, RefreshCw, Loader2, ChevronDown,
+  Plus, Trash2, Sparkles, Newspaper, Radio, X, Star,
+  RotateCcw, LayoutList, CalendarDays, Volume2, Square,
 } from "lucide-react";
-import {
-  MessageDetailEdit,
-  draftFromMessage,
-  patchFromDraft,
-  type DetailEditDraft,
-} from "@/components/MessageDetailEdit";
 import { MessageCalendar } from "@/components/MessageCalendar";
+import { MessageDetailPanel } from "@/components/MessageDetailPanel";
 import { MessageStockPipButton, MessageStockPopupButton } from "@/components/MessageStockPip";
 import { toast } from "sonner";
-import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type AnalyzedMessage, type BlockResolveItem, type EffectStatus, type Freshness, type ImpactLevel,
-  type ImpactTarget, type MessageSourceInfo, type RawMessage, type RawMessageDraft,
-  type StockResolveItem,
+  type AnalyzedMessage, type BlockResolveItem, type ImpactTarget,
+  type MessageSourceInfo, type RawMessageDraft, type StockResolveItem,
 } from "@/lib/api";
 import {
-  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, STATUS_LABEL, TARGET_KIND_LABEL,
-  buildMessageAiContext, effectiveAt, endAt, formatMarkLabel, getDefaultEndDays, hasExplicitEndAt, keywordHint,
+  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, TARGET_KIND_LABEL,
+  effectiveAt, endAt, getDefaultEndDays, hasExplicitEndAt, keywordHint,
   monthRange, setDefaultEndDays, clampDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
@@ -43,7 +36,6 @@ import {
   type ArticleIngestExtract,
 } from "@/lib/articles";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
-import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { StockLabel } from "@/components/stock/StockLabel";
 import { StockResolveScope, useStockResolve, useStockResolveOptional } from "@/components/stock/StockResolveContext";
 import { BlockLabel } from "@/components/block/BlockLabel";
@@ -53,12 +45,6 @@ import { isBlockMatched } from "@/lib/thsBlocks";
 import {
   isSpeechSupported, speakTexts, stopSpeech, warmSpeechVoices,
 } from "@/lib/speech";
-
-const IMPACT_LEVELS: ImpactLevel[] = ["critical", "high", "medium", "low", "noise"];
-const FRESHNESS_VALUES: Freshness[] = ["new", "follow_up", "duplicate", "rumor"];
-const EFFECT_STATUSES: EffectStatus[] = [...EFFECT_STATUS_OPTIONS];
-const quickSelectCls =
-  "h-8 max-w-[7.5rem] rounded-lg border border-border bg-background px-2 text-xs font-semibold text-foreground disabled:opacity-40";
 
 const PAGE_SIZE = 100;
 const CALENDAR_LIMIT = 1000;
@@ -533,98 +519,6 @@ function MessageTargets({
   );
 }
 
-function MessageDetailTargets({
-  targets,
-  stockHitBlockNames,
-}: {
-  targets: AnalyzedMessage["targets"];
-  stockHitBlockNames?: string[];
-}) {
-  const sortTargets = useSortMessageTargets(stockHitBlockNames);
-  return (
-    <div className="flex flex-wrap gap-2">
-      {sortTargets(targets).map((t, i) => (
-        <MessageTargetBadge key={i} t={t} stockHitBlockNames={stockHitBlockNames} />
-      ))}
-    </div>
-  );
-}
-
-function DetailSection({ label, action, children }: { label: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex flex-wrap items-center gap-2">
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function CollapsibleRawSection({
-  rawMessages,
-  loading,
-}: {
-  rawMessages: RawMessage[];
-  loading: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="border-t border-border/60 pt-4">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-2 text-left"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">原始消息</span>
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          {!loading && rawMessages.length > 0 && (
-            <span>{rawMessages.length} 条</span>
-          )}
-          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-3">
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              加载中…
-            </div>
-          ) : rawMessages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">未找到关联的原始消息</p>
-          ) : (
-            <div className="space-y-3">
-              {rawMessages.map((raw, i) => (
-                <div
-                  key={raw.id}
-                  className="rounded-xl border border-border/60 bg-muted/15 p-3"
-                >
-                  {rawMessages.length > 1 && (
-                    <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-                      原始 #{i + 1}
-                      {raw.title ? ` · ${raw.title}` : ""}
-                    </p>
-                  )}
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                    {raw.content || "—"}
-                  </p>
-                  <p className="mt-2 text-[11px] tabular-nums text-muted-foreground">
-                    来源 {raw.source_label || raw.source_id} · {raw.produced_at}
-                    {raw.external_ref ? ` · ref ${raw.external_ref}` : ""}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FollowStockHint({
   code,
   status,
@@ -747,7 +641,6 @@ export function MessageAnalysis() {
   const listScrollRef = useRef<HTMLDivElement>(null);
   const listPaneRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLDivElement>(null);
-  const detailReqId = useRef(0);
   const [navFocus, setNavFocus] = useState<NavFocusPane | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const nowInit = useMemo(() => new Date(), []);
@@ -769,8 +662,6 @@ export function MessageAnalysis() {
   const [ingestMetaProducedAt, setIngestMetaProducedAt] = useState(() => nowStorageDatetime());
 
   const [selected, setSelected] = useState<AnalyzedMessage | null>(null);
-  const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** Shift 区间选择的锚点（当前页 items 下标） */
   const selectAnchorRef = useRef<number | null>(null);
@@ -780,9 +671,6 @@ export function MessageAnalysis() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [editDraft, setEditDraft] = useState<DetailEditDraft | null>(null);
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [quickPatching, setQuickPatching] = useState(false);
   const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
   const defaultEndDaysSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1013,24 +901,6 @@ export function MessageAnalysis() {
   itemsRef.current = items;
   calendarItemsRef.current = calendarItems;
 
-  const loadDetail = useCallback(async (item: AnalyzedMessage) => {
-    const reqId = ++detailReqId.current;
-    setSelected(item);
-    setRawMessages([]);
-    setDetailLoading(true);
-    try {
-      const detail = await api.messageAnalyzedDetail(item.id);
-      if (reqId !== detailReqId.current) return;
-      setSelected(detail);
-      setRawMessages(detail.raw_messages || []);
-    } catch (e) {
-      if (reqId !== detailReqId.current) return;
-      notify.error(e instanceof ApiError ? e.message : "加载详情失败");
-    } finally {
-      if (reqId === detailReqId.current) setDetailLoading(false);
-    }
-  }, []);
-
   const focusNavPane = useCallback((pane: NavFocusPane) => {
     setNavFocus(pane);
     const el = pane === "list" ? listPaneRef.current : detailPaneRef.current;
@@ -1039,11 +909,22 @@ export function MessageAnalysis() {
 
   const selectItem = useCallback((item: AnalyzedMessage, focus: NavFocusPane = "list") => {
     setEditing(false);
-    setEditDraft(null);
-    void loadDetail(item);
+    setSelected(item);
     // 下一帧聚焦，避免点击行时焦点落在不可导航区域
     requestAnimationFrame(() => focusNavPane(focus));
-  }, [loadDetail, focusNavPane]);
+  }, [focusNavPane]);
+
+  const handleDetailUpdated = useCallback((msg: AnalyzedMessage) => {
+    setSelected(msg);
+    setItems((list) => list.map((x) => (x.id === msg.id ? { ...x, ...msg } : x)));
+    setCalendarItems((list) => list.map((x) => (x.id === msg.id ? { ...x, ...msg } : x)));
+  }, []);
+
+  const handleDetailDeleted = useCallback((id: string) => {
+    setSelected(null);
+    setCalendarItems((list) => list.filter((x) => x.id !== id));
+    void refreshMessages();
+  }, [refreshMessages]);
 
   /** 详情左右切换所依据的当前可见列表（列表页 / 日历月内） */
   const detailNavItems = viewMode === "calendar" ? calendarItems : items;
@@ -1112,36 +993,6 @@ export function MessageAnalysis() {
     ingestOpen, editing, navFocus, viewMode,
     calendarItems, items, selected, selectItem,
   ]);
-
-  const startEdit = () => {
-    if (!selected) return;
-    setEditDraft(draftFromMessage(selected));
-    setEditing(true);
-  };
-
-  const cancelEdit = () => {
-    setEditing(false);
-    setEditDraft(null);
-  };
-
-  const saveEdit = async () => {
-    if (!selected || !editDraft) return;
-    setSaveLoading(true);
-    try {
-      const updated = await api.messageAnalyzedPatch(selected.id, patchFromDraft(editDraft));
-      setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-      setCalendarItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-      setSelected(updated);
-      setEditing(false);
-      setEditDraft(null);
-      notify.success("已保存人工修正");
-      await loadDetail(updated);
-    } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "保存失败");
-    } finally {
-      setSaveLoading(false);
-    }
-  };
 
   const clsSource = useMemo(() => sources.find((s) => s.id === "cls_telegraph"), [sources]);
   const xgbSource = useMemo(() => sources.find((s) => s.id === "xgb_msgs"), [sources]);
@@ -1522,7 +1373,6 @@ export function MessageAnalysis() {
       setSelectedIds(new Set());
       if (selected && ids.includes(selected.id)) {
         setSelected(null);
-        setRawMessages([]);
       }
       setCalendarItems((list) => list.filter((x) => !ids.includes(x.id)));
       await refreshMessages();
@@ -1551,10 +1401,7 @@ export function MessageAnalysis() {
         onItem: (item) => {
           setItems((list) => list.map((x) => (x.id === item.id ? item : x)));
           setCalendarItems((list) => list.map((x) => (x.id === item.id ? item : x)));
-          setSelected((cur) => {
-            if (cur?.id === item.id) void loadDetail(item);
-            return cur?.id === item.id ? item : cur;
-          });
+          setSelected((cur) => (cur?.id === item.id ? item : cur));
         },
       });
       notify.success(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
@@ -1572,32 +1419,6 @@ export function MessageAnalysis() {
   };
 
   const queueAnalyze = () => runAnalyze(Array.from(selectedIds));
-
-  const applyMessagePatch = (updated: AnalyzedMessage) => {
-    setItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-    setCalendarItems((list) => list.map((x) => (x.id === updated.id ? updated : x)));
-    if (selected?.id === updated.id) {
-      setSelected(updated);
-      void loadDetail(updated);
-    }
-  };
-
-  const quickPatchField = async (
-    item: AnalyzedMessage,
-    patch: Partial<Pick<AnalyzedMessage, "impact_level" | "freshness" | "effect_status">>,
-  ) => {
-    const key = Object.keys(patch)[0] as keyof typeof patch | undefined;
-    if (!key || patch[key] === item[key]) return;
-    setQuickPatching(true);
-    try {
-      const updated = await api.messageAnalyzedPatch(item.id, patch);
-      applyMessagePatch(updated);
-    } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "更新失败");
-    } finally {
-      setQuickPatching(false);
-    }
-  };
 
   const stockQueries = useMemo(() => {
     const out: { code?: string | null; name?: string | null }[] = [];
@@ -1624,11 +1445,6 @@ export function MessageAnalysis() {
     }
     return names;
   }, [items, calendarItems, selected]);
-
-  const messageAiContext = useMemo(() => {
-    if (!selected) return "";
-    return buildMessageAiContext(selected, { defaultEndDays, rawMessages });
-  }, [selected, defaultEndDays, rawMessages]);
 
   return (
     <StockResolveScope queries={stockQueries}>
@@ -2251,327 +2067,27 @@ export function MessageAnalysis() {
               }
             }}
           >
-            {!selected ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">选择消息查看详情</p>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-3 border-b border-border/60 pb-4">
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <h2
-                        className={cn(
-                          "text-base font-bold leading-snug",
-                          IMPACT_TITLE[selected.impact_level] || "text-foreground",
-                        )}
-                      >
-                        {selected.title || "—"}
-                      </h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {selected.source_label} · {STATUS_LABEL[selected.status] || selected.status}
-                      </p>
-                    </div>
-                    {detailNavItems.length > 0 && detailNavIndex >= 0 && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          aria-label="上一条"
-                          title="上一条（←）"
-                          disabled={!canNavPrev}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
-                          onClick={() => selectAdjacent(-1, "detail")}
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <span className="min-w-[3.25rem] text-center text-[11px] tabular-nums text-muted-foreground">
-                          {detailNavIndex + 1}/{detailNavItems.length}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="下一条"
-                          title="下一条（→）"
-                          disabled={!canNavNext}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
-                          onClick={() => selectAdjacent(1, "detail")}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <select
-                        aria-label="级别"
-                        title={selected.impact_manual ? "已手动指定；修改将同步初始档与工作档" : "修改将同步初始档与工作档"}
-                        disabled={editing || quickPatching}
-                        className={cn(quickSelectCls, IMPACT_BADGE[selected.impact_level] || IMPACT_BADGE.medium)}
-                        value={selected.impact_level}
-                        onChange={(e) => void quickPatchField(selected, { impact_level: e.target.value as ImpactLevel })}
-                      >
-                        {IMPACT_LEVELS.map((l) => (
-                          <option key={l} value={l}>{IMPACT_LABEL[l]}</option>
-                        ))}
-                      </select>
-                      {selected.impact_manual ? (
-                        <span className="text-[11px] text-muted-foreground" title="优先级已手动指定">手动</span>
-                      ) : null}
-                      {selected.initial_impact_level && selected.initial_impact_level !== selected.impact_level ? (
-                        <span className="text-[11px] text-muted-foreground" title="进入系统时的初始优先级">
-                          初:{IMPACT_LABEL[selected.initial_impact_level] || selected.initial_impact_level}
-                        </span>
-                      ) : null}
-                      <select
-                        aria-label="新旧"
-                        title="新旧"
-                        disabled={editing || quickPatching}
-                        className={quickSelectCls}
-                        value={selected.freshness}
-                        onChange={(e) => void quickPatchField(selected, { freshness: e.target.value as Freshness })}
-                      >
-                        {FRESHNESS_VALUES.map((f) => (
-                          <option key={f} value={f}>{FRESHNESS_LABEL[f]}</option>
-                        ))}
-                      </select>
-                      <select
-                        aria-label="炒作阶段"
-                        title="炒作阶段"
-                        disabled={editing || quickPatching}
-                        className={cn(quickSelectCls, "max-w-[8.5rem]", EFFECT_BADGE[selected.effect_status] || EFFECT_BADGE.not_erupted)}
-                        value={selected.effect_status}
-                        onChange={(e) => void quickPatchField(selected, { effect_status: e.target.value as EffectStatus })}
-                      >
-                        {!EFFECT_STATUSES.includes(selected.effect_status as EffectStatus) && (
-                          <option value={selected.effect_status}>
-                            {EFFECT_LABEL[selected.effect_status] || selected.effect_status}
-                          </option>
-                        )}
-                        {EFFECT_STATUSES.map((s) => (
-                          <option key={s} value={s}>{EFFECT_LABEL[s]}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={batchBusy}
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40",
-                          selected.favorited
-                            ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                            : "border-border bg-background text-foreground",
-                        )}
-                        onClick={() => runFavorite([selected.id], !selected.favorited)}
-                      >
-                        <Star className={cn("h-3.5 w-3.5", selected.favorited && "fill-current")} />
-                        {selected.favorited ? "取消收藏" : "收藏"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={batchBusy}
-                        className="inline-flex items-center gap-1 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-40"
-                        onClick={() => runDelete([selected.id])}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> 删除
-                      </button>
-                      <button
-                        type="button"
-                        disabled={analyzing || !hasLlm() || editing}
-                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
-                        onClick={() => runAnalyze([selected.id])}
-                      >
-                        {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                        AI 分析
-                      </button>
-                      <AskAiButton
-                        context={messageAiContext}
-                        label="问 AI"
-                        suggestions={[
-                          "这条消息对相关标的有什么影响",
-                          "炒作阶段和级别怎么理解",
-                          "有什么风险或需要注意的点",
-                        ]}
-                      />
-                      {!editing ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground"
-                          onClick={startEdit}
-                        >
-                          <Pencil className="h-3.5 w-3.5" /> 编辑
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            disabled={saveLoading}
-                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
-                            onClick={() => void saveEdit()}
-                          >
-                            {saveLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                            保存
-                          </button>
-                          <button
-                            type="button"
-                            disabled={saveLoading}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-40"
-                            onClick={cancelEdit}
-                          >
-                            取消
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {editing && editDraft ? (
-                  <MessageDetailEdit
-                    sourceId={selected.source_id}
-                    draft={editDraft}
-                    onChange={setEditDraft}
-                  />
-                ) : (
-                  <>
-                {selected.url && (
-                  <a
-                    href={selected.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-4 w-4" /> 原文链接
-                  </a>
-                )}
-
-                <DetailSection
-                  label="关注"
-                  action={(
-                    <Link
-                      to={keywordsSettingsTo("message-follow")}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-                    >
-                      消息关注词 →
-                    </Link>
-                  )}
-                >
-                  {selected.followed ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge className="border-primary/40 bg-primary/15 text-primary">已命中</Badge>
-                      {(selected.matched_follow_keywords?.length ?? 0) > 0 &&
-                        selected.matched_follow_keywords!.map((k) => (
-                          <Badge key={`kw-${k}`} className="border-primary/30 bg-primary/10 text-primary">{k}</Badge>
-                        ))}
-                      {(selected.matched_follow_blocks?.length ?? 0) > 0 &&
-                        selected.matched_follow_blocks!.map((b) => (
-                          <Badge key={`blk-${b}`} className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200">
-                            板块·{b}
-                          </Badge>
-                        ))}
-                      {(selected.matched_follow_keywords?.length ?? 0) === 0 &&
-                        (selected.matched_follow_blocks?.length ?? 0) === 0 && (
-                        <span className="text-sm text-muted-foreground">已关注，无匹配项</span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">未命中关注词 / 关注板块</span>
-                  )}
-                </DetailSection>
-
-                <DetailSection label="关键词">
-                  {selected.keywords.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5" title={keywordHint(selected.source_id)}>
-                      {selected.keywords.map((k) => (
-                        <Badge
-                          key={k}
-                          className="border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-200"
-                        >
-                          {k}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">—</span>
-                  )}
-                </DetailSection>
-
-                {selected.marks.length > 0 && (
-                  <DetailSection label="标记">
-                    <div className="flex flex-wrap gap-1.5">
-                      {selected.marks.map((m) => (
-                        <Badge key={m} className="border-muted-foreground/30 bg-muted/40 text-foreground" title={formatMarkLabel(m)}>
-                          {formatMarkLabel(m)}
-                        </Badge>
-                      ))}
-                    </div>
-                  </DetailSection>
-                )}
-
-                <DetailSection label="摘要">
-                  <p className="text-sm leading-relaxed text-foreground">{selected.summary || "—"}</p>
-                </DetailSection>
-
-                <div className="glass rounded-xl bg-muted/20 p-4 text-sm">
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-                    <dt className="text-muted-foreground">产生</dt>
-                    <dd className="font-medium tabular-nums text-foreground">{selected.produced_at}</dd>
-                    <dt className="text-muted-foreground">生效</dt>
-                    <dd className="text-foreground">
-                      {selected.effective_mode === "scheduled" && selected.effective_at
-                        ? selected.effective_at
-                        : "立即（回测按产生时间）"}
-                    </dd>
-                    <dt className="text-muted-foreground">结束</dt>
-                    <dd className="font-medium tabular-nums text-foreground">
-                      {hasExplicitEndAt(selected)
-                        ? selected.end_at
-                        : `${endAt(selected, defaultEndDays)}（默认 ${defaultEndDays} 天）`}
-                    </dd>
-                    <dt className="text-muted-foreground">级别</dt>
-                    <dd className="text-foreground">
-                      {IMPACT_LABEL[selected.impact_level]}
-                      {selected.impact_manual ? "（手动）" : ""}
-                    </dd>
-                    <dt className="text-muted-foreground">初始级别</dt>
-                    <dd className="text-foreground">
-                      {IMPACT_LABEL[selected.initial_impact_level || selected.impact_level]}
-                    </dd>
-                    <dt className="text-muted-foreground">新旧</dt>
-                    <dd className="text-foreground">{FRESHNESS_LABEL[selected.freshness]}</dd>
-                    <dt className="text-muted-foreground">炒作</dt>
-                    <dd className="text-foreground">
-                      <EffectBadge status={selected.effect_status} />
-                    </dd>
-                  </dl>
-                </div>
-
-                {selected.targets.length > 0 && (
-                  <DetailSection label="影响标的">
-                    <MessageDetailTargets
-                      targets={selected.targets}
-                      stockHitBlockNames={
-                        followStockChange ? selected.matched_current_stock_blocks : undefined
-                      }
-                    />
-                  </DetailSection>
-                )}
-
-                <DetailSection label="详情">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                    {selected.detail || "—"}
-                  </p>
-                </DetailSection>
-
-                <CollapsibleRawSection
-                  key={selected.id}
-                  rawMessages={rawMessages}
-                  loading={detailLoading}
-                />
-                  </>
-                )}
-              </div>
-            )}
+            <MessageDetailPanel
+              messageId={selected?.id ?? null}
+              seed={selected}
+              defaultEndDays={defaultEndDays}
+              followStockChange={followStockChange}
+              nav={
+                detailNavItems.length > 0 && detailNavIndex >= 0
+                  ? {
+                      index: detailNavIndex,
+                      total: detailNavItems.length,
+                      canPrev: canNavPrev,
+                      canNext: canNavNext,
+                      onPrev: () => selectAdjacent(-1, "detail"),
+                      onNext: () => selectAdjacent(1, "detail"),
+                    }
+                  : null
+              }
+              onUpdated={handleDetailUpdated}
+              onDeleted={handleDetailDeleted}
+              onEditingChange={setEditing}
+            />
           </div>
         </div>
       </section>

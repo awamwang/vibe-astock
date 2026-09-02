@@ -8,6 +8,7 @@ import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
 import { Watchlist } from "@/pages/Watchlist";
 import { MessageAnalysis } from "@/pages/MessageAnalysis";
+import { MessageDetailPopup } from "@/pages/MessageDetailPopup";
 import { MessageStockPopup } from "@/pages/MessageStockPopup";
 import { TradeBudgetPopout, VerificationPopout } from "@/pages/popout/AgentReviewPopouts";
 import { ShortBoardPopout } from "@/pages/popout/ShortBoardPopout";
@@ -25,6 +26,7 @@ import { SystemSettings } from "@/pages/SystemSettings";
 export const router = createBrowserRouter([
   // 独立弹窗页：无侧栏布局，可单独打开或由 window.open 弹出
   { path: "/messages/pip", element: <MessageStockPopup /> },
+  { path: "/messages/:id", element: <MessageDetailPopup /> },
   { path: "/popout/agent/trade-budget", element: <TradeBudgetPopout /> },
   { path: "/popout/agent/verification", element: <VerificationPopout /> },
   { path: "/popout/short-board/:section", element: <ShortBoardPopout /> },

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, ApiError, type AnalyzedMessage } from "@/lib/api";
 import { effectiveAt, getDefaultEndDays, IMPACT_LABEL, targetTitle } from "@/lib/messages";
 import { usePluginCurrentStock } from "@/lib/currentStockStream";
+import { openMessageDetailPopup } from "@/components/MessageDetailPanel";
 import { openSectionPopup, appUrl } from "@/lib/sectionPopup";
 import { cn } from "@/lib/utils";
 
@@ -220,6 +221,17 @@ export function MessageStockLinkPanel({
                     )}
                   >
                     {item.title || "—"}
+                    <button
+                      type="button"
+                      className="ml-1.5 inline align-baseline text-[10px] font-normal text-muted-foreground/70 underline decoration-muted-foreground/30 underline-offset-2 transition-colors hover:text-primary hover:decoration-primary/50"
+                      title="打开消息详情"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openMessageDetailPopup(item.id);
+                      }}
+                    >
+                      详情
+                    </button>
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
