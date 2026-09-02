@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback, useEffect, useMemo, useRef, useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -760,6 +765,10 @@ export function MessageAnalysis() {
   const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Shift 区间选择的锚点（当前页 items 下标） */
+  const selectAnchorRef = useRef<number | null>(null);
+  /** 拖动涂抹多选：按住勾选框拖过其它行 */
+  const dragSelectRef = useRef<{ active: boolean; mode: "add" | "remove" } | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
@@ -1312,18 +1321,78 @@ export function MessageAnalysis() {
     }
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const pageIds = useMemo(() => items.map((x) => x.id), [items]);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
   const somePageSelected = pageIds.some((id) => selectedIds.has(id));
+
+  useEffect(() => {
+    selectAnchorRef.current = null;
+    dragSelectRef.current = null;
+  }, [page, pageIds]);
+
+  useEffect(() => {
+    const endDrag = () => {
+      if (!dragSelectRef.current?.active) return;
+      dragSelectRef.current = null;
+      document.body.classList.remove("select-none");
+    };
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    return () => {
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      document.body.classList.remove("select-none");
+    };
+  }, []);
+
+  const applySelectIds = useCallback((ids: string[], mode: "add" | "remove" | "toggle") => {
+    if (!ids.length) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (mode === "add") next.add(id);
+        else if (mode === "remove") next.delete(id);
+        else if (next.has(id)) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  /** Shift+点击：从锚点到当前行勾选整段；普通点击改由 pointerdown 处理 */
+  const handleCheckboxClick = useCallback((index: number, id: string, e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.shiftKey) return;
+    const anchor = selectAnchorRef.current;
+    if (anchor == null) {
+      applySelectIds([id], "toggle");
+      selectAnchorRef.current = index;
+      return;
+    }
+    const lo = Math.min(anchor, index);
+    const hi = Math.max(anchor, index);
+    applySelectIds(items.slice(lo, hi + 1).map((x) => x.id), "add");
+  }, [applySelectIds, items]);
+
+  /** 按住勾选框开始拖动涂抹；抬起由全局 pointerup 结束 */
+  const handleCheckboxPointerDown = useCallback((index: number, id: string, e: ReactPointerEvent) => {
+    if (e.button !== 0 || e.shiftKey) return;
+    e.stopPropagation();
+    const mode: "add" | "remove" = selectedIds.has(id) ? "remove" : "add";
+    dragSelectRef.current = { active: true, mode };
+    document.body.classList.add("select-none");
+    applySelectIds([id], mode);
+    selectAnchorRef.current = index;
+  }, [applySelectIds, selectedIds]);
+
+  /** 拖动经过行时按起始模式勾选/取消 */
+  const handleRowPointerEnter = useCallback((index: number, id: string) => {
+    const drag = dragSelectRef.current;
+    if (!drag?.active) return;
+    applySelectIds([id], drag.mode);
+    selectAnchorRef.current = index;
+  }, [applySelectIds]);
 
   const toggleSelectAllPage = () => {
     setSelectedIds((prev) => {
@@ -1335,6 +1404,7 @@ export function MessageAnalysis() {
       }
       return next;
     });
+    selectAnchorRef.current = pageIds.length ? 0 : null;
   };
 
   const runFavorite = async (ids: string[], favorited: boolean) => {
@@ -1864,7 +1934,7 @@ export function MessageAnalysis() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
+                    {items.map((item, index) => (
                       <tr
                         key={item.id}
                         data-message-id={item.id}
@@ -1873,15 +1943,28 @@ export function MessageAnalysis() {
                           "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/25",
                           selected?.id === item.id &&
                             "bg-primary/12 shadow-[inset_3px_0_0_0_hsl(var(--primary))]",
+                          selectedIds.has(item.id) && selected?.id !== item.id && "bg-muted/40",
                         )}
                         onClick={() => selectItem(item)}
+                        onPointerEnter={() => handleRowPointerEnter(index, item.id)}
                       >
-                        <td className="px-3 py-3 align-top" onClick={(e) => e.stopPropagation()}>
+                        <td
+                          className="px-3 py-3 align-top"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => {
+                            if ((e.target as HTMLElement).closest("input[type=checkbox]")) return;
+                            handleCheckboxPointerDown(index, item.id, e);
+                          }}
+                          onPointerEnter={() => handleRowPointerEnter(index, item.id)}
+                        >
                           <input
                             type="checkbox"
                             className="h-4 w-4 accent-[hsl(var(--primary))]"
                             checked={selectedIds.has(item.id)}
-                            onChange={() => toggleSelect(item.id)}
+                            readOnly
+                            aria-label={`选择：${item.title || item.id}`}
+                            onClick={(e) => handleCheckboxClick(index, item.id, e)}
+                            onPointerDown={(e) => handleCheckboxPointerDown(index, item.id, e)}
                           />
                         </td>
                         <td className="px-3 py-3 align-top max-w-[360px]">
