@@ -23,7 +23,8 @@ import json
 import os
 import threading
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
 from . import trade_calendar
 from .util import china_now
@@ -36,10 +37,13 @@ _CACHE_DIR = ""
 def _rebind_paths() -> None:
     global _CACHE_DIR
     _CACHE_DIR = str(_paths.agents_dir() / 'cache' / 'short_board')
-_TTL = 20.0  # 盘中指标条刷新间隔略长于 5 秒轮询，挡住叠请求
+# 盘中新鲜度窗口；前端约 10s 轮询。过期仍立即返回旧值，后台单飞刷新（SWR）。
+_TTL = 20.0
 _OFFSESSION_TTL = 86400.0  # 非实时场次：已定稿，日内刷新不打上游
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
+_inflight: dict[str, list[threading.Event]] = {}
+_bg_refreshing: set[str] = set()
 
 _BAOER = (
     "https://flash-api.xuangubao.cn/api/market_indicator/line"
@@ -61,6 +65,14 @@ _QCJ_UA = {
 }
 
 
+def _reset_runtime_state() -> None:
+    """测试用：清空内存缓存与单飞状态。"""
+    with _lock:
+        _cache.clear()
+        _inflight.clear()
+        _bg_refreshing.clear()
+
+
 def _cached(key: str, ttl: float, build):
     now = time.monotonic()
     with _lock:
@@ -72,6 +84,73 @@ def _cached(key: str, ttl: float, build):
         with _lock:
             _cache[key] = (now, val)
     return val
+
+
+def _singleflight_build(key: str, build: Callable[[], Any]) -> Any:
+    """同一 key 并发只跑一次 build，其余等待结果。"""
+    waiter = threading.Event()
+    leader = False
+    with _lock:
+        waiters = _inflight.get(key)
+        if waiters is None:
+            _inflight[key] = [waiter]
+            leader = True
+        else:
+            waiters.append(waiter)
+
+    if not leader:
+        waiter.wait(timeout=120.0)
+        with _lock:
+            hit = _cache.get(key)
+        return hit[1] if hit else None
+
+    try:
+        val = build()
+        if val is not None:
+            with _lock:
+                _cache[key] = (time.monotonic(), val)
+        return val
+    finally:
+        with _lock:
+            done = _inflight.pop(key, [])
+        for ev in done:
+            ev.set()
+
+
+def _schedule_bg_refresh(key: str, build: Callable[[], Any]) -> None:
+    with _lock:
+        if key in _bg_refreshing or key in _inflight:
+            return
+        _bg_refreshing.add(key)
+
+    def _run() -> None:
+        try:
+            _singleflight_build(key, build)
+        finally:
+            with _lock:
+                _bg_refreshing.discard(key)
+
+    threading.Thread(target=_run, name=f"short-board-swr:{key}", daemon=True).start()
+
+
+def _swr_cached(key: str, ttl: float, build: Callable[[], Any]) -> Any:
+    """Stale-While-Revalidate：有缓存立刻返回；过期则后台单飞刷新；无缓存同步构建。"""
+    now = time.monotonic()
+    with _lock:
+        hit = _cache.get(key)
+        if hit is not None:
+            cached = hit[1]
+            fresh = (now - hit[0]) < ttl
+        else:
+            cached = None
+            fresh = False
+
+    if cached is not None and fresh:
+        return cached
+    if cached is not None:
+        _schedule_bg_refresh(key, build)
+        return cached
+    return _singleflight_build(key, build)
 
 
 def _num(v, default=None):
@@ -361,12 +440,18 @@ def _save_archive(date: str, env: dict) -> None:
 
 
 def _merge_today(as_of: str, prev: str | None) -> dict:
-    baoer = _fetch_baoer()
-    lt = _fetch_longtou()
-    main = _fetch_main_fund()
-    amounts = _fetch_index_amounts()
-    ztdt = _zt_dt_fallback()
-    qcj = _fetch_qcj(as_of, prev)
+    """并行拉取各源；开盘啦已有实际涨跌停时不再嵌套 live_emotion。"""
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        f_baoer = pool.submit(_fetch_baoer)
+        f_lt = pool.submit(_fetch_longtou)
+        f_main = pool.submit(_fetch_main_fund)
+        f_amounts = pool.submit(_fetch_index_amounts)
+        f_qcj = pool.submit(_fetch_qcj, as_of, prev)
+        baoer = f_baoer.result() or {}
+        lt = f_lt.result() or {}
+        main = f_main.result() or {}
+        amounts = f_amounts.result() or {}
+        qcj = f_qcj.result() or {}
 
     today: dict[str, Any] = {}
     today.update(baoer)
@@ -376,10 +461,12 @@ def _merge_today(as_of: str, prev: str | None) -> dict:
     for k in ("n_sjzt", "n_sjdt", "n_zt", "n_dt", "v_sh", "v_ca"):
         if lt.get(k) is not None:
             today[k] = lt[k]
-    if today.get("n_sjzt") is None and ztdt.get("n_sjzt") is not None:
-        today["n_sjzt"] = ztdt["n_sjzt"]
-    if today.get("n_sjdt") is None and ztdt.get("n_sjdt") is not None:
-        today["n_sjdt"] = ztdt["n_sjdt"]
+    if today.get("n_sjzt") is None or today.get("n_sjdt") is None:
+        ztdt = _zt_dt_fallback()
+        if today.get("n_sjzt") is None and ztdt.get("n_sjzt") is not None:
+            today["n_sjzt"] = ztdt["n_sjzt"]
+        if today.get("n_sjdt") is None and ztdt.get("n_sjdt") is not None:
+            today["n_sjdt"] = ztdt["n_sjdt"]
     if today.get("v_sh") is None and amounts.get("v_sh") is not None:
         today["v_sh"] = amounts["v_sh"]
     if today.get("v_ca") is None and amounts.get("v_ca") is not None:
@@ -454,12 +541,18 @@ def _ratio_vs_prev_ma(
     today_yi: float | None,
     window: int,
     amounts: dict[str, float],
+    *,
+    trade_dates: list[str] | None = None,
 ) -> float | None:
     """当日成交额 ÷ 此前 window 个交易日均额；历史不足 window 天则返回 None。"""
     if today_yi is None or today_yi <= 0:
         return None
     # 多取几天，再筛出严格早于 as_of 的窗口（盘中 today 可能不在日历终点里）
-    dates = trade_calendar.trade_dates_ending_at(as_of, window + 5)
+    dates = (
+        trade_dates
+        if trade_dates is not None
+        else trade_calendar.trade_dates_ending_at(as_of, window + 5)
+    )
     prevs = [d for d in dates if d < as_of][-window:]
     if len(prevs) < window:
         return None
@@ -491,13 +584,19 @@ def _attach_volume_ratios(
         if isinstance(y_ca, (int, float)) and y_ca > 0:
             amounts[prev] = round(float(y_ca) / 1e8, 2)
 
+    # 交易日列表只取一次（覆盖 20 日窗口 + 缓冲），避免 4 次打 akshare
+    dates = trade_calendar.trade_dates_ending_at(as_of, 25)
     t_yi = amounts.get(as_of)
-    today["vol_ratio_5d"] = _ratio_vs_prev_ma(as_of, t_yi, 5, amounts)
-    today["vol_ratio_20d"] = _ratio_vs_prev_ma(as_of, t_yi, 20, amounts)
+    today["vol_ratio_5d"] = _ratio_vs_prev_ma(
+        as_of, t_yi, 5, amounts, trade_dates=dates)
+    today["vol_ratio_20d"] = _ratio_vs_prev_ma(
+        as_of, t_yi, 20, amounts, trade_dates=dates)
     if prev:
         y_yi = amounts.get(prev)
-        yesterday["vol_ratio_5d"] = _ratio_vs_prev_ma(prev, y_yi, 5, amounts)
-        yesterday["vol_ratio_20d"] = _ratio_vs_prev_ma(prev, y_yi, 20, amounts)
+        yesterday["vol_ratio_5d"] = _ratio_vs_prev_ma(
+            prev, y_yi, 5, amounts, trade_dates=dates)
+        yesterday["vol_ratio_20d"] = _ratio_vs_prev_ma(
+            prev, y_yi, 20, amounts, trade_dates=dates)
     else:
         yesterday.pop("vol_ratio_5d", None)
         yesterday.pop("vol_ratio_20d", None)
@@ -578,6 +677,7 @@ def snapshot() -> dict:
     """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。
 
     `date` = 左侧对照场次（周末为周五），`prev_date` = 其前一交易日（周末为周四）。
+    盘中走 SWR：有缓存立刻返回，过期后台单飞刷新，避免 10s 轮询叠压慢请求。
     """
 
     calendar_today = china_now().strftime("%Y-%m-%d")
@@ -624,9 +724,13 @@ def snapshot() -> dict:
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
         }
 
-    return _cached(f"short_board:{as_of}", ttl, build) or {
+    return _swr_cached(f"short_board:{as_of}", ttl, build) or {
         "available": False,
         "reason": "环境指标取数失败",
+        "date": as_of,
+        "prev_date": prev,
+        "is_live": is_live,
         "today": {},
         "yesterday": {},
+        "updated": china_now().strftime("%Y-%m-%d %H:%M"),
     }

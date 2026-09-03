@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import logging
 import threading
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -13,9 +14,38 @@ from .util import china_now, china_today, is_a_share_closed, is_weekend
 
 _REF_STOCK = "sh600000"  # 浦发银行，流动性好、每个交易日都有，用来取真实交易日序列
 
+# akshare 拉日历很慢（单次约 2s）；短线盘面热路径会反复调用，按区间缓存。
+_REF_DATES_TTL = 3600.0
+_REF_DATES_EMPTY_TTL = 30.0  # 失败/空结果短缓存，避免雪崩但可较快重试
+_ref_dates_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
+_ref_dates_lock = threading.Lock()
+
+
+def clear_caches() -> None:
+    """测试或强制刷新时清空日历内存缓存。"""
+    with _ref_dates_lock:
+        _ref_dates_cache.clear()
+
 
 def _ref_dates(start: str, end: str) -> list[str]:
     """参考股在 [start, end] 区间内的真实交易日（升序，YYYY-MM-DD）。失败返回空表。"""
+    key = (start, end)
+    now = time.monotonic()
+    with _ref_dates_lock:
+        hit = _ref_dates_cache.get(key)
+        if hit is not None:
+            ts, dates = hit
+            ttl = _REF_DATES_TTL if dates else _REF_DATES_EMPTY_TTL
+            if now - ts < ttl:
+                return list(dates)
+
+    dates = _ref_dates_uncached(start, end)
+    with _ref_dates_lock:
+        _ref_dates_cache[key] = (time.monotonic(), list(dates))
+    return dates
+
+
+def _ref_dates_uncached(start: str, end: str) -> list[str]:
     try:
         import akshare as ak
 

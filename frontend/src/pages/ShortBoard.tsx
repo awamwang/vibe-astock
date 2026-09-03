@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment, type ReactNode } from "react";
 import { pctColor } from "@/lib/colors";
 import {
   Sparkles, Loader2, RefreshCw, TrendingUp, TrendingDown,
@@ -34,7 +34,7 @@ import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
-const LIVE_MS = 5_000;
+const LIVE_MS = 10_000;
 const HEAVY_MS = 60_000;
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
@@ -331,34 +331,77 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   };
   const loadSession = () => fetchMarketSession().then(setSession).catch(() => {});
 
-  const loadLive = () => {
-    loadBoard();
-    loadLiveEmo();
-    loadSession();
-    refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code));
-  };
-  const loadHeavy = () => {
-    loadSentiment();
-    loadTurnover();
-    loadMoodBlocks();
-  };
+  const loadLive = () => Promise.all([
+    loadBoard(),
+    loadLiveEmo(),
+    loadSession(),
+    Promise.resolve(refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code))),
+  ]);
+  const loadHeavy = () => Promise.all([
+    loadSentiment(),
+    loadTurnover(),
+    loadMoodBlocks(),
+  ]);
 
   useEffect(() => {
-    loadLive();
-    loadHeavy();
-    loadEmotion();
+    void loadLive();
+    void loadHeavy();
+    void loadEmotion();
   }, []);
 
   useEffect(() => {
     refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code));
   }, [emotion?.date, emotion?.lianban_stocks?.length]);
 
+  const liveInFlight = useRef(false);
+  const heavyInFlight = useRef(false);
+
   useEffect(() => {
     const live = session?.phase === "盘中" || session?.phase === "集合竞价";
     if (!autoRefresh || !live) return;
-    const liveTimer = setInterval(loadLive, LIVE_MS);
-    const heavyTimer = setInterval(loadHeavy, HEAVY_MS);
-    return () => { clearInterval(liveTimer); clearInterval(heavyTimer); };
+    let cancelled = false;
+    let liveTimer = 0;
+    let heavyTimer = 0;
+
+    const scheduleLive = () => {
+      liveTimer = window.setTimeout(tickLive, LIVE_MS);
+    };
+    const scheduleHeavy = () => {
+      heavyTimer = window.setTimeout(tickHeavy, HEAVY_MS);
+    };
+
+    const tickLive = () => {
+      if (cancelled) return;
+      if (liveInFlight.current) {
+        scheduleLive();
+        return;
+      }
+      liveInFlight.current = true;
+      void Promise.resolve(loadLive()).finally(() => {
+        liveInFlight.current = false;
+        if (!cancelled) scheduleLive();
+      });
+    };
+    const tickHeavy = () => {
+      if (cancelled) return;
+      if (heavyInFlight.current) {
+        scheduleHeavy();
+        return;
+      }
+      heavyInFlight.current = true;
+      void Promise.resolve(loadHeavy()).finally(() => {
+        heavyInFlight.current = false;
+        if (!cancelled) scheduleHeavy();
+      });
+    };
+
+    scheduleLive();
+    scheduleHeavy();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(liveTimer);
+      window.clearTimeout(heavyTimer);
+    };
   }, [autoRefresh, session?.phase]);
 
   const toggleAuto = () => {

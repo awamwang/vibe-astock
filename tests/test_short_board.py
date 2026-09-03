@@ -13,10 +13,10 @@ class TestShortBoardArchive:
     def _iso(self, tmp_path, monkeypatch):
         from duanxian import short_board as sb
 
-        sb._cache.clear()
+        sb._reset_runtime_state()
         monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
         yield
-        sb._cache.clear()
+        sb._reset_runtime_state()
 
     def test_yesterday_from_archive(self, tmp_path):
         from duanxian import short_board as sb
@@ -131,10 +131,10 @@ class TestVolumeRatios:
     def _iso(self, tmp_path, monkeypatch):
         from duanxian import short_board as sb
 
-        sb._cache.clear()
+        sb._reset_runtime_state()
         monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
         yield
-        sb._cache.clear()
+        sb._reset_runtime_state()
 
     def test_ratio_vs_prev_ma(self, monkeypatch):
         from duanxian import short_board as sb
@@ -194,10 +194,10 @@ class TestZtDtFor:
     def _iso(self, tmp_path, monkeypatch):
         from duanxian import short_board as sb
 
-        sb._cache.clear()
+        sb._reset_runtime_state()
         monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
         yield
-        sb._cache.clear()
+        sb._reset_runtime_state()
 
     def test_prefers_archive_qcj(self, monkeypatch):
         from duanxian import short_board as sb
@@ -229,3 +229,117 @@ class TestZtDtFor:
         assert out["limit_up_source"] == "qcj_api"
         assert out["limit_down"] == 11
         assert out["limit_down_source"] == "longtou_archive"
+
+
+@pytest.mark.unit
+class TestShortBoardSwr:
+    """SWR + 单飞：轮询可立刻拿到缓存，过期后台刷新且不叠压 build。"""
+
+    @pytest.fixture(autouse=True)
+    def _iso(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._reset_runtime_state()
+        monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
+        yield
+        sb._reset_runtime_state()
+
+    def test_fresh_cache_skips_build(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", True))
+        calls = {"n": 0}
+
+        def build_once():
+            calls["n"] += 1
+            return {
+                "available": True, "reason": None,
+                "date": "2026-08-21", "prev_date": "2026-08-20",
+                "is_live": True, "today": {"temperature": 50},
+                "yesterday": {}, "updated": "2026-08-21 10:00",
+            }
+
+        # 直接走 _swr_cached，避免 snapshot 内部再调 resolve/merge
+        assert sb._swr_cached("k", 20.0, build_once)["today"]["temperature"] == 50
+        assert sb._swr_cached("k", 20.0, build_once)["today"]["temperature"] == 50
+        assert calls["n"] == 1
+
+    def test_stale_returns_immediately_and_refreshes_once(self, monkeypatch):
+        import threading
+        import time
+
+        from duanxian import short_board as sb
+
+        gate = threading.Event()
+        builds = {"n": 0}
+
+        def slow_build():
+            builds["n"] += 1
+            gate.wait(timeout=2.0)
+            return {"n": builds["n"]}
+
+        # 写入过期缓存
+        with sb._lock:
+            sb._cache["stale"] = (time.monotonic() - 100.0, {"n": 0})
+
+        out = sb._swr_cached("stale", 20.0, slow_build)
+        assert out == {"n": 0}  # 立刻返回旧值
+        gate.set()
+        deadline = time.time() + 3.0
+        while builds["n"] < 1 and time.time() < deadline:
+            time.sleep(0.02)
+        assert builds["n"] == 1
+        # 再调一次仍只后台一次（已在刷新或已新鲜）
+        out2 = sb._swr_cached("stale", 20.0, slow_build)
+        assert out2["n"] in (0, 1)
+        time.sleep(0.05)
+        assert builds["n"] == 1
+
+    def test_singleflight_coalesces_cold_builds(self, monkeypatch):
+        import threading
+        import time
+
+        from duanxian import short_board as sb
+
+        started = threading.Barrier(3)
+        builds = {"n": 0}
+
+        def slow_build():
+            builds["n"] += 1
+            time.sleep(0.15)
+            return {"ok": True, "n": builds["n"]}
+
+        results: list = []
+
+        def worker():
+            started.wait(timeout=2.0)
+            results.append(sb._singleflight_build("cold", slow_build))
+
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+        assert builds["n"] == 1
+        assert results == [{"ok": True, "n": 1}] * 3
+
+
+@pytest.mark.unit
+class TestRefDatesCache:
+    def test_ref_dates_cached(self, monkeypatch):
+        from duanxian import trade_calendar as tc
+
+        tc.clear_caches()
+        calls = {"n": 0}
+
+        def fake(start, end):
+            calls["n"] += 1
+            return ["2026-08-20", "2026-08-21"]
+
+        monkeypatch.setattr(tc, "_ref_dates_uncached", fake)
+        assert tc._ref_dates("2026-08-01", "2026-08-21") == ["2026-08-20", "2026-08-21"]
+        assert tc._ref_dates("2026-08-01", "2026-08-21") == ["2026-08-20", "2026-08-21"]
+        assert calls["n"] == 1
+        tc.clear_caches()
