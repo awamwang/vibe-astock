@@ -24,7 +24,7 @@ import {
   type MessageSourceInfo, type RawMessageDraft, type StockResolveItem,
 } from "@/lib/api";
 import {
-  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, TARGET_KIND_LABEL,
+  EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, MARK_FILTER_OPTIONS, TARGET_KIND_LABEL,
   effectiveAt, endAt, getDefaultEndDays, hasExplicitEndAt, keywordHint,
   monthRange, setDefaultEndDays, clampDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
@@ -91,6 +91,7 @@ type ListQueryPatch = {
   effect_status?: string[];
   followed?: string[];
   favorited?: string[];
+  mark?: string[];
   follow_stock?: boolean;
   include_history?: boolean;
 };
@@ -563,11 +564,13 @@ export function MessageAnalysis() {
   const effectParam = searchParams.get("effect_status");
   const followedParam = searchParams.get("followed");
   const favoritedParam = searchParams.get("favorited");
+  const markParam = searchParams.get("mark");
   const sourcesFilter = useMemo(() => parseCsvParam(sourceParam), [sourceParam]);
   const impactLevels = useMemo(() => parseCsvParam(impactParam), [impactParam]);
   const effectStatuses = useMemo(() => parseCsvParam(effectParam), [effectParam]);
   const followedFilter = useMemo(() => parseCsvParam(followedParam), [followedParam]);
   const favoritedFilter = useMemo(() => parseCsvParam(favoritedParam), [favoritedParam]);
+  const markFilter = useMemo(() => parseCsvParam(markParam), [markParam]);
   const followStockChange = parseFlagParam(searchParams.get("follow_stock"));
   const includeHistory = parseFlagParam(searchParams.get("include_history"));
   const [qInput, setQInput] = useState(q);
@@ -595,6 +598,7 @@ export function MessageAnalysis() {
         if ("effect_status" in patch) setCsvParam(next, "effect_status", patch.effect_status ?? []);
         if ("followed" in patch) setCsvParam(next, "followed", patch.followed ?? []);
         if ("favorited" in patch) setCsvParam(next, "favorited", patch.favorited ?? []);
+        if ("mark" in patch) setCsvParam(next, "mark", patch.mark ?? []);
         if ("follow_stock" in patch) setFlagParam(next, "follow_stock", Boolean(patch.follow_stock));
         if ("include_history" in patch) setFlagParam(next, "include_history", Boolean(patch.include_history));
         if (next.toString() === prev.toString()) return prev;
@@ -725,9 +729,10 @@ export function MessageAnalysis() {
       effectStatuses.length > 0 ||
       followedFilter.length > 0 ||
       favoritedFilter.length > 0 ||
+      markFilter.length > 0 ||
       followStockChange ||
       includeHistory,
-    [q, qInput, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory],
+    [q, qInput, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, markFilter, followStockChange, includeHistory],
   );
 
   const resetFilters = () => {
@@ -740,6 +745,7 @@ export function MessageAnalysis() {
       effect_status: [],
       followed: [],
       favorited: [],
+      mark: [],
       follow_stock: false,
       include_history: false,
     });
@@ -767,6 +773,7 @@ export function MessageAnalysis() {
         effect_status: effectStatuses.length ? effectStatuses : undefined,
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        mark: markFilter.length ? markFilter : undefined,
         match_current_stock: followStockChange ? "yes" : undefined,
         include_history: includeHistory ? "yes" : undefined,
         default_end_days: defaultEndDays,
@@ -785,7 +792,7 @@ export function MessageAnalysis() {
     } finally {
       setLoading(false);
     }
-  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode, sort, order, page]);
+  }, [q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, markFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode, sort, order, page]);
 
   const loadCalendar = useCallback(async (): Promise<AnalyzedMessage[]> => {
     setCalendarLoading(true);
@@ -798,6 +805,7 @@ export function MessageAnalysis() {
         effect_status: effectStatuses.length ? effectStatuses : undefined,
         followed: followedFilter.length ? followedFilter : undefined,
         favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        mark: markFilter.length ? markFilter : undefined,
         match_current_stock: followStockChange ? "yes" : undefined,
         include_history: includeHistory ? "yes" : undefined,
         default_end_days: defaultEndDays,
@@ -818,7 +826,7 @@ export function MessageAnalysis() {
     } finally {
       setCalendarLoading(false);
     }
-  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode]);
+  }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, markFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1614,6 +1622,12 @@ export function MessageAnalysis() {
               ]}
               selected={favoritedFilter}
               onChange={(v) => patchListQuery({ favorited: v, page: 1 })}
+            />
+            <FilterMultiSelect
+              placeholder="全部标记"
+              options={MARK_FILTER_OPTIONS}
+              selected={markFilter}
+              onChange={(v) => patchListQuery({ mark: v, page: 1 })}
             />
             <label
               className={cn(

@@ -69,6 +69,17 @@ def level_to_impact(level: str | None) -> str:
     return {"A": "high", "B": "medium", "C": "low"}.get(str(level or "").upper(), "medium")
 
 
+def _is_bold(item: dict[str, Any]) -> bool:
+    """财联社 bold=1 表示标题加粗/标红。"""
+    v = item.get("bold")
+    if v is True:
+        return True
+    try:
+        return int(v) == 1
+    except (TypeError, ValueError):
+        return str(v or "").strip() == "1"
+
+
 def extract_subjects(item: dict[str, Any]) -> list[str]:
     names: list[str] = []
     for s in item.get("subjects") or []:
@@ -95,9 +106,9 @@ def map_cls_item(item: dict[str, Any]) -> RawMessageDraft:
     subjects = extract_subjects(item)
     marks: list[str] = []
     level = str(item.get("level") or "").upper()
-    if level == "A":
+    if _is_bold(item):
         marks.append("highlight")
-    elif level:
+    if level:
         marks.append(f"level:{level.lower()}")
     url = str(item.get("shareurl") or "")
     from .content_targets import enrich_targets_from_content

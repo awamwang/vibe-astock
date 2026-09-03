@@ -810,6 +810,40 @@ def test_multi_filter_analyzed(msg_db):
     assert titles2 == {"高影响A", "选股宝C"}
 
 
+def test_list_analyzed_mark_filter(msg_db):
+    def _insert(title: str, marks: list[str]):
+        d = RawMessageDraft(
+            draft_key=f"d-{title}",
+            source_id="cls_telegraph",
+            source_label="财联社",
+            content=title,
+            title=title,
+            marks=marks,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        store.upsert_analyzed_from_raw(
+            raw,
+            patch={"marks": marks, "summary": title},
+            path=msg_db,
+        )
+
+    _insert("标红消息", ["highlight", "level:c"])
+    _insert("普通消息", ["level:c"])
+    _insert("A级消息", ["level:a"])
+
+    rows, total = store.list_analyzed(store.ListQuery(mark="highlight"), path=msg_db)
+    assert total == 1
+    assert rows[0].title == "标红消息"
+
+    rows2, total2 = store.list_analyzed(
+        store.ListQuery(mark="highlight,level:a"),
+        path=msg_db,
+    )
+    assert total2 == 2
+    titles2 = {r.title for r in rows2}
+    assert titles2 == {"标红消息", "A级消息"}
+
+
 def test_merge_drafts():
     drafts = [
         RawMessageDraft(draft_key="a", source_id="manual", content="段1", title="段1"),
@@ -862,16 +896,31 @@ def test_cls_map():
         "content": "【蒙牛乳业：上半年净利润23.7亿元】财联社8月26日电，…",
         "ctime": 1787752579,
         "level": "A",
+        "bold": 0,
         "subjects": [{"subject_name": "食品饮料"}, {"subject_name": "港股动态"}],
         "shareurl": None,
     }
     draft = cls.map_cls_item(item)
     assert draft.external_ref == "2465425"
     assert draft.source_id == "cls_telegraph"
-    assert "highlight" in draft.marks
+    assert "highlight" not in draft.marks
+    assert "level:a" in draft.marks
     assert draft.keywords == ["食品饮料", "港股动态"]
     assert cls.level_to_impact("A") == "high"
     assert cls.level_to_impact("C") == "low"
+
+    bold_item = {
+        "id": 2472962,
+        "title": "液冷服务器概念再度拉升 宏盛股份4天2板",
+        "content": "【液冷服务器概念再度拉升 宏盛股份4天2板】财联社9月3日电，…",
+        "ctime": 1788414290,
+        "level": "C",
+        "bold": 1,
+        "subjects": [],
+    }
+    bold_draft = cls.map_cls_item(bold_item)
+    assert "highlight" in bold_draft.marks
+    assert "level:c" in bold_draft.marks
 
 
 def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):

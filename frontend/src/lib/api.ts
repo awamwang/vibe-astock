@@ -868,6 +868,7 @@ export const api = {
     status?: string | string[];
     favorited?: string | string[];
     followed?: string | string[];
+    mark?: string | string[];
     match_current_stock?: string | string[];
     include_history?: string;
     default_end_days?: number;

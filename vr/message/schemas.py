@@ -137,6 +137,7 @@ class ListQuery(BaseModel):
     status: str | None = None
     favorited: str | None = None
     followed: str | None = None
+    mark: str | None = None
     match_current_stock: str | None = None
     stock_code: str | None = None
     # 勾选后才包含结束时间早于 as_of 的未归档消息；已归档消息不在主库，永远搜不到

@@ -230,8 +230,26 @@ export function formatMarkLabel(mark: string): string {
   if (mark.startsWith("impact:")) return `影响方向 ${mark.slice(7)}`;
   if (mark === "highlight") return "标红";
   if (mark === "withdrawn") return "已撤回";
+  if (mark === "must_watch") return "必看大事";
+  if (mark === "key_data") return "关键数据";
+  if (mark === "industry_exhibition") return "行业会展";
+  if (mark === "flame") return "火焰";
+  if (mark.startsWith("level:")) return `财联社 ${mark.slice(6).toUpperCase()} 级`;
   return mark;
 }
+
+/** 消息列表「标记」筛选选项 */
+export const MARK_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "highlight", label: "标红" },
+  { value: "must_watch", label: "必看大事" },
+  { value: "key_data", label: "关键数据" },
+  { value: "industry_exhibition", label: "行业会展" },
+  { value: "flame", label: "火焰" },
+  { value: "level:a", label: "财联社 A 级" },
+  { value: "level:b", label: "财联社 B 级" },
+  { value: "level:c", label: "财联社 C 级" },
+  { value: "withdrawn", label: "已撤回" },
+];
 
 /** 将消息结构化信息打包为「问 AI」上下文 */
 export function buildMessageAiContext(

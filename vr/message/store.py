@@ -583,6 +583,17 @@ def _append_in_filter(parts: list[str], args: list[Any], column: str, value: str
     args.extend(items)
 
 
+def _append_marks_filter(parts: list[str], args: list[Any], value: str | None) -> None:
+    items = _parse_csv_filter(value)
+    if not items:
+        return
+    placeholders = ",".join("?" * len(items))
+    parts.append(
+        f"EXISTS (SELECT 1 FROM json_each(marks_json) je WHERE je.value IN ({placeholders}))"
+    )
+    args.extend(items)
+
+
 def _build_raw_where(q: ListQuery) -> tuple[str, list[Any]]:
     parts = ["withdrawn = 0"]
     args: list[Any] = []
@@ -767,6 +778,7 @@ def _build_analyzed_where(
     _append_in_filter(parts, args, "impact_level", q.impact_level)
     _append_in_filter(parts, args, "effect_status", q.effect_status)
     _append_in_filter(parts, args, "status", q.status)
+    _append_marks_filter(parts, args, q.mark)
     if q.q:
         like = f"%{q.q.strip()}%"
         parts.append(
