@@ -908,6 +908,31 @@ def apply_plugin_restart(plugin_id: str) -> LoadedPlugin | None:
     return apply_plugin_enable(plugin_id)
 
 
+def invoke_plugin_ensure_alive(*, plugin_id: str | None = None) -> list[str]:
+    """调用已加载插件模块的按需自愈入口（ensure_bridge_alive / ensure_alive）。
+
+    返回实际调用到的 plugin_id 列表。异常隔离，不影响其他插件。
+    """
+    called: list[str] = []
+    targets = [lp for lp in PLUGINS if plugin_id is None or lp.id == plugin_id]
+    for lp in targets:
+        mod = sys.modules.get(_module_name(lp.id))
+        if mod is None:
+            continue
+        fn = getattr(mod, "ensure_bridge_alive", None)
+        if fn is None:
+            fn = getattr(mod, "ensure_alive", None)
+        if not callable(fn):
+            continue
+        try:
+            fn()
+            called.append(lp.id)
+        except Exception:  # noqa: BLE001
+            print(f"⚠️ 插件按需自愈失败 id={lp.id}")
+            traceback.print_exc()
+    return called
+
+
 def _init() -> tuple[list[LoadedPlugin], HookRegistry, HookRunner]:
     plugins = load_plugins()
     registry = HookRegistry()

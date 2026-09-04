@@ -1862,7 +1862,10 @@ def _plugin_row(rec) -> dict:
 def api_plugins_list():
     """列出已注册钩子插件。"""
     from duanxian import plugin_store as ps
+    from duanxian import plugin_supervisor as psup
 
+    # 管理页轮询时顺带按需加速不健康插件恢复
+    psup.ensure_plugins_ready()
     rows = ps.list_plugins()
     return {
         "data": {
@@ -1876,7 +1879,10 @@ def api_plugins_list():
 def api_plugins_current_stock():
     """读取插件上报的当前股票（如同花顺焦点股）。"""
     from duanxian import current_stock as cs
+    from duanxian import plugin_supervisor as psup
 
+    # 个股联动使用中：打断插件重连退避 / 加速监督恢复
+    psup.ensure_plugins_ready()
     data = cs.to_dict()
     return {"data": data}
 
@@ -1885,7 +1891,9 @@ def api_plugins_current_stock():
 async def api_plugins_current_stock_stream():
     """SSE：插件经 report_current_stock 推送后的当前股票变化。"""
     from duanxian import current_stock as cs
+    from duanxian import plugin_supervisor as psup
 
+    psup.ensure_plugins_ready()
     sub = cs.subscribe()
 
     async def gen():

@@ -585,6 +585,8 @@ python -m duanxian.plugin_cli list
 | `error` | 严重错误；引擎监督线程会按指数退避 **自动热重启**（见 [hook-lifecycle.md](./hook-lifecycle.md#自动检测与重启)） |
 | `off` | 停用（引擎对停用插件自动合成，插件无需上报） |
 
+外部依赖可断连时，优先 `warn` + 插件内后台重连；仅在无法自愈时用 `error`。可选导出 `ensure_bridge_alive()` / `ensure_alive()`，供个股联动等 API 按需打断退避（见 lifecycle 文档「按需加速」）。
+
 **`runtime_status` 结构**：
 
 ```json

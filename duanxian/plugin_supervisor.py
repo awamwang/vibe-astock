@@ -44,6 +44,9 @@ _states: dict[str, _RetryState] = {}
 _started = False
 _stop = threading.Event()
 _thread: threading.Thread | None = None
+# 按需 nudge 限流：同一插件最短间隔（秒）
+_NUDGE_MIN_INTERVAL = 3.0
+_last_nudge_at: dict[str, float] = {}
 
 
 def _is_unhealthy(plugin_id: str, *, enabled: bool, loaded: bool) -> bool:
@@ -212,6 +215,68 @@ def ensure_started() -> None:
         _started = True
 
 
+def nudge(*, plugin_id: str | None = None) -> list[str]:
+    """按需加速恢复：跳过剩余退避，立刻尝试重启不健康插件。
+
+    供个股联动、插件列表等功能路径调用；带最短间隔限流，避免轮询风暴。
+    与后台轮询开关无关：即使 ``VIBE_PLUGIN_SUPERVISOR=0`` 仍可按需触发。
+    返回本次被提前调度的 plugin_id 列表。
+    """
+    from . import plugin_store as pstore
+    from . import hooks
+
+    now = time.monotonic()
+    loaded_ids = {lp.id for lp in hooks.PLUGINS}
+    nudged: list[str] = []
+
+    for rec in pstore.list_plugins():
+        pid = rec.id
+        if plugin_id is not None and pid != plugin_id:
+            continue
+        if not rec.enabled:
+            continue
+        loaded = pid in loaded_ids
+        if not _is_unhealthy(pid, enabled=True, loaded=loaded):
+            continue
+
+        with _lock:
+            last = _last_nudge_at.get(pid, 0.0)
+            if now - last < _NUDGE_MIN_INTERVAL:
+                continue
+            _last_nudge_at[pid] = now
+            state = _states.get(pid)
+            if state is None:
+                state = _RetryState(attempt=0, next_at=now)
+                from . import plugin_status as ps
+
+                st0 = ps.get_status(pid)
+                if st0 is not None:
+                    state.base_message = st0.message
+                _states[pid] = state
+            elif not state.in_flight:
+                state.next_at = now
+            nudged.append(pid)
+
+    if nudged:
+        try:
+            _tick(now=now)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+    return nudged
+
+
+def ensure_plugins_ready(*, plugin_id: str | None = None) -> None:
+    """功能路径按需恢复：先唤起插件自愈钩子，再 nudge 监督线程。
+
+    插件模块若导出 ``ensure_bridge_alive`` / ``ensure_alive``，在 warn/未就绪时
+    可打断自身重连退避；对真正的 error/未加载仍走监督热重启。
+    """
+    from . import hooks
+
+    hooks.invoke_plugin_ensure_alive(plugin_id=plugin_id)
+    nudge(plugin_id=plugin_id)
+
+
 def stop_for_tests() -> None:
     """测试用：停止监督线程并清空退避状态。"""
     global _started, _thread
@@ -221,6 +286,7 @@ def stop_for_tests() -> None:
         t.join(timeout=2.0)
     with _lock:
         _states.clear()
+        _last_nudge_at.clear()
         _started = False
         _thread = None
 
@@ -229,3 +295,4 @@ def reset_state_for_tests() -> None:
     """测试用：仅清空退避状态，不杀线程。"""
     with _lock:
         _states.clear()
+        _last_nudge_at.clear()

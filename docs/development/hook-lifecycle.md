@@ -66,9 +66,10 @@ sequenceDiagram
 - **触发**：运行状态 `level=error`，或启用却未加载（如启动 import 失败）。
 - **动作**：`apply_plugin_restart`（`on_disable` → 卸载模块 → 再加载 / `on_enable`），不改注册表 enabled。
 - **退避**：默认 5s 起指数增长（2^n），上限 300s；状态文案会附带「Ns 后自动重启」。
+- **按需加速**：`GET /api/plugins`、`/api/plugins/current-stock`（及 SSE）会调用 `ensure_plugins_ready()`——先唤起插件模块的 `ensure_bridge_alive` / `ensure_alive`（若有），再 `nudge` 跳过剩余退避立刻重试。限流约 3s/插件。
 - **关闭**：`VIBE_PLUGIN_SUPERVISOR=0`。可调 `VIBE_PLUGIN_RETRY_BASE_SEC` / `VIBE_PLUGIN_RETRY_MAX_SEC` / `VIBE_PLUGIN_SUPERVISOR_POLL_SEC`。
 
-`warn` 不触发引擎重启（留给插件自行恢复）；恢复到 `ok`/`info`/`warn` 后清零退避计数。
+`warn` 不触发引擎重启（留给插件自行恢复，例如 vibe-ths-linker 断线后台重连）；恢复到 `ok`/`info`/`warn` 后清零退避计数。
 
 ---
 

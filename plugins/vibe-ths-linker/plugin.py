@@ -33,6 +33,9 @@ _WS_URL = os.environ.get("THS_LINKER_WS_URL", "ws://127.0.0.1:8765")
 _SYNC_INTERVAL = 60.0
 _WS_TIMEOUT = 20.0
 _DRAIN_TIMEOUT = 2.0
+# 未就绪时的重连退避（秒）：1 → 2 → … → 30
+_RECONNECT_BASE = 1.0
+_RECONNECT_CAP = 30.0
 
 
 def _ensure_vr_path() -> None:
@@ -258,45 +261,34 @@ class ThsLinkerBridge:
         self._pending_pushes: list[dict] = []
         self._push_queue: queue.Queue[dict | None] = queue.Queue()
         self._stop = threading.Event()
+        self._reconnect_soon = threading.Event()
         self._thread: threading.Thread | None = None
         self._push_thread: threading.Thread | None = None
 
     def start(self) -> None:
-        from duanxian import plugin_status as ps
+        """启动桥接：连接失败不抛错，由后台循环用 warn 态自愈重连。
 
-        self._reg.report_status("info", ps.MSG_LOADING)
-        self._client.connect()
-        snap = self._client.drain_initial()
-        if snap is None:
-            snap = self._client.request(
-                {"type": "stock_code", "action": "get"},
-                expect_types=("stock_code", "stock_code_result"),
-            )
-        instances = snap.get("instances") or []
-        if not instances:
-            raise RuntimeError(
-                "ths-linker 无可用实例：请启动同花顺并在 ths-linker「监听」页勾选实例后启动"
-            )
-        self._instance = instances[0]
-        self._ths_dir = str(self._instance.get("ths_dir") or "").strip()
-        self._instance_title = str(self._instance.get("title") or "").strip()
-        if not self._ths_dir:
-            raise RuntimeError("ths-linker 实例缺少 ths_dir，无法定位同花顺安装目录")
-        self._ready = True
-        self._flush_pending_pushes()
+        使用 warn（而非 error）表示可恢复断连，避免引擎监督线程反复热重启整插件。
+        """
+        self._stop.clear()
+        self._ready = False
         try:
-            self._sync_watchlist()
-        except Exception as exc:  # noqa: BLE001
-            print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
-        self._thread = threading.Thread(target=self._run_loop, name="ths-linker-bridge", daemon=True)
-        self._thread.start()
-        self._push_thread = threading.Thread(target=self._push_worker, name="ths-linker-push", daemon=True)
+            self._reg.report_status("info", "正在连接 ths-linker…")
+        except RuntimeError:
+            self._report_status("info", "正在连接 ths-linker…")
+        self._push_thread = threading.Thread(
+            target=self._push_worker, name="ths-linker-push", daemon=True
+        )
+        self._thread = threading.Thread(
+            target=self._run_loop, name="ths-linker-bridge", daemon=True
+        )
         self._push_thread.start()
-        self._report_connected()
+        self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         self._ready = False
+        self._reconnect_soon.set()
         try:
             self._push_queue.put_nowait(None)
         except queue.Full:
@@ -309,6 +301,13 @@ class ThsLinkerBridge:
             self._thread.join(timeout=3.0)
         self._thread = None
         self._report_status("off", "已停用")
+
+    def request_reconnect(self) -> None:
+        """按需打断退避，尽快再试连接（个股联动等功能路径调用）。"""
+        self._reconnect_soon.set()
+
+    def is_ready(self) -> bool:
+        return self._ready
 
     def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
         from duanxian import plugin_status as ps
@@ -336,12 +335,73 @@ class ThsLinkerBridge:
         if not self._plugin_id:
             return
         st = ps.get_status(self._plugin_id)
-        if st is None or st.level in ("warn", "error") or ps.is_engine_transient(st):
+        if st is None or st.level in ("warn", "error", "info") or ps.is_engine_transient(st):
             self._report_connected(log=False)
+
+    def _ensure_connected(self) -> None:
+        """建立 WS 并绑定同花顺实例；成功后 _ready=True。"""
+        self._ready = False
+        self._client.connect()
+        snap = self._client.drain_initial()
+        if snap is None:
+            snap = self._client.request(
+                {"type": "stock_code", "action": "get"},
+                expect_types=("stock_code", "stock_code_result"),
+            )
+        instances = snap.get("instances") or []
+        if not instances:
+            raise RuntimeError(
+                "ths-linker 无可用实例：请启动同花顺并在 ths-linker「监听」页勾选实例后启动"
+            )
+        self._instance = instances[0]
+        self._ths_dir = str(self._instance.get("ths_dir") or "").strip()
+        self._instance_title = str(self._instance.get("title") or "").strip()
+        if not self._ths_dir:
+            raise RuntimeError("ths-linker 实例缺少 ths_dir，无法定位同花顺安装目录")
+        self._ready = True
+        self._flush_pending_pushes()
+        self._report_connected()
+
+    def _wait_reconnect(self, delay: float) -> None:
+        """等待退避间隔，可被 request_reconnect / stop 提前打断。"""
+        deadline = time.monotonic() + max(0.0, delay)
+        while not self._stop.is_set():
+            if self._reconnect_soon.is_set():
+                self._reconnect_soon.clear()
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._reconnect_soon.wait(timeout=min(remaining, 0.25))
 
     def _run_loop(self) -> None:
         last_sync = 0.0
+        backoff = _RECONNECT_BASE
         while not self._stop.is_set():
+            if not self._ready:
+                try:
+                    self._ensure_connected()
+                    backoff = _RECONNECT_BASE
+                    last_sync = 0.0
+                    try:
+                        self._sync_watchlist()
+                        last_sync = time.monotonic()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    err = f"{type(exc).__name__}: {exc}"
+                    print(f"⚠️ [vibe-ths-linker] 连接失败：{err}")
+                    # warn：可恢复，不触发引擎监督热重启
+                    self._report_status("warn", f"连接失败：{err}", str(exc))
+                    try:
+                        self._client.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._wait_reconnect(backoff)
+                    backoff = min(_RECONNECT_CAP, backoff * 2)
+                    continue
+
             now = time.monotonic()
             try:
                 if now - last_sync >= _SYNC_INTERVAL:
@@ -354,23 +414,13 @@ class ThsLinkerBridge:
                 print(f"⚠️ [vibe-ths-linker] 同步异常：{err}")
                 traceback.print_exc()
                 self._report_status("warn", f"同步异常：{err}", traceback.format_exc())
+                self._ready = False
                 try:
-                    self._ready = False
-                    self._client.connect()
-                    snap = self._client.drain_initial()
-                    if snap is None:
-                        snap = self._client.request(
-                            {"type": "stock_code", "action": "get"},
-                            expect_types=("stock_code", "stock_code_result"),
-                        )
-                    self._ready = True
-                    self._flush_pending_pushes()
-                    self._report_connected(log=False)
-                except Exception as re_exc:  # noqa: BLE001
-                    re_err = f"{type(re_exc).__name__}: {re_exc}"
-                    print(f"⚠️ [vibe-ths-linker] 重连失败：{re_exc}")
-                    self._report_status("error", f"重连失败：{re_err}", str(re_exc))
-                    time.sleep(3.0)
+                    self._client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                backoff = _RECONNECT_BASE
+                continue
             time.sleep(0.15)
 
     def _instance_payload(self) -> dict[str, str]:
@@ -659,11 +709,8 @@ def on_enable(reg: HookRegistry) -> None:
         return
     plugin_id = reg.plugin_id or ""
     bridge = ThsLinkerBridge(reg, plugin_id)
-    try:
-        bridge.start()
-    except Exception:
-        bridge.stop()
-        raise
+    # 连接失败由桥接后台自愈，不在此处抛错，避免整插件卡在 error 只能等管理页启停
+    bridge.start()
     _BRIDGE = bridge
 
 
@@ -673,6 +720,17 @@ def on_disable() -> None:
         return
     _BRIDGE.stop()
     _BRIDGE = None
+
+
+def ensure_bridge_alive() -> bool:
+    """供引擎按需调用：未就绪时打断重连退避，尽快恢复个股联动。"""
+    bridge = _BRIDGE
+    if bridge is None:
+        return False
+    if bridge.is_ready():
+        return True
+    bridge.request_reconnect()
+    return False
 
 
 PACK = HookPack(

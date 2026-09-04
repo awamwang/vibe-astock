@@ -710,6 +710,107 @@ PACK = HookPack(
         assert st.level == "error"
         assert "后自动重启" in st.message
 
+    def test_nudge_skips_backoff_and_restarts(self, plugin_home, monkeypatch):
+        from duanxian import plugin_status as pstat
+        from duanxian import plugin_store as ps
+        from duanxian import plugin_supervisor as psup
+        from duanxian.hooks import apply_plugin_enable
+
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_BASE_SEC", "60")
+        monkeypatch.setenv("VIBE_PLUGIN_RETRY_MAX_SEC", "120")
+
+        counter = plugin_home / "nudge_count.txt"
+        counter.write_text("0", encoding="utf-8")
+        counter_s = str(counter).replace("\\", "/")
+        src = f'''
+from pathlib import Path
+from duanxian.hooks import HookPack, HookRegistry
+
+_COUNTER = Path("{counter_s}")
+
+def on_enable(reg: HookRegistry) -> None:
+    n = int(_COUNTER.read_text(encoding="utf-8") or "0") + 1
+    _COUNTER.write_text(str(n), encoding="utf-8")
+    if n <= 1:
+        raise RuntimeError("暂不可用")
+    reg.report_status("ok", "nudge 已恢复")
+
+def on_disable() -> None:
+    pass
+
+PACK = HookPack(
+    name="nudge-me",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+    on_disable=on_disable,
+)
+'''
+        p = plugin_home / "nudge_me.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+        assert counter.read_text(encoding="utf-8") == "1"
+        assert pstat.get_status(rec.id).level == "error"
+
+        # 登记长退避，尚未到期
+        t0 = 5000.0
+        psup._tick(now=t0)
+        with psup._lock:
+            assert psup._states[rec.id].next_at == t0 + 60.0
+
+        nudged = psup.nudge(plugin_id=rec.id)
+        assert rec.id in nudged
+        assert counter.read_text(encoding="utf-8") == "2"
+        st = pstat.get_status(rec.id)
+        assert st is not None
+        assert st.level == "ok"
+        assert "nudge 已恢复" in st.message
+
+        # 限流：紧接着再 nudge 不应重复调度
+        assert psup.nudge(plugin_id=rec.id) == []
+
+    def test_ensure_plugins_ready_calls_plugin_hook(self, plugin_home, monkeypatch):
+        from duanxian import plugin_store as ps
+        from duanxian import plugin_supervisor as psup
+        from duanxian.hooks import apply_plugin_enable, _module_name
+        import sys
+
+        flag = plugin_home / "ensure_flag.txt"
+        flag_s = str(flag).replace("\\", "/")
+        src = f'''
+from pathlib import Path
+from duanxian.hooks import HookPack, HookRegistry
+
+_FLAG = Path("{flag_s}")
+
+def on_enable(reg: HookRegistry) -> None:
+    reg.report_status("warn", "等待外部服务")
+
+def on_disable() -> None:
+    pass
+
+def ensure_bridge_alive() -> bool:
+    _FLAG.write_text("called", encoding="utf-8")
+    return False
+
+PACK = HookPack(
+    name="ensure-hook",
+    version="1",
+    schema_bundle="t/1",
+    on_enable=on_enable,
+    on_disable=on_disable,
+)
+'''
+        p = plugin_home / "ensure_hook.py"
+        p.write_text(src, encoding="utf-8")
+        rec = ps.register(str(p))
+        apply_plugin_enable(rec.id)
+        assert _module_name(rec.id) in sys.modules
+
+        psup.ensure_plugins_ready(plugin_id=rec.id)
+        assert flag.read_text(encoding="utf-8") == "called"
+
     @pytest.fixture(autouse=True)
     def _clean_sources(self):
         from duanxian import message_sources as ms
