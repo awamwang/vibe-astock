@@ -377,10 +377,13 @@ class ThsLinkerBridge:
     def _run_loop(self) -> None:
         last_sync = 0.0
         backoff = _RECONNECT_BASE
+        # 相同失败文案只打一次日志，退避重试期间静默（ths-linker 常关着）
+        last_fail_log: str | None = None
         while not self._stop.is_set():
             if not self._ready:
                 try:
                     self._ensure_connected()
+                    last_fail_log = None
                     backoff = _RECONNECT_BASE
                     last_sync = 0.0
                     try:
@@ -391,7 +394,9 @@ class ThsLinkerBridge:
                     continue
                 except Exception as exc:  # noqa: BLE001
                     err = f"{type(exc).__name__}: {exc}"
-                    print(f"⚠️ [vibe-ths-linker] 连接失败：{err}")
+                    if err != last_fail_log:
+                        print(f"⚠️ [vibe-ths-linker] 连接失败（将退避重试，不再重复打印）：{err}")
+                        last_fail_log = err
                     # warn：可恢复，不触发引擎监督热重启
                     self._report_status("warn", f"连接失败：{err}", str(exc))
                     try:
@@ -415,6 +420,7 @@ class ThsLinkerBridge:
                 traceback.print_exc()
                 self._report_status("warn", f"同步异常：{err}", traceback.format_exc())
                 self._ready = False
+                last_fail_log = None  # 下次连接失败再打一条
                 try:
                     self._client.close()
                 except Exception:  # noqa: BLE001
