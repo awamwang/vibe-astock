@@ -109,13 +109,24 @@ def _kind_rank(kind: str) -> int:
         return 99
 
 
-def _block_ref(kind: str, kind_label: str, block_id: str, name: str) -> dict[str, Any]:
-    return {
+def _block_ref(
+    kind: str,
+    kind_label: str,
+    block_id: str,
+    name: str,
+    *,
+    code: str | None = None,
+) -> dict[str, Any]:
+    ref: dict[str, Any] = {
         "kind": kind,
         "kind_label": kind_label,
         "id": block_id,
         "name": name,
     }
+    code_norm = str(code or "").strip()
+    if code_norm:
+        ref["code"] = code_norm
+    return ref
 
 
 def _dedupe_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -159,8 +170,9 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             continue
         kind_label = str(entry.get("kind_label") or kind)
         seen_ids: set[tuple[str, str]] = set()
+        meta_map = entry.get("blocks_meta") or {}
 
-        def _add(bid: str, name: str) -> None:
+        def _add(bid: str, name: str, *, code: str | None = None) -> None:
             name = _norm(name)
             if not name:
                 return
@@ -168,14 +180,22 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             if key in seen_ids:
                 return
             seen_ids.add(key)
-            ref = _block_ref(str(kind), kind_label, str(bid), name)
+            ref = _block_ref(str(kind), kind_label, str(bid), name, code=code)
             index.setdefault(name, []).append(ref)
 
         for row in entry.get("rows") or []:
             if isinstance(row, dict):
-                _add(str(row.get("id") or ""), str(row.get("name") or ""))
+                _add(
+                    str(row.get("id") or ""),
+                    str(row.get("name") or ""),
+                    code=str(row.get("code") or "") or None,
+                )
         for bid, name in (entry.get("blocks") or {}).items():
-            _add(str(bid), str(name or ""))
+            code = None
+            meta = meta_map.get(str(bid)) if isinstance(meta_map, dict) else None
+            if isinstance(meta, dict):
+                code = str(meta.get("code") or "") or None
+            _add(str(bid), str(name or ""), code=code)
     return index
 
 

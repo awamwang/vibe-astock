@@ -125,10 +125,13 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
                     "hex_id": "E9",
                 },
             },
-            "conception": {"D574": "华为概念", "CFE6": "智能电网"},
-            "industry": {"C6AC": "IT服务Ⅲ"},
-            "region": {"48": "安徽"},
-            "daily": {"D326": "昨日涨停板块"},
+            "conception": {
+                "D574": {"name": "华为概念", "code": "885788"},
+                "CFE6": {"name": "智能电网", "code": "885775"},
+            },
+            "industry": {"C6AC": {"name": "IT服务Ⅲ", "code": "881271"}},
+            "region": {"48": {"name": "安徽", "code": "882001"}},
+            "daily": {"D326": {"name": "昨日涨停板块", "code": "883900"}},
         }
         labels = {
             "custom": "自定义板块",
@@ -189,11 +192,20 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     assert d574["depth"] == 1
     assert d574["parent_id"] == "2B"
     assert "tree_order" in d574
+    assert d574["code"] == "885788"
+    cfe6 = next(r for r in rows if r["id"] == "CFE6")
+    assert cfe6["code"] == "885775"
+
+    daily_rows = snap["kinds"]["daily"]["rows"]
+    d326 = next(r for r in daily_rows if r["id"] == "D326")
+    assert d326["code"] == "883900"
+    assert d326["name"] == "昨日涨停板块"
 
     custom_rows = snap["kinds"]["custom"]["rows"]
     static_row = next(r for r in custom_rows if r["id"] == "278")
     assert static_row["custom_type"] == "static"
     assert static_row["hex_id"] == "116"
+    assert "code" not in static_row
     dynamic_row = next(r for r in custom_rows if r["id"] == "233")
     assert dynamic_row["custom_type"] == "dynamic"
     assert dynamic_row["dynamic_kind"] == "broker"
@@ -202,6 +214,7 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     detail = block_service.get_block_stocks(kind="conception", block_id="D574")
     assert detail["count"] == 2
     assert detail["stocks"][0]["code"] == "600519"
+    assert detail["code"] == "885788"
 
     block_cache.set_snapshot({})
     with pytest.raises(RuntimeError, match="请先点击刷新"):

@@ -1007,6 +1007,8 @@ export interface ThsBlockRow {
   kind_label: string;
   id: string;
   name: string;
+  /** 同花顺行情板块代码（88xxxx），有则优先于本地 id 展示 */
+  code?: string;
   node_type: "branch" | "leaf" | "flat";
   tree_path: string;
   depth?: number;
@@ -1061,6 +1063,8 @@ export interface ThsBlockRef {
   kind_label: string;
   id: string;
   name: string;
+  /** 同花顺行情板块代码（88xxxx） */
+  code?: string;
 }
 
 export interface BlockResolveItem {
@@ -1130,6 +1134,8 @@ export interface ThsBlockStocksDetail {
   kind_label: string;
   block_id: string;
   name: string;
+  /** 同花顺行情板块代码（88xxxx） */
+  code?: string;
   count: number;
   stocks: ThsBlockStockItem[];
 }

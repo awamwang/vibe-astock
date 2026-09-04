@@ -6,7 +6,7 @@ import { api, ApiError, type Quote, type ThsBlockStocksDetail } from "@/lib/api"
 import {
   isBlockFollowed, setFollowBlocksCache, type FollowBlock,
 } from "@/lib/message-follow-blocks";
-import { thsBlockKindLabel } from "@/lib/thsBlocks";
+import { thsBlockCodeSubtitle, thsBlockKindLabel } from "@/lib/thsBlocks";
 import { cn } from "@/lib/utils";
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -22,10 +22,12 @@ interface Props {
   kind: string;
   blockId: string;
   name?: string;
+  /** 行情板块代码（88xxxx），有则优先展示 */
+  code?: string;
 }
 
 /** 同花顺板块详情：元数据 + 成分股行情 */
-export function BlockDetailPanel({ kind, blockId, name }: Props) {
+export function BlockDetailPanel({ kind, blockId, name, code }: Props) {
   const [detail, setDetail] = useState<ThsBlockStocksDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +110,8 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
   }, [codes.join(",")]);
 
   const displayName = name || detail?.name || blockId;
+  const displayCode = (detail?.code || code || "").trim();
+  const codeSub = thsBlockCodeSubtitle({ id: blockId, code: displayCode || null });
   const followed = isBlockFollowed(kind, blockId, followBlocks);
 
   const toggleFollow = useCallback(async () => {
@@ -155,13 +159,26 @@ export function BlockDetailPanel({ kind, blockId, name }: Props) {
             {followed ? "已关注" : "关注"}
           </button>
         </div>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">{blockId}</p>
+        <p className="mt-1 font-mono text-xs">
+          <span className="font-medium text-foreground">{codeSub.primary}</span>
+          {codeSub.secondary && (
+            <span className="text-muted-foreground"> · {codeSub.secondary}</span>
+          )}
+        </p>
       </div>
 
       <div className="rounded-xl border border-border/60 bg-muted/15 p-4 text-sm">
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
           <dt className="text-muted-foreground">类型</dt>
           <dd className="text-foreground">{thsBlockKindLabel(kind)}</dd>
+          {displayCode && (
+            <>
+              <dt className="text-muted-foreground">行情代码</dt>
+              <dd className="font-mono text-foreground">{displayCode}</dd>
+            </>
+          )}
+          <dt className="text-muted-foreground">本地 ID</dt>
+          <dd className="font-mono text-muted-foreground">{blockId}</dd>
           {detail?.count != null && (
             <>
               <dt className="text-muted-foreground">成分数</dt>

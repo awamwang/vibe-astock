@@ -146,6 +146,9 @@ def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
     dynamic_kind = meta.get("dynamic_kind")
     if dynamic_kind:
         out["dynamic_kind"] = str(dynamic_kind)
+    code = meta.get("code")
+    if code not in (None, ""):
+        out["code"] = str(code).strip()
     for key in ("query_key", "hex_id", "stock_count"):
         if key in meta and meta[key] is not None:
             out[key] = meta[key]
@@ -470,14 +473,23 @@ def get_block_stocks(*, kind: str, block_id: str) -> dict[str, Any]:
         raise ValueError(f"未知板块类型: {kind_norm}")
 
     name = str((kind_entry.get("blocks") or {}).get(block_id_norm) or "")
-    if not name:
+    code = ""
+    meta = (kind_entry.get("blocks_meta") or {}).get(block_id_norm)
+    if isinstance(meta, dict):
+        code = str(meta.get("code") or "").strip()
+        if not name:
+            name = str(meta.get("name") or "").strip()
+    if not name or not code:
         for row in kind_entry.get("rows") or []:
             if isinstance(row, dict) and str(row.get("id")) == block_id_norm:
-                name = str(row.get("name") or "")
+                if not name:
+                    name = str(row.get("name") or "")
+                if not code:
+                    code = str(row.get("code") or "").strip()
                 break
 
     items = stocks.list_block_stocks(Path(ths_dir), kind=kind_norm, block_id=block_id_norm)
-    return {
+    out: dict[str, Any] = {
         "kind": kind_norm,
         "kind_label": kind_entry.get("kind_label") or kind_norm,
         "block_id": block_id_norm,
@@ -485,3 +497,6 @@ def get_block_stocks(*, kind: str, block_id: str) -> dict[str, Any]:
         "count": len(items),
         "stocks": items,
     }
+    if code:
+        out["code"] = code
+    return out

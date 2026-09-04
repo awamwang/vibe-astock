@@ -3,12 +3,14 @@ import { BlockDetailPanel } from "./BlockDetailPanel";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ThsBlockRef } from "@/lib/api";
+import { thsBlockCodeSubtitle } from "@/lib/thsBlocks";
 
 export interface BlockPanelTarget {
   kind: string;
   id: string;
   name: string;
   kind_label?: string;
+  code?: string;
 }
 
 interface BlockPanelApi {
@@ -42,6 +44,7 @@ export function BlockPanelProvider({ children }: { children: ReactNode }) {
       id,
       name: (t.name || id).trim(),
       kind_label: t.kind_label,
+      code: (t.code || "").trim() || undefined,
     });
   }, []);
 
@@ -51,6 +54,7 @@ export function BlockPanelProvider({ children }: { children: ReactNode }) {
       id: ref.id,
       name: ref.name,
       kind_label: ref.kind_label,
+      code: ref.code,
     });
   }, [open]);
 
@@ -72,6 +76,7 @@ export function BlockPanelHost() {
   const title = target.name
     ? `${target.name}${target.kind_label ? ` · ${target.kind_label}` : ""}`
     : target.id;
+  const codeSub = thsBlockCodeSubtitle({ id: target.id, code: target.code });
 
   return (
     <aside
@@ -83,7 +88,12 @@ export function BlockPanelHost() {
       <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{title}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{target.id}</p>
+          <p className="mt-0.5 font-mono text-[11px]">
+            <span className="text-foreground">{codeSub.primary}</span>
+            {codeSub.secondary && (
+              <span className="text-muted-foreground"> · {codeSub.secondary}</span>
+            )}
+          </p>
         </div>
         <button
           type="button"
@@ -95,7 +105,12 @@ export function BlockPanelHost() {
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
-        <BlockDetailPanel kind={target.kind} blockId={target.id} name={target.name} />
+        <BlockDetailPanel
+          kind={target.kind}
+          blockId={target.id}
+          name={target.name}
+          code={target.code}
+        />
       </div>
     </aside>
   );

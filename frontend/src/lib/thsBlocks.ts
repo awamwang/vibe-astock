@@ -50,6 +50,8 @@ export function thsCustomSubtypeLabel(row: {
 export interface ThsTreeFilterOpts {
   query?: string;
   nodeFilter?: "all" | "leaf" | "branch";
+  /** 本地 id → 行情代码，用于树搜索匹配 code */
+  codeById?: Map<string, string>;
 }
 
 function nodeMatchesFilter(
@@ -64,12 +66,15 @@ function nodeMatchesFilter(
 function nodeMatchesQuery(
   node: { id: string; name: string },
   query: string,
+  codeById?: Map<string, string>,
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  const code = (codeById?.get(node.id) || "").toLowerCase();
   return (
     node.id.toLowerCase().includes(q)
     || node.name.toLowerCase().includes(q)
+    || (!!code && code.includes(q))
   );
 }
 
@@ -80,11 +85,12 @@ export function filterThsTree(
 ): ThsTreeNode | null {
   const nodeFilter = opts.nodeFilter ?? "all";
   const query = opts.query ?? "";
+  const codeById = opts.codeById;
   const children = (node.children ?? [])
     .map((child) => filterThsTree(child, opts))
     .filter((c): c is ThsTreeNode => c != null);
 
-  const selfMatch = nodeMatchesQuery(node, query) && nodeMatchesFilter(node, nodeFilter);
+  const selfMatch = nodeMatchesQuery(node, query, codeById) && nodeMatchesFilter(node, nodeFilter);
   const childMatch = children.length > 0;
 
   if (nodeFilter === "leaf" && node.node_type === "branch") {
@@ -151,4 +157,20 @@ export function blockMatchedClass(matched?: boolean): string {
 
 export function isBlockMatched(item?: BlockResolveItem | null): boolean {
   return item?.status === "matched" && !!item.block;
+}
+
+/** 展示用主代码：行情 code 优先于本地 id */
+export function thsBlockPrimaryCode(row: { id: string; code?: string | null }): string {
+  const code = (row.code || "").trim();
+  return code || row.id;
+}
+
+/** 详情副标题：有行情代码时突出 code，本地 id 次要 */
+export function thsBlockCodeSubtitle(row: {
+  id: string;
+  code?: string | null;
+}): { primary: string; secondary?: string } {
+  const code = (row.code || "").trim();
+  if (code) return { primary: code, secondary: row.id };
+  return { primary: row.id };
 }

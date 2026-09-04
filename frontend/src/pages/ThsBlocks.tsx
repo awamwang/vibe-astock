@@ -20,7 +20,8 @@ import {
 import {
   THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL,
   collectThsBranchIds, filterThsTree, parseThsTree,
-  sortRowsByTreeOrder, thsBlockKindLabel, thsCustomSubtypeLabel,
+  sortRowsByTreeOrder, thsBlockCodeSubtitle, thsBlockKindLabel,
+  thsBlockPrimaryCode, thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 
@@ -169,7 +170,7 @@ function ThsBlockTreeItem({
             </span>
           )}
           <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground/70 sm:inline">
-            {node.id}
+            {row ? thsBlockPrimaryCode(row) : node.id}
           </span>
         </button>
         {row && (
@@ -358,8 +359,12 @@ export function ThsBlocks() {
     if (!canShowTree || !kindEntry?.tree) return null;
     const root = parseThsTree(kindEntry.tree);
     if (!root) return null;
-    return filterThsTree(root, { query: q, nodeFilter });
-  }, [canShowTree, kindEntry?.tree, q, nodeFilter]);
+    const codeById = new Map<string, string>();
+    for (const row of allRows) {
+      if (row.code) codeById.set(row.id, row.code);
+    }
+    return filterThsTree(root, { query: q, nodeFilter, codeById });
+  }, [canShowTree, kindEntry?.tree, q, nodeFilter, allRows]);
 
   const filteredRows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -370,6 +375,7 @@ export function ThsBlocks() {
       const subtype = thsCustomSubtypeLabel(row) || "";
       return (
         row.id.toLowerCase().includes(query)
+        || (row.code || "").toLowerCase().includes(query)
         || row.name.toLowerCase().includes(query)
         || row.tree_path.toLowerCase().includes(query)
         || subtype.toLowerCase().includes(query)
@@ -385,6 +391,9 @@ export function ThsBlocks() {
       if (sort === "subtype") {
         av = thsCustomSubtypeLabel(a) || "";
         bv = thsCustomSubtypeLabel(b) || "";
+      } else if (sort === "id") {
+        av = thsBlockPrimaryCode(a);
+        bv = thsBlockPrimaryCode(b);
       } else {
         av = String(a[sort] ?? "");
         bv = String(b[sort] ?? "");
@@ -681,7 +690,7 @@ export function ThsBlocks() {
                 <table className="w-full min-w-[640px] text-sm">
                   <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
                     <tr className="border-b border-border/60 text-left">
-                      <SortTh col="id" label="ID" sortCol={sort} order={order} onSort={toggleSort} />
+                      <SortTh col="id" label="代码" sortCol={sort} order={order} onSort={toggleSort} />
                       <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={toggleSort} />
                       {showSubtypeCol && (
                         <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={toggleSort} />
@@ -706,7 +715,13 @@ export function ThsBlocks() {
                           )}
                           onClick={() => void openDetail(row)}
                         >
-                          <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{row.id}</td>
+                          <td className="px-4 py-2.5 font-mono text-xs">
+                            {row.code ? (
+                              <span className="text-foreground">{row.code}</span>
+                            ) : (
+                              <span className="text-muted-foreground">{row.id}</span>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 font-medium text-foreground">
                             <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
                               {row.name || "—"}
@@ -778,7 +793,17 @@ export function ThsBlocks() {
                         size="md"
                       />
                     </div>
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">{selected.id}</p>
+                    {(() => {
+                      const sub = thsBlockCodeSubtitle(selected);
+                      return (
+                        <p className="mt-1 font-mono text-xs">
+                          <span className="font-medium text-foreground">{sub.primary}</span>
+                          {sub.secondary && (
+                            <span className="text-muted-foreground"> · {sub.secondary}</span>
+                          )}
+                        </p>
+                      );
+                    })()}
                     {selected.tree_path && (
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selected.tree_path}</p>
                     )}
@@ -788,6 +813,14 @@ export function ThsBlocks() {
                     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
                       <dt className="text-muted-foreground">类型</dt>
                       <dd className="text-foreground">{thsBlockKindLabel(selected.kind)}</dd>
+                      {selected.code && (
+                        <>
+                          <dt className="text-muted-foreground">行情代码</dt>
+                          <dd className="font-mono text-foreground">{selected.code}</dd>
+                        </>
+                      )}
+                      <dt className="text-muted-foreground">本地 ID</dt>
+                      <dd className="font-mono text-muted-foreground">{selected.id}</dd>
                       {selectedSubtype && (
                         <>
                           <dt className="text-muted-foreground">子类型</dt>
