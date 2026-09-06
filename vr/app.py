@@ -38,6 +38,13 @@ app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
 stock_universe.startup_load()
 
+try:
+    from message.marks_refresh import schedule_refresh_marks
+
+    schedule_refresh_marks()
+except Exception:  # noqa: BLE001
+    pass
+
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
 # 消息轮询钩子（财联社由前端 5s 刷新；选股宝仅手动）

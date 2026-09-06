@@ -69,15 +69,23 @@ def level_to_impact(level: str | None) -> str:
     return {"A": "high", "B": "medium", "C": "low"}.get(str(level or "").upper(), "medium")
 
 
-def _is_bold(item: dict[str, Any]) -> bool:
-    """财联社 bold=1 表示标题加粗/标红。"""
-    v = item.get("bold")
+def _is_recommend(item: dict[str, Any]) -> bool:
+    """财联社 recommend=1 表示标红。"""
+    v = item.get("recommend")
     if v is True:
         return True
     try:
         return int(v) == 1
     except (TypeError, ValueError):
         return str(v or "").strip() == "1"
+
+
+def derive_marks(item: dict[str, Any]) -> list[str]:
+    """从财联社 API 条目派生 marks（recommend=1 → highlight）。"""
+    marks: list[str] = []
+    if _is_recommend(item):
+        marks.append("highlight")
+    return marks
 
 
 def extract_subjects(item: dict[str, Any]) -> list[str]:
@@ -104,12 +112,8 @@ def map_cls_item(item: dict[str, Any]) -> RawMessageDraft:
     if not title and body:
         title = body.split("\n", 1)[0][:120]
     subjects = extract_subjects(item)
-    marks: list[str] = []
     level = str(item.get("level") or "").upper()
-    if _is_bold(item):
-        marks.append("highlight")
-    if level:
-        marks.append(f"level:{level.lower()}")
+    marks = derive_marks(item)
     url = str(item.get("shareurl") or "")
     from .content_targets import enrich_targets_from_content
 

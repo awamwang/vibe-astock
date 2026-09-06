@@ -827,21 +827,74 @@ def test_list_analyzed_mark_filter(msg_db):
             path=msg_db,
         )
 
-    _insert("标红消息", ["highlight", "level:c"])
-    _insert("普通消息", ["level:c"])
-    _insert("A级消息", ["level:a"])
+    _insert("标红消息", ["highlight"])
+    _insert("普通消息", [])
+    _insert("撤回消息", ["withdrawn"])
 
     rows, total = store.list_analyzed(store.ListQuery(mark="highlight"), path=msg_db)
     assert total == 1
     assert rows[0].title == "标红消息"
 
     rows2, total2 = store.list_analyzed(
-        store.ListQuery(mark="highlight,level:a"),
+        store.ListQuery(mark="highlight,withdrawn"),
         path=msg_db,
     )
     assert total2 == 2
     titles2 = {r.title for r in rows2}
-    assert titles2 == {"标红消息", "A级消息"}
+    assert titles2 == {"标红消息", "撤回消息"}
+
+
+def test_refresh_marks_from_cls_raw(msg_db):
+    from vr.message import marks_refresh
+
+    d = RawMessageDraft(
+        draft_key="d-refresh",
+        source_id="cls_telegraph",
+        source_label="财联社",
+        content="新闻联播要闻",
+        title="新闻联播要闻",
+        marks=["highlight", "level:c"],
+        meta={"cls_raw": {"recommend": 1, "level": "C"}, "cls_level": "C"},
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(
+        raw,
+        patch={"marks": ["highlight", "level:c"], "summary": "新闻联播要闻"},
+        path=msg_db,
+    )
+
+    d2 = RawMessageDraft(
+        draft_key="d-refresh2",
+        source_id="cls_telegraph",
+        source_label="财联社",
+        content="普通快讯",
+        title="普通快讯",
+        marks=["level:a"],
+        meta={"cls_raw": {"recommend": 0, "level": "A"}, "cls_level": "A"},
+    )
+    raw2 = store.insert_raw_batch([d2], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(
+        raw2,
+        patch={"marks": ["level:a"], "summary": "普通快讯"},
+        path=msg_db,
+    )
+
+    stats = marks_refresh.refresh_marks(path=msg_db)
+    assert stats["updated_raw"] >= 2
+    assert stats["updated_analyzed"] >= 2
+
+    raw_again = store.get_raw(raw.id, path=msg_db)
+    assert raw_again is not None
+    assert raw_again.marks == ["highlight"]
+
+    raw2_again = store.get_raw(raw2.id, path=msg_db)
+    assert raw2_again is not None
+    assert raw2_again.marks == []
+
+    rows, _ = store.list_analyzed(store.ListQuery(q="新闻联播"), path=msg_db)
+    assert rows[0].marks == ["highlight"]
+    rows_plain, _ = store.list_analyzed(store.ListQuery(q="普通快讯"), path=msg_db)
+    assert rows_plain[0].marks == []
 
 
 def test_merge_drafts():
@@ -896,31 +949,31 @@ def test_cls_map():
         "content": "【蒙牛乳业：上半年净利润23.7亿元】财联社8月26日电，…",
         "ctime": 1787752579,
         "level": "A",
-        "bold": 0,
+        "recommend": 0,
         "subjects": [{"subject_name": "食品饮料"}, {"subject_name": "港股动态"}],
         "shareurl": None,
     }
     draft = cls.map_cls_item(item)
     assert draft.external_ref == "2465425"
     assert draft.source_id == "cls_telegraph"
-    assert "highlight" not in draft.marks
-    assert "level:a" in draft.marks
+    assert draft.marks == []
+    assert draft.meta.get("cls_level") == "A"
     assert draft.keywords == ["食品饮料", "港股动态"]
     assert cls.level_to_impact("A") == "high"
     assert cls.level_to_impact("C") == "low"
 
-    bold_item = {
-        "id": 2472962,
-        "title": "液冷服务器概念再度拉升 宏盛股份4天2板",
-        "content": "【液冷服务器概念再度拉升 宏盛股份4天2板】财联社9月3日电，…",
-        "ctime": 1788414290,
-        "level": "C",
-        "bold": 1,
+    recommend_item = {
+        "id": 2475224,
+        "title": "9月6日周日《新闻联播》要闻21条",
+        "content": "【9月6日周日《新闻联播》要闻21条】财联社9月6日电，…",
+        "ctime": 1788446972,
+        "level": "B",
+        "recommend": 1,
         "subjects": [],
     }
-    bold_draft = cls.map_cls_item(bold_item)
-    assert "highlight" in bold_draft.marks
-    assert "level:c" in bold_draft.marks
+    recommend_draft = cls.map_cls_item(recommend_item)
+    assert recommend_draft.marks == ["highlight"]
+    assert recommend_draft.meta.get("cls_level") == "B"
 
 
 def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):

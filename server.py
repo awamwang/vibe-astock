@@ -78,6 +78,13 @@ def _startup_aktools():
     except Exception:  # noqa: BLE001
         pass
 
+    try:
+        from message.marks_refresh import schedule_refresh_marks
+
+        schedule_refresh_marks()
+    except Exception:  # noqa: BLE001
+        pass
+
     from duanxian import market_series as ms
 
     ms.ensure_fresh_background()

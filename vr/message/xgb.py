@@ -74,6 +74,20 @@ def extract_targets(item: dict[str, Any]) -> list[ImpactTarget]:
     return targets
 
 
+def derive_marks(item: dict[str, Any]) -> list[str]:
+    """从选股宝 API 条目派生 marks。"""
+    marks: list[str] = []
+    if item.get("IsWithdrawn"):
+        marks.append("withdrawn")
+    fmt = item.get("FlashMessageType")
+    if fmt:
+        marks.append(str(fmt))
+    impact = item.get("Impact")
+    if impact is not None:
+        marks.append(f"impact:{impact}")
+    return marks
+
+
 def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
     msg_id = str(item.get("Id") or "")
     title = (item.get("Title") or "").strip()
@@ -90,15 +104,7 @@ def map_xgb_item(item: dict[str, Any]) -> RawMessageDraft:
     from .content_targets import enrich_targets_from_content
 
     targets = enrich_targets_from_content(f"{title}\n{body}", existing=extract_targets(item))
-    marks: list[str] = []
-    if item.get("IsWithdrawn"):
-        marks.append("withdrawn")
-    fmt = item.get("FlashMessageType")
-    if fmt:
-        marks.append(str(fmt))
-    impact = item.get("Impact")
-    if impact is not None:
-        marks.append(f"impact:{impact}")
+    marks = derive_marks(item)
     subj = item.get("SubjIds")
     subj_ids = [str(x) for x in subj] if isinstance(subj, list) else []
     url = str(item.get("Image") or "")
