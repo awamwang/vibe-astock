@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { MessageCalendar } from "@/components/MessageCalendar";
 import { MessageDetailPanel } from "@/components/MessageDetailPanel";
-import { MessageStockPipButton, MessageStockPopupButton } from "@/components/MessageStockPip";
+import { MessageStockPopupButton } from "@/components/MessageStockPip";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
@@ -1653,7 +1653,6 @@ export function MessageAnalysis() {
                 />
               )}
             </label>
-            <MessageStockPipButton defaultEndDays={defaultEndDays} />
             <MessageStockPopupButton />
             <label
               className={cn(

@@ -499,7 +499,7 @@ export function MessageStockPopupButton() {
       }}
     >
       <ExternalLink className="h-3.5 w-3.5" />
-      <span>独立弹窗</span>
+      <span>个股联动弹窗</span>
     </button>
   );
 }
