@@ -14,6 +14,12 @@ import {
   removeMessageFollowKeyword,
   setMessageFollowKeywordsCache,
 } from "@/lib/message-follow-keywords";
+import {
+  addMessageManualMark,
+  MESSAGE_MANUAL_MARK_MAX_LEN,
+  removeMessageManualMark,
+  setMessageManualMarksCache,
+} from "@/lib/message-manual-marks";
 import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem } from "@/lib/api";
 import { keywordsSettingsTo, parseKeywordsSection, type KeywordsSectionId } from "@/lib/settingsNav";
 
@@ -25,6 +31,7 @@ const CONFIG_SECTIONS: {
 }[] = [
   { id: "zt-keywords", label: "上涨关键词", icon: Tags, hint: "首板深入分析闭集标签" },
   { id: "message-follow", label: "消息关注词", icon: Eye, hint: "消息分析命中筛选" },
+  { id: "message-manual-marks", label: "自定义消息标记", icon: Pencil, hint: "个股日记快捷标题" },
   { id: "theme-aliases", label: "板块别名", icon: GitMerge, hint: "统计时别名合并" },
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
   { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
@@ -145,6 +152,11 @@ export function ZtKeywordsSettings() {
   const [followSaving, setFollowSaving] = useState(false);
   const [followDraft, setFollowDraft] = useState("");
 
+  const [manualMarks, setManualMarks] = useState<string[]>([]);
+  const [manualMarksLoading, setManualMarksLoading] = useState(true);
+  const [manualMarksSaving, setManualMarksSaving] = useState(false);
+  const [manualMarkDraft, setManualMarkDraft] = useState("");
+
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
   const [aliasLoading, setAliasLoading] = useState(true);
   const [aliasDraft, setAliasDraft] = useState({ alias: "", canonical: "" });
@@ -207,6 +219,26 @@ export function ZtKeywordsSettings() {
         }
       } finally {
         if (!cancelled) setFollowLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.messageManualMarks();
+        if (!cancelled) {
+          const marks = setMessageManualMarksCache(cfg.marks || []);
+          setManualMarks(marks);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取自定义消息标记失败");
+        }
+      } finally {
+        if (!cancelled) setManualMarksLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -532,6 +564,55 @@ export function ZtKeywordsSettings() {
     }
   };
 
+  const persistManualMarks = async (next: string[]) => {
+    setManualMarksSaving(true);
+    try {
+      const r = await api.saveMessageManualMarks(next);
+      const marks = setMessageManualMarksCache(r.marks);
+      setManualMarks(marks);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setManualMarksSaving(false);
+    }
+  };
+
+  const addManualMark = async () => {
+    const label = manualMarkDraft.replace(/\s+/g, "").trim();
+    const r = addMessageManualMark(manualMarks, manualMarkDraft);
+    if (!r.ok) {
+      toast.error(r.reason || "添加失败");
+      return;
+    }
+    setManualMarkDraft("");
+    await persistManualMarks(r.next);
+    toast.success(`已添加「${label}」`);
+  };
+
+  const removeManualMark = async (tag: string) => {
+    const r = removeMessageManualMark(manualMarks, tag);
+    if (!r.ok) {
+      toast.error(r.reason || "删除失败");
+      return;
+    }
+    await persistManualMarks(r.next);
+    toast.success(`已移除「${tag}」`);
+  };
+
+  const resetManualMarks = async () => {
+    setManualMarksSaving(true);
+    try {
+      const r = await api.resetMessageManualMarks();
+      const marks = setMessageManualMarksCache(r.marks);
+      setManualMarks(marks);
+      toast.success("已清空自定义消息标记");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "清空失败");
+    } finally {
+      setManualMarksSaving(false);
+    }
+  };
+
   const addAlias = async () => {
     const alias = aliasDraft.alias.replace(/\s+/g, "").trim();
     const canonical = aliasDraft.canonical.replace(/\s+/g, "").trim();
@@ -699,7 +780,7 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、消息关注词、板块别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
+        subtitle="上涨关键词、消息关注词、自定义消息标记、板块别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -881,6 +962,77 @@ export function ZtKeywordsSettings() {
             type="button"
             onClick={() => void resetFollowKeywords()}
             disabled={followSaving || followLoading || followTags.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 清空全部
+          </button>
+        </div>
+      </GlassCard>
+          )}
+
+          {activeSection === "message-manual-marks" && (
+      <GlassCard className="mb-0">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <Pencil className="h-4 w-4 text-primary" /> 自定义消息标记
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          存于本机后端数据目录。个股日记弹窗中作为快捷标题按钮；点击快捷标题时，
+          标题与消息标记字段都会写入该内容。单条不超过 {MESSAGE_MANUAL_MARK_MAX_LEN} 个字，无内置默认项。
+        </p>
+
+        {manualMarksLoading ? (
+          <p className="text-xs text-muted-foreground">正在读取自定义消息标记…</p>
+        ) : manualMarks.length === 0 ? (
+          <p className="mb-4 text-xs text-muted-foreground">暂无标记，可在下方添加。</p>
+        ) : (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {manualMarks.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium text-primary"
+              >
+                {tag}
+                <button
+                  type="button"
+                  disabled={manualMarksSaving}
+                  onClick={() => void removeManualMark(tag)}
+                  className="rounded p-0.5 hover:bg-primary/20 hover:text-destructive disabled:opacity-50"
+                  title={`删除「${tag}」`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={manualMarkDraft}
+            onChange={(e) => setManualMarkDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addManualMark();
+              }
+            }}
+            maxLength={MESSAGE_MANUAL_MARK_MAX_LEN}
+            placeholder={`新标记，最多 ${MESSAGE_MANUAL_MARK_MAX_LEN} 字`}
+            disabled={manualMarksSaving || manualMarksLoading}
+            className="min-w-[10rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={() => void addManualMark()}
+            disabled={manualMarksSaving || manualMarksLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" /> 添加
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetManualMarks()}
+            disabled={manualMarksSaving || manualMarksLoading || manualMarks.length === 0}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 清空全部

@@ -653,7 +653,7 @@ def on_register(reg: HookRegistry) -> None:
 
 **约束**：
 
-- `source_id` 不可占用系统保留 id：`manual` / `article` / `calendar` / `cls_telegraph` / `xgb_msgs`
+- `source_id` 不可占用系统保留 id：`manual` / `manual_mark` / `article` / `calendar` / `cls_telegraph` / `xgb_msgs`
 - 不同插件不可争用同一 `source_id`
 - 同插件重复注册可更新 `label`
 - **系统不轮询**；由插件自行拉取外部流后调用 `push_messages`

@@ -182,6 +182,51 @@ def test_structured_ingest(msg_db):
     assert rows[0].title == "测试标题"
 
 
+def test_manual_mark_source_and_ingest(msg_db):
+    sources = store.list_sources(path=msg_db)
+    assert any(s.id == "manual_mark" and s.label == "个股日记" for s in sources)
+
+    draft = RawMessageDraft(
+        draft_key="d1",
+        source_id="manual_mark",
+        source_label="个股日记",
+        title="看好",
+        content="看好",
+        marks=["看好"],
+        external_ref="manual_mark_000001_1",
+        targets=[{"kind": "stock", "code": "000001", "name": "平安银行"}],
+        meta={"manual_mark": True, "summary": "看好"},
+    )
+    inserted = store.insert_raw_batch([draft], path=msg_db)
+    assert len(inserted) == 1
+    assert inserted[0].source_id == "manual_mark"
+    assert inserted[0].marks == ["看好"]
+    an = store.upsert_analyzed_from_raw(
+        inserted[0],
+        patch={
+            "title": draft.title,
+            "marks": list(draft.marks),
+            "summary": "看好",
+            "detail": draft.content,
+            "targets": [t.model_dump() for t in draft.targets],
+        },
+        analyzed_by="human",
+        path=msg_db,
+    )
+    assert an.source_id == "manual_mark"
+    assert an.title == "看好"
+    assert an.marks == ["看好"]
+    assert an.analyzed_by == "human"
+    assert any(t.code == "000001" for t in an.targets)
+
+    rows, total = store.list_analyzed(
+        store.ListQuery(source="manual_mark", limit=20),
+        path=msg_db,
+    )
+    assert total == 1
+    assert rows[0].id == an.id
+
+
 def test_calendar_effective(msg_db):
     items = [
         {

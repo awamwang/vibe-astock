@@ -4550,6 +4550,9 @@ class TestThemeNormalize:
         assert "/config/message-follow-keywords" in fe
         assert "/api/config/message-follow-keywords" in be
         assert "消息关注词" in page
+        assert "/config/message-manual-marks" in fe
+        assert "/api/config/message-manual-marks" in be
+        assert "自定义消息标记" in page
         assert "/config/message-follow-blocks" in fe
         assert "/api/config/message-follow-blocks" in be
         assert "toggleMessageFollowBlock" in fe
@@ -4557,6 +4560,44 @@ class TestThemeNormalize:
         assert "toggleFollow" in blocks_page
         assert "FollowBlockButton" in blocks_page
         assert "已关注" in blocks_page
+
+
+@pytest.mark.unit
+class TestMessageManualMarks:
+    """自定义消息标记：个股日记快捷标题。"""
+
+    def test_default_empty(self, tmp_path, monkeypatch):
+        from duanxian import message_manual_marks as mmm
+
+        cfg = tmp_path / "message_manual_marks.json"
+        monkeypatch.setattr(mmm, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mmm, "_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(mmm, "_MARKS", None)
+        assert mmm.load_marks() == []
+
+    def test_save_and_sanitize(self, tmp_path, monkeypatch):
+        from duanxian import message_manual_marks as mmm
+
+        cfg = tmp_path / "message_manual_marks.json"
+        monkeypatch.setattr(mmm, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mmm, "_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(mmm, "_MARKS", None)
+        saved = mmm.save_marks(["看好", "观察", "  回避  "])
+        assert saved == ["看好", "观察", "回避"]
+        # sanitize 会丢弃超长项
+        cleaned = mmm.save_marks(["看好", "这是一个超过十字限制的标记"])
+        assert cleaned == ["看好"]
+        assert mmm.export_config()["max_len"] == 10
+
+    def test_reset_clears(self, tmp_path, monkeypatch):
+        from duanxian import message_manual_marks as mmm
+
+        cfg = tmp_path / "message_manual_marks.json"
+        monkeypatch.setattr(mmm, "_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr(mmm, "_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(mmm, "_MARKS", None)
+        mmm.save_marks(["看好"])
+        assert mmm.reset_marks() == []
 
 
 @pytest.mark.unit

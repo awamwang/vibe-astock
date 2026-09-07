@@ -1,6 +1,7 @@
 export const KEYWORDS_SECTION_IDS = [
   "zt-keywords",
   "message-follow",
+  "message-manual-marks",
   "theme-aliases",
   "sentiment-s",
   "trade-thresholds",

@@ -406,6 +406,7 @@ def resplit_draft(draft: RawMessageDraft, mode: str = "blank") -> list[RawMessag
 def _default_label(source_id: str) -> str:
     return {
         "manual": "手动录入",
+        "manual_mark": "个股日记",
         "article": "研报文章",
         "calendar": "财经大事日历",
         "xgb_msgs": "选股宝快讯",

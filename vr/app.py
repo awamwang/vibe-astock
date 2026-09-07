@@ -758,6 +758,8 @@ def _analyzed_patch_from_draft(draft) -> dict:
         patch["title"] = draft.title
     if draft.keywords:
         patch["keywords"] = list(draft.keywords)
+    if draft.marks:
+        patch["marks"] = list(draft.marks)
     if draft.url:
         patch["url"] = draft.url
     if draft.content:
@@ -768,6 +770,15 @@ def _analyzed_patch_from_draft(draft) -> dict:
         if val:
             patch[key] = val
     return patch
+
+
+def _analyzed_by_from_draft(draft) -> str:
+    """录入草稿的分析来源：AI 提取 / 个股日记 / 规则。"""
+    if draft and (draft.meta or {}).get("ai_extracted"):
+        return "ai"
+    if draft and (getattr(draft, "source_id", None) == "manual_mark" or (draft.meta or {}).get("manual_mark")):
+        return "human"
+    return "rule"
 
 
 class IngestIn(BaseModel):
@@ -916,8 +927,11 @@ def messages_ingest_commit(body: IngestAdjustIn):
         if draft is None and len(drafts) == 1 and len(inserted) == 1:
             draft = drafts[0]
         patch = _analyzed_patch_from_draft(draft) if draft else {}
-        analyzed_by = "ai" if (draft and (draft.meta or {}).get("ai_extracted")) else "rule"
-        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by=analyzed_by))
+        analyzed.append(
+            msg_layer.store.upsert_analyzed_from_raw(
+                raw, patch=patch, analyzed_by=_analyzed_by_from_draft(draft),
+            )
+        )
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
 
@@ -929,8 +943,11 @@ def messages_ingest_adjust(body: IngestAdjustIn):
     for i, raw in enumerate(inserted):
         d = drafts[i] if i < len(drafts) else None
         patch = _analyzed_patch_from_draft(d) if d else {}
-        analyzed_by = "ai" if (d and (d.meta or {}).get("ai_extracted")) else "rule"
-        analyzed.append(msg_layer.store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by=analyzed_by))
+        analyzed.append(
+            msg_layer.store.upsert_analyzed_from_raw(
+                raw, patch=patch, analyzed_by=_analyzed_by_from_draft(d),
+            )
+        )
     return {"data": {"inserted": [r.model_dump() for r in inserted], "analyzed": [a.model_dump() for a in analyzed]}}
 
 

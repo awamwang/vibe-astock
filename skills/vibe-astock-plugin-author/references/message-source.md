@@ -20,7 +20,7 @@ def on_enable(reg: HookRegistry) -> None:
     reg.register_message_source("my_feed", "我的快讯")
 ```
 
-保留 id（不可注册）：`manual`、`article`、`calendar`、`cls_telegraph`、`xgb_msgs`。  
+保留 id（不可注册）：`manual`、`manual_mark`、`article`、`calendar`、`cls_telegraph`、`xgb_msgs`。  
 他插件已占用的 `source_id` 会 `ValueError`。同插件重复注册可更新 `label`。
 
 展示：`GET /api/messages/sources` 中 `adapter_type=plugin`（进程内，不落 SQLite `message_source` 表）。

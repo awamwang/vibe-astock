@@ -1331,6 +1331,45 @@ def api_message_follow_keywords_save(body: dict = Body(...)):
     return {"data": {"keywords": saved, "count": len(saved)}}
 
 
+@app.get("/api/config/message-manual-marks")
+def api_message_manual_marks_get():
+    """读取自定义消息标记（个股日记快捷标题）。"""
+    from duanxian import message_manual_marks as mmm
+
+    return {"data": mmm.export_config()}
+
+
+@app.post("/api/config/message-manual-marks")
+def api_message_manual_marks_save(body: dict = Body(...)):
+    """保存自定义消息标记列表。"""
+    from duanxian.message_manual_marks import MessageManualMarkError, save_marks
+
+    raw = (body or {}).get("marks")
+    if raw is None:
+        raw = (body or {}).get("keywords")
+    if not isinstance(raw, list):
+        return JSONResponse({"error": "marks 须为数组", "detail": "marks 须为数组"}, status_code=400)
+    try:
+        saved = save_marks([str(x) for x in raw])
+    except MessageManualMarkError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"marks": saved, "count": len(saved)}}
+
+
+@app.post("/api/config/message-manual-marks/reset")
+def api_message_manual_marks_reset():
+    """清空自定义消息标记列表。"""
+    from duanxian import message_manual_marks as mmm
+
+    try:
+        saved = mmm.reset_marks()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": {"marks": saved, "count": len(saved)}}
+
+
 @app.post("/api/config/message-follow-keywords/reset")
 def api_message_follow_keywords_reset():
     """清空消息关注词列表。"""

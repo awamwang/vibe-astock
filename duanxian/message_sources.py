@@ -11,6 +11,7 @@ from .util import china_now
 # 内置 / 系统占用的 source_id，插件不可注册
 RESERVED_SOURCE_IDS: frozenset[str] = frozenset({
     "manual",
+    "manual_mark",
     "article",
     "calendar",
     "cls_telegraph",

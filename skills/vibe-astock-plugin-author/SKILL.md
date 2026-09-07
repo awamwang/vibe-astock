@@ -65,7 +65,7 @@ description: "编写、改造或审查 vibe-astock 钩子插件（HookPack / Hoo
 7. **完成检查**（全部满足才交付）：
    - [ ] 存在 `PACK = HookPack(...)`，`name`/`version`/`schema_bundle` 已填
    - [ ] 用到的每条写入/回调在对应 reference 中有字段依据
-   - [ ] 消息源未占用保留 id：`manual` / `article` / `calendar` / `cls_telegraph` / `xgb_msgs`
+   - [ ] 消息源未占用保留 id：`manual` / `manual_mark` / `article` / `calendar` / `cls_telegraph` / `xgb_msgs`
    - [ ] 推送消息已转为系统标准格式（引擎不做厂商解析）
    - [ ] 异步路径有入队 + `bind_plugin`；读线程无同步重操作
    - [ ] 已说明 CLI 注册命令与「改代码需重启」

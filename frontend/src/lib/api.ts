@@ -780,6 +780,11 @@ export const api = {
     request<{ keywords: string[]; count: number }>("/config/message-follow-keywords", "POST", { keywords }),
   resetMessageFollowKeywords: () =>
     request<{ keywords: string[]; count: number }>("/config/message-follow-keywords/reset", "POST", {}),
+  messageManualMarks: () => get<MessageManualMarkConfig>("/config/message-manual-marks"),
+  saveMessageManualMarks: (marks: string[]) =>
+    request<{ marks: string[]; count: number }>("/config/message-manual-marks", "POST", { marks }),
+  resetMessageManualMarks: () =>
+    request<{ marks: string[]; count: number }>("/config/message-manual-marks/reset", "POST", {}),
   messageFollowBlocks: () => get<MessageFollowBlockConfig>("/config/message-follow-blocks"),
   saveMessageFollowBlocks: (blocks: FollowBlockItem[]) =>
     request<{ blocks: FollowBlockItem[]; count: number }>("/config/message-follow-blocks", "POST", { blocks }),
@@ -993,6 +998,12 @@ export interface MessageDefaultEndDaysConfig {
 export interface MessageFollowKeywordConfig {
   schema: number;
   keywords: string[];
+  path: string;
+}
+export interface MessageManualMarkConfig {
+  schema: number;
+  marks: string[];
+  max_len: number;
   path: string;
 }
 export interface FollowBlockItem {

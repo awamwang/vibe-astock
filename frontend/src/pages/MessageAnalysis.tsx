@@ -14,6 +14,7 @@ import {
 import { MessageCalendar, CALENDAR_PER_DAY } from "@/components/MessageCalendar";
 import { MessageDetailPanel } from "@/components/MessageDetailPanel";
 import { MessageStockPopupButton } from "@/components/MessageStockPip";
+import { MessageDiaryPopupButton } from "@/components/MessageStockDiary";
 import { toast } from "sonner";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
@@ -1544,6 +1545,9 @@ export function MessageAnalysis() {
               录入消息
             </button>
           </ActionHint>
+          <ActionHint hint="独立窗口跟随焦点股，快速添加个股日记">
+            <MessageDiaryPopupButton />
+          </ActionHint>
           <ActionHint hint="开启后每 5 秒自动拉取财联社新消息">
             <button
               type="button"
@@ -2193,28 +2197,31 @@ export function MessageAnalysis() {
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-              <div className="flex flex-wrap gap-2">
-                {(["plain", "structured", "calendar", "article"] as const).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    className={cn(
-                      "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
-                      ingestFormat === f
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground",
-                    )}
-                    onClick={() => {
-                      setIngestFormat(f);
-                      setDrafts([]);
-                      setArticleExtract(null);
-                      if (f === "article") setIngestMetaSourceLabel("研报文章");
-                      else if (f === "plain" || f === "structured") setIngestMetaSourceLabel("手动录入");
-                    }}
-                  >
-                    {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : f === "calendar" ? "财经日历" : "研报文章"}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {(["plain", "structured", "calendar", "article"] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={cn(
+                        "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        ingestFormat === f
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => {
+                        setIngestFormat(f);
+                        setDrafts([]);
+                        setArticleExtract(null);
+                        if (f === "article") setIngestMetaSourceLabel("研报文章");
+                        else if (f === "plain" || f === "structured") setIngestMetaSourceLabel("手动录入");
+                      }}
+                    >
+                      {f === "plain" ? "文字粘贴" : f === "structured" ? "JSON" : f === "calendar" ? "财经日历" : "研报文章"}
+                    </button>
+                  ))}
+                </div>
+                <MessageDiaryPopupButton />
               </div>
               <textarea
                 className="min-h-[160px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"

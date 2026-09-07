@@ -36,6 +36,7 @@ _INITED = False
 
 DEFAULT_SOURCES = [
     ("manual", "手动录入", "manual", 1, None),
+    ("manual_mark", "个股日记", "manual", 1, None),
     ("article", "研报文章", "manual", 1, None),
     ("calendar", "财经大事日历", "manual", 1, None),
     ("cls_telegraph", "财联社电报", "poll", 1, 5),
@@ -184,6 +185,19 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             label = '财联社电报', adapter_type = 'poll', enabled = 1, poll_interval_s = 5
         WHERE id = 'cls_telegraph'
         """
+    )
+    conn.execute(
+        """
+        UPDATE message_source SET
+            label = '个股日记', adapter_type = 'manual', enabled = 1, poll_interval_s = NULL
+        WHERE id = 'manual_mark'
+        """
+    )
+    conn.execute(
+        "UPDATE raw_message SET source_label = '个股日记' WHERE source_id = 'manual_mark'"
+    )
+    conn.execute(
+        "UPDATE analyzed_message SET source_label = '个股日记' WHERE source_id = 'manual_mark'"
     )
     conn.execute(
         """
