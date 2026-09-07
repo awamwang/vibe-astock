@@ -772,6 +772,34 @@ def _analyzed_patch_from_draft(draft) -> dict:
     return patch
 
 
+def _match_draft_for_raw(raw, drafts: list, claimed: set[int]):
+    """将入库 raw 与提交草稿配对。
+
+    注意：手动拆分草稿的 external_ref 多为 None；不可用「external_ref 相等」作首要条件，
+    否则 None==None 会让每条 raw 都命中第一条草稿，导致标题/详情全部重复。
+    """
+    if raw.external_ref:
+        for i, d in enumerate(drafts):
+            if i in claimed:
+                continue
+            if d.external_ref == raw.external_ref:
+                claimed.add(i)
+                return d
+    for i, d in enumerate(drafts):
+        if i in claimed:
+            continue
+        body = (d.content or "").strip()
+        ch = msg_layer.store.content_hash(body or (d.title or ""))
+        if ch == raw.content_hash:
+            claimed.add(i)
+            return d
+    for i, d in enumerate(drafts):
+        if i not in claimed:
+            claimed.add(i)
+            return d
+    return None
+
+
 def _analyzed_by_from_draft(draft) -> str:
     """录入草稿的分析来源：AI 提取 / 个股日记 / 规则。"""
     if draft and (draft.meta or {}).get("ai_extracted"):
@@ -922,10 +950,9 @@ def messages_ingest_commit(body: IngestAdjustIn):
     drafts = [msg_layer.RawMessageDraft.model_validate(d) for d in body.drafts]
     inserted = msg_layer.store.insert_raw_batch(drafts)
     analyzed = []
+    claimed: set[int] = set()
     for raw in inserted:
-        draft = next((d for d in drafts if d.external_ref == raw.external_ref or d.title == raw.title), None)
-        if draft is None and len(drafts) == 1 and len(inserted) == 1:
-            draft = drafts[0]
+        draft = _match_draft_for_raw(raw, drafts, claimed)
         patch = _analyzed_patch_from_draft(draft) if draft else {}
         analyzed.append(
             msg_layer.store.upsert_analyzed_from_raw(
@@ -940,8 +967,9 @@ def messages_ingest_adjust(body: IngestAdjustIn):
     drafts = [msg_layer.RawMessageDraft.model_validate(d) for d in body.drafts]
     inserted = msg_layer.store.insert_raw_batch(drafts)
     analyzed = []
-    for i, raw in enumerate(inserted):
-        d = drafts[i] if i < len(drafts) else None
+    claimed: set[int] = set()
+    for raw in inserted:
+        d = _match_draft_for_raw(raw, drafts, claimed)
         patch = _analyzed_patch_from_draft(d) if d else {}
         analyzed.append(
             msg_layer.store.upsert_analyzed_from_raw(

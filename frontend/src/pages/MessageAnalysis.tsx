@@ -2180,7 +2180,7 @@ export function MessageAnalysis() {
           onClick={closeIngest}
         >
           <div
-            className={cn("glass flex max-h-[min(90vh,720px)] w-full flex-col p-5", drafts.length > 0 ? "max-w-3xl" : "max-w-2xl")}
+            className={cn("glass flex max-h-[min(92vh,900px)] w-full flex-col p-5", drafts.length > 0 ? "max-w-3xl" : "max-w-2xl")}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex shrink-0 items-center justify-between gap-3">
@@ -2224,7 +2224,7 @@ export function MessageAnalysis() {
                 <MessageDiaryPopupButton />
               </div>
               <textarea
-                className="min-h-[160px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"
+                className="min-h-[240px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-mono text-foreground placeholder:text-muted-foreground"
                 placeholder={
                   ingestFormat === "plain"
                     ? "粘贴大段文字，系统将按空行/分隔符拆分…"
@@ -2284,7 +2284,7 @@ export function MessageAnalysis() {
                 </div>
               )}
               {drafts.length > 0 && ingestFormat !== "article" && (
-                <div className="max-h-48 overflow-auto rounded-xl border border-border/60">
+                <div className="max-h-72 overflow-auto rounded-xl border border-border/60">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-muted/80 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
                       <tr>

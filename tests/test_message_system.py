@@ -26,6 +26,34 @@ def test_split_plain_blank(msg_db):
     assert "第二条" in drafts[1].content
 
 
+def test_plain_ingest_commit_keeps_per_draft_title_detail(msg_db):
+    """回归：多条无 external_ref 的草稿入库后，标题/详情不得全部变成第一条。"""
+    from vr.app import _analyzed_patch_from_draft, _match_draft_for_raw
+
+    text = "兰生股份公告\n股东增持\n\n生物股份公告\n累计回购\n\n蒙草生态公告\n中标通知"
+    drafts = parser.parse_ingest(IngestPayload(format="plain", source_id="manual", text=text))
+    assert len(drafts) == 3
+    assert all(d.external_ref is None for d in drafts)
+
+    inserted = store.insert_raw_batch(drafts, path=msg_db)
+    assert len(inserted) == 3
+
+    claimed: set[int] = set()
+    analyzed = []
+    for raw in inserted:
+        draft = _match_draft_for_raw(raw, drafts, claimed)
+        assert draft is not None
+        patch = _analyzed_patch_from_draft(draft)
+        analyzed.append(
+            store.upsert_analyzed_from_raw(raw, patch=patch, path=msg_db)
+        )
+
+    assert [a.title for a in analyzed] == [d.title for d in drafts]
+    assert [a.detail for a in analyzed] == [d.content for d in drafts]
+    assert len({a.title for a in analyzed}) == 3
+    assert len({a.detail for a in analyzed}) == 3
+
+
 def test_plain_ingest_resolves_targets_per_chunk(msg_db, monkeypatch):
     import stock_processor as sp
     import stock_universe as su
