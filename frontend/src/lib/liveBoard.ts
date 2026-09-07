@@ -58,6 +58,41 @@ export interface LiveEmotion {
   yesterday?: LiveEmotionYesterday;
 }
 
+// ---------- 昨涨停效应（live_zt_effect；与打板情绪分接口）----------
+export interface LiveZtEffectYesterday {
+  open_success_rate?: number | null;
+  open_sample?: number | null;
+  consec_premium_avg?: number | null;
+  consec_premium_sample?: number | null;
+  deep_loss_5_count?: number | null;
+  deep_loss_5_rate?: number | null;
+  sample?: number | null;
+}
+
+/** 盘中昨涨停效应：打板成功率开 / 连板溢价 / 涨停大跌数 */
+export interface LiveZtEffect {
+  available: boolean;
+  reason?: string;
+  date?: string;
+  as_of?: string;
+  phase?: string;
+  is_live?: boolean;
+  prev_date?: string | null;
+  source?: string;
+  /** 0~1：昨涨停股今开相对昨收红盘占比 */
+  open_success_rate?: number | null;
+  open_sample?: number | null;
+  /** 昨 2 板+ 今日平均涨跌幅 % */
+  consec_premium_avg?: number | null;
+  consec_premium_sample?: number | null;
+  /** 昨涨停今跌超 5% 家数 */
+  deep_loss_5_count?: number | null;
+  deep_loss_5_rate?: number | null;
+  sample?: number | null;
+  ret_sample?: number | null;
+  yesterday?: LiveZtEffectYesterday;
+}
+
 // ---------- 环境条（short_board snapshot）----------
 /** 短线盘面环境指标（今日 / 昨日对照，单位见各字段注释） */
 export interface ShortBoardEnv {
@@ -148,6 +183,9 @@ export const fetchMarketSession = () =>
 
 export const fetchLiveEmotion = () =>
   request<LiveEmotion>("/market/live-emotion");
+
+export const fetchLiveZtEffect = () =>
+  request<LiveZtEffect>("/market/live-zt-effect");
 
 export const fetchShortBoard = () =>
   request<ShortBoardSnapshot>("/market/short-board");

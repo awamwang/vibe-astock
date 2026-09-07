@@ -14,11 +14,13 @@ import { fmtCountPct, fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { api, type MarketOverview, type TurnoverTop, type Quote } from "@/lib/api";
 import {
   fetchLiveEmotion,
+  fetchLiveZtEffect,
   fetchLianbanEmotion,
   fetchMarketSession,
   fetchMoodBlocks,
   fetchShortBoard,
   type LiveEmotion,
+  type LiveZtEffect,
   type LianbanStock,
   type MarketSession,
   type MoodBlocksSnapshot,
@@ -275,6 +277,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [moodBlocks, setMoodBlocks] = useState<MoodBlocksSnapshot | null>(null);
   const [session, setSession] = useState<MarketSession | null>(null);
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
+  const [ztEffect, setZtEffect] = useState<LiveZtEffect | null>(null);
   const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
   const [tab, setTab] = useState<TabKey>(popoutTab ?? "emotion");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
@@ -309,6 +312,11 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     return fetchLiveEmotion().then(setLiveEmo).catch(() => {})
       .finally(() => mark("liveEmo", false));
   };
+  const loadZtEffect = () => {
+    mark("ztEffect", true);
+    return fetchLiveZtEffect().then(setZtEffect).catch(() => {})
+      .finally(() => mark("ztEffect", false));
+  };
   const loadEmotion = () => {
     mark("emotion", true);
     return fetchLianbanEmotion().then(setEmotion).catch(() => {})
@@ -334,6 +342,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const loadLive = () => Promise.all([
     loadBoard(),
     loadLiveEmo(),
+    loadZtEffect(),
     loadSession(),
     Promise.resolve(refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code))),
   ]);
@@ -425,6 +434,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const sentTotalY = marketTotal(undefined, sentY.up, sentY.down, sentY.flat);
   const sectors = overview?.sectors || [];
   const ley = liveEmo?.yesterday || {};
+  const zteY = ztEffect?.yesterday || {};
   const pctEmo = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   const dd = useDeepDive("lianban", emotion?.date || "");
@@ -607,6 +617,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "情绪全景：情绪分°（偏向连板情绪与赚钱效应）、阶段、涨跌停家数、龙头、主线题材；昨日场次优先取历史序列。\n" +
           "实时打板：最高连板 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
+          "昨涨停效应：打板成功率开 / 连板溢价 / 涨停大跌数；昨涨停名单与开盘溢价按日缓存，仅涨跌幅随盘刷新。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。"
         }
         hint={
@@ -630,8 +641,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             {board?.updated && <> · 更新于 {board.updated}</>}
           </span>
         }
-        onRefresh={() => { loadBoard(); loadLiveEmo(); }}
-        refreshing={busy.board || busy.liveEmo}
+        onRefresh={() => { loadBoard(); loadLiveEmo(); loadZtEffect(); }}
+        refreshing={busy.board || busy.liveEmo || busy.ztEffect}
         extra={!isPopout ? (
           <SectionPopupButton
             compact
@@ -689,9 +700,28 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               />
               <EnvThemesCard today={t.qcj_themes} yesterday={y.qcj_themes} />
             </EnvGroup>
-            <EnvGroup label="打板质量" hint="炸板 · 溢价 · 连板晋级（盘中刷新）">
+            <EnvGroup label="打板质量" hint="炸板 · 溢价 · 连板晋级 · 昨涨停效应（盘中刷新）">
               <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
               <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
+              <EnvCard
+                name="打板成功率开"
+                today={ztEffect?.open_success_rate}
+                yesterday={zteY.open_success_rate}
+                format={pctEmo}
+              />
+              <EnvCard
+                name="连板溢价(%)"
+                today={ztEffect?.consec_premium_avg}
+                yesterday={zteY.consec_premium_avg}
+                format={pct1}
+              />
+              <EnvCard
+                name="涨停大跌数"
+                today={ztEffect?.deep_loss_5_count}
+                yesterday={zteY.deep_loss_5_count}
+                format={intFmt}
+                reversed
+              />
               <EnvCard
                 name="最高连板"
                 today={liveEmo?.max_boards}

@@ -32,8 +32,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    live_emotion, mood_block, overseas, preflight, reflection, review_store, screenshot_parse,
-    risk_stance, short_board, trade_calendar, trade_budget, trade_store,
+    live_emotion, live_zt_effect, mood_block, overseas, preflight, reflection, review_store,
+    screenshot_parse, risk_stance, short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -400,6 +400,16 @@ def api_market_live_emotion():
     这条要的就是今天、随盘变化。两个块在界面上分别标清是哪一场。
     """
     return live_emotion.snapshot()
+
+
+@app.get("/api/market/live-zt-effect")
+def api_market_live_zt_effect():
+    """盘中昨涨停效应：打板成功率开 / 连板溢价 / 涨停大跌数。
+
+    与复盘派生指标口径一致，但允许盘中用实时涨跌幅；昨涨停名单与开盘溢价按日缓存，
+    不随短线盘面轮询重复计算。不并入 live-emotion（ADR-0001）。
+    """
+    return live_zt_effect.snapshot()
 
 
 @app.get("/api/market/short-board")
