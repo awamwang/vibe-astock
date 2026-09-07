@@ -163,6 +163,33 @@ const selectCls =
 const inputCls =
   "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
+/** 顶部操作按钮悬浮说明（支持换行） */
+function ActionHint({
+  hint,
+  children,
+}: {
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="group/hint relative inline-flex">
+      {children}
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute right-0 top-full z-50 mt-1.5 hidden min-w-[10rem] max-w-[18rem] whitespace-pre-line rounded-md border border-border bg-background px-2.5 py-1.5 text-left text-[11px] leading-snug text-foreground shadow-md group-hover/hint:block"
+      >
+        {hint}
+      </span>
+    </span>
+  );
+}
+
+/** 功能说明 + 上次刷新时间（换行） */
+function withLastRefreshHint(desc: string, lastAt?: string | null): string {
+  const time = (lastAt || "").trim() || "暂无";
+  return `${desc}\n上次刷新时间：${time}`;
+}
+
 function FilterMultiSelect({
   placeholder,
   options,
@@ -653,6 +680,8 @@ export function MessageAnalysis() {
   const [calendarItems, setCalendarItems] = useState<AnalyzedMessage[]>([]);
   const [calendarTotal, setCalendarTotal] = useState(0);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  /** 列表/日历最近一次成功加载时间（用于刷新按钮悬浮提示） */
+  const [lastMessagesRefreshAt, setLastMessagesRefreshAt] = useState<string | null>(null);
 
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar" | "article">("plain");
@@ -785,6 +814,7 @@ export function MessageAnalysis() {
       const list = data.items || [];
       setItems(list);
       setTotal(data.total || 0);
+      setLastMessagesRefreshAt(nowStorageDatetime());
       return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "加载失败");
@@ -819,6 +849,7 @@ export function MessageAnalysis() {
       const list = data.items || [];
       setCalendarItems(list);
       setCalendarTotal(data.total || 0);
+      setLastMessagesRefreshAt(nowStorageDatetime());
       return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "日历加载失败");
@@ -1207,7 +1238,6 @@ export function MessageAnalysis() {
       if (r.inserted > 0) {
         notify.success(`财联社 +${r.inserted} 条（新增候选 ${r.new_candidates}）`);
         const nextItems = await refreshMessages();
-        await loadSources();
         // 自动刷新且开启「新到播报」时，依次朗读本页新出现条目的标题
         if (opts?.silent && speakNewOnRefreshRef.current) {
           let titles = nextItems.filter((x) => !prevIds.has(x.id)).map((x) => x.title);
@@ -1234,6 +1264,7 @@ export function MessageAnalysis() {
         const backfillHint = r.backfill_today ? " · 已补拉当日" : "";
         notify.info(`财联社已同步 · 拉取 ${r.fetched} 条 · 无新增${backfillHint}`);
       }
+      await loadSources();
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "财联社同步失败");
     } finally {
@@ -1473,95 +1504,108 @@ export function MessageAnalysis() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setAutoRefresh((v) => {
-                const next = !v;
-                if (!next) setSpeakNewOnRefresh(false);
-                return next;
-              });
-            }}
-            className={cn(
-              "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
-              autoRefresh
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-border bg-background text-foreground",
-            )}
-          >
-            {autoRefresh ? (
-              pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />
-            ) : (
-              <Radio className="h-4 w-4" />
-            )}
-            {autoRefresh ? "自动刷新中 · 5s" : "自动刷新"}
-          </button>
-          {speechSupported && (
+          <ActionHint hint="手动粘贴、结构化或文章录入消息">
+            <button
+              type="button"
+              onClick={openIngest}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
+            >
+              <Plus className="h-4 w-4 text-primary" />
+              录入消息
+            </button>
+          </ActionHint>
+          <ActionHint hint="开启后每 5 秒自动拉取财联社新消息">
             <button
               type="button"
               onClick={() => {
-                setSpeakNewOnRefresh((v) => {
+                setAutoRefresh((v) => {
                   const next = !v;
-                  if (next) setAutoRefresh(true);
+                  if (!next) setSpeakNewOnRefresh(false);
                   return next;
                 });
               }}
               className={cn(
                 "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
-                speakNewOnRefresh
+                autoRefresh
                   ? "border-primary/50 bg-primary/10 text-primary"
                   : "border-border bg-background text-foreground",
               )}
-              title="配合自动刷新：有新拉取消息时依次播报标题（浏览器语音）"
             >
-              <Volume2 className="h-4 w-4" />
-              {speakNewOnRefresh ? "新到播报中" : "新到播报"}
+              {autoRefresh ? (
+                pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />
+              ) : (
+                <Radio className="h-4 w-4" />
+              )}
+              {autoRefresh ? "自动刷新中 · 5s" : "自动刷新"}
             </button>
+          </ActionHint>
+          {speechSupported && (
+            <ActionHint hint="配合自动刷新：有新拉取消息时依次播报标题（浏览器语音）">
+              <button
+                type="button"
+                onClick={() => {
+                  setSpeakNewOnRefresh((v) => {
+                    const next = !v;
+                    if (next) setAutoRefresh(true);
+                    return next;
+                  });
+                }}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold transition-opacity hover:bg-muted/50",
+                  speakNewOnRefresh
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : "border-border bg-background text-foreground",
+                )}
+              >
+                <Volume2 className="h-4 w-4" />
+                {speakNewOnRefresh ? "新到播报中" : "新到播报"}
+              </button>
+            </ActionHint>
           )}
           {speaking && (
+            <ActionHint hint="停止当前标题语音播报">
+              <button
+                type="button"
+                onClick={stopSpeak}
+                className="flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger transition-opacity hover:bg-danger/15"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+                停止播报
+              </button>
+            </ActionHint>
+          )}
+          <ActionHint hint={withLastRefreshHint("立即从财联社拉取电报（含当日回填）", clsSource?.last_poll_at)}>
             <button
               type="button"
-              onClick={stopSpeak}
-              className="flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger transition-opacity hover:bg-danger/15"
+              onClick={() => pollCls({ backfill: true })}
+              disabled={pollingCls}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-50"
             >
-              <Square className="h-3.5 w-3.5 fill-current" />
-              停止播报
+              {pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              拉财联社
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => pollCls({ backfill: true })}
-            disabled={pollingCls}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50 disabled:opacity-50"
-          >
-            {pollingCls ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            拉财联社
-          </button>
-          <button
-            type="button"
-            onClick={pollXgb}
-            className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-opacity hover:bg-muted/50 hover:text-foreground"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            拉选股宝
-          </button>
-          <button
-            type="button"
-            onClick={openIngest}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-opacity hover:bg-muted/50"
-          >
-            <Plus className="h-4 w-4 text-primary" />
-            录入消息
-          </button>
-          <button
-            type="button"
-            onClick={() => refreshMessages()}
-            disabled={loading || calendarLoading}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {(loading || calendarLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {(loading || calendarLoading) ? "加载中…" : "刷新"}
-          </button>
+          </ActionHint>
+          <ActionHint hint={withLastRefreshHint("立即从选股宝拉取消息", xgbSource?.last_poll_at)}>
+            <button
+              type="button"
+              onClick={pollXgb}
+              className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-opacity hover:bg-muted/50 hover:text-foreground"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              拉选股宝
+            </button>
+          </ActionHint>
+          <ActionHint hint={withLastRefreshHint("重新加载当前列表或日历中的消息", lastMessagesRefreshAt)}>
+            <button
+              type="button"
+              onClick={() => refreshMessages()}
+              disabled={loading || calendarLoading}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {(loading || calendarLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {(loading || calendarLoading) ? "加载中…" : "刷新"}
+            </button>
+          </ActionHint>
         </div>
       </div>
 
