@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText,
-  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw,
+  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw, Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -26,6 +26,7 @@ export function Articles() {
   const navigate = useNavigate();
   const [root, setRoot] = useState("");
   const [articles, setArticles] = useState<ArticleMeta[]>([]);
+  const [listQuery, setListQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [edit, setEdit] = useState<ArticleEditState | null>(null);
   const [editBaseline, setEditBaseline] = useState<ArticleEditState | null>(null);
@@ -290,6 +291,15 @@ export function Articles() {
 
   const draft = drafts?.[draftTab];
 
+  const filteredArticles = useMemo(() => {
+    const q = listQuery.trim().toLowerCase();
+    if (!q) return articles;
+    return articles.filter((t) => {
+      const hay = [t.title, t.summary, t.filename, t.added_at || ""].join("\n").toLowerCase();
+      return hay.includes(q);
+    });
+  }, [articles, listQuery]);
+
   const updateDraft = (patch: Partial<ArticleDraftFile>) => {
     setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, ...patch } : f)) ?? null);
   };
@@ -467,6 +477,13 @@ export function Articles() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold">
               <FileText className="h-4 w-4 text-primary" /> 文章列表
+              {articles.length > 0 && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  {listQuery.trim()
+                    ? `${filteredArticles.length}/${articles.length}`
+                    : articles.length}
+                </span>
+              )}
             </h3>
             <div className="flex flex-wrap gap-2">
               <button
@@ -499,12 +516,25 @@ export function Articles() {
               </button>
             </div>
           </div>
+          {articles.length > 0 && (
+            <div className="relative mb-3">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={listQuery}
+                onChange={(e) => setListQuery(e.target.value)}
+                placeholder="搜索标题、摘要、文件名…"
+                className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
+              />
+            </div>
+          )}
           {articles.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无文章。粘贴原文后点「AI 整理」开始归档。</p>
+          ) : filteredArticles.length === 0 ? (
+            <p className="text-sm text-muted-foreground">没有匹配「{listQuery.trim()}」的文章。</p>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              <ul className="space-y-1">
-                {articles.map((t) => (
+              <ul className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
+                {filteredArticles.map((t) => (
                   <li key={t.filename}>
                     <button
                       type="button"
@@ -524,6 +554,11 @@ export function Articles() {
                     >
                       <div className="font-medium">{t.title}</div>
                       <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
+                      {t.added_at && (
+                        <div className="mt-1 text-[10px] text-muted-foreground/80">
+                          添加于 {t.added_at}
+                        </div>
+                      )}
                     </button>
                   </li>
                 ))}

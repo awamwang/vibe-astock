@@ -1336,6 +1336,8 @@ export interface ArticleMeta {
   filename: string;
   title: string;
   summary: string;
+  /** 添加到文章库的时间（YYYY-MM-DD HH:MM:SS） */
+  added_at?: string;
 }
 export interface ArticlesMeta {
   root: string;

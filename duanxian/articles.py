@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 import threading
@@ -183,13 +184,40 @@ def load_index_articles(root: Optional[str] = None) -> list[dict[str, str]]:
     return articles
 
 
+def _file_added_at(path: str) -> str:
+    """文章文件添加时间（创建时间优先），格式 YYYY-MM-DD HH:MM:SS。"""
+    try:
+        st = os.stat(path)
+        ts = getattr(st, "st_birthtime", None)
+        if not isinstance(ts, (int, float)) or ts <= 0:
+            ts = float(st.st_ctime)
+        return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except OSError:
+        return ""
+
+
+def list_articles_for_api(root: Optional[str] = None) -> list[dict[str, Any]]:
+    """文章列表：附带添加时间，并按添加时间倒序。"""
+    base = ensure_dir(root)
+    rows: list[dict[str, Any]] = []
+    for a in load_index_articles(base):
+        path = os.path.join(base, a["filename"])
+        rows.append({
+            "filename": a["filename"],
+            "title": a.get("title") or a["filename"][:-3],
+            "summary": a.get("summary") or "",
+            "added_at": _file_added_at(path),
+        })
+    rows.sort(key=lambda t: (t.get("added_at") or "", t.get("filename") or ""), reverse=True)
+    return rows
+
+
 def get_meta(root: Optional[str] = None) -> dict[str, Any]:
     base = root_path(root)
-    articles = load_index_articles(base)
     return {
         "root": base,
         "index_path": os.path.join(base, INDEX_NAME),
-        "articles": articles,
+        "articles": list_articles_for_api(base),
     }
 
 
@@ -800,7 +828,7 @@ def commit_files(
         "ok": True,
         "root": base,
         "written": written,
-        "articles": load_index_articles(base),
+        "articles": list_articles_for_api(base),
     }
 
 
@@ -869,5 +897,5 @@ def update_article(
         "ok": True,
         "root": base,
         "article": read_article(name, base),
-        "articles": load_index_articles(base),
+        "articles": list_articles_for_api(base),
     }

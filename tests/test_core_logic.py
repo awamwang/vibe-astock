@@ -5122,3 +5122,38 @@ class TestArticles:
         idx = (tmp_path / "articles" / "index.md").read_text(encoding="utf-8")
         assert "新摘要" in idx
 
+    def test_list_articles_sorted_by_added_at_desc(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+        import os
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [])
+        root = str(tmp_path / "articles")
+        arts.commit_files([{
+            "title": "较早文章",
+            "date": "2026-08-01",
+            "summary": "先写",
+            "original": "第一篇\n",
+        }], root)
+        arts.commit_files([{
+            "title": "较新文章",
+            "date": "2026-08-02",
+            "summary": "后写",
+            "original": "第二篇\n",
+        }], root)
+        times = {
+            "较早文章-2026-08-01.md": "2026-08-01 10:00:00",
+            "较新文章-2026-08-02.md": "2026-08-02 12:00:00",
+        }
+        monkeypatch.setattr(
+            arts,
+            "_file_added_at",
+            lambda path: times.get(os.path.basename(path), ""),
+        )
+        meta = arts.get_meta(root)
+        names = [a["filename"] for a in meta["articles"]]
+        assert names[0].startswith("较新文章-")
+        assert names[1].startswith("较早文章-")
+        assert meta["articles"][0]["added_at"] == "2026-08-02 12:00:00"
+        assert meta["articles"][1]["added_at"] == "2026-08-01 10:00:00"
+

@@ -77,9 +77,10 @@ function MainShell() {
   const widePage = pathname === "/heat" || pathname === "/messages" || pathname === "/blocks";
   const settingsWidePage =
     pathname === "/settings/keywords" || pathname === "/settings/system";
+  const articlesWidePage = pathname === "/articles";
   const contentMaxWidth = widePage
     ? "max-w-none w-full"
-    : settingsWidePage
+    : settingsWidePage || articlesWidePage
       ? "max-w-[85rem] w-full"
       : "max-w-6xl";
 
