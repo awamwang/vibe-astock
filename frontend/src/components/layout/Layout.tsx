@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info, Settings2 } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info, Settings2, GripVertical } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import { StockPanelHost, StockPanelProvider, useStockPanelOptional } from "@/components/stock/StockPanelContext";
 import { BlockPanelHost, BlockPanelProvider, useBlockPanelOptional } from "@/components/block/BlockPanelContext";
+import {
+  applyNavOrder,
+  clearSidebarNavOrder,
+  loadSidebarNavOrder,
+  moveNavItem,
+  sameOrder,
+  saveSidebarNavOrder,
+  type SidebarNavOrder,
+} from "@/lib/sidebarNavOrder";
 
 function XLogo({ className }: { className?: string }) {
   return (
@@ -15,7 +25,6 @@ function XLogo({ className }: { className?: string }) {
     </svg>
   );
 }
-import { useDarkMode } from "@/hooks/useDarkMode";
 
 const APP_VERSION = "v0.1.3";
 const REPO_URL = "https://github.com/awamwang/vibe-astock";
@@ -24,9 +33,12 @@ const X_URL = "https://x.com/linsizhen";
 const X_HANDLE = "@linsizhen";
 const AUTHOR = "Simon 林";
 
+type NavItem = { to: string; icon: LucideIcon; label: string; agent?: boolean };
+type NavGroupKey = keyof SidebarNavOrder;
+
 // 产品主体 = 复盘看板：打开就看清今天的短线情绪。
 // 复盘看板本身由 agent 驱动（带 🤖 角标），其余是它的分项数据。
-const REVIEW_NAV = [
+const REVIEW_NAV: NavItem[] = [
   { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/watchlist", icon: Star, label: "自选股" },
@@ -40,7 +52,7 @@ const REVIEW_NAV = [
   { to: "/articles", icon: ScrollText, label: "研报文章" },
 ];
 
-const SETTINGS_NAV = [
+const SETTINGS_NAV: NavItem[] = [
   { to: "/settings", icon: Cog, label: "接入 AI" },
   { to: "/settings/keywords", icon: Tags, label: "自定义配置" },
   { to: "/settings/plugins", icon: Plug, label: "插件管理" },
@@ -48,6 +60,13 @@ const SETTINGS_NAV = [
   { to: "/settings/system", icon: Settings2, label: "系统设置" },
   { to: "/settings/about", icon: Info, label: "关于项目" },
 ];
+
+const DEFAULT_ORDER: SidebarNavOrder = {
+  review: REVIEW_NAV.map((n) => n.to),
+  settings: SETTINGS_NAV.map((n) => n.to),
+};
+
+const DND_MIME = "application/x-va-sidebar-nav";
 
 function MainShell() {
   const stockPanel = useStockPanelOptional();
@@ -81,43 +100,154 @@ export function Layout() {
   const { pathname } = useLocation();
   const { dark, toggle } = useDarkMode();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("va-sidebar") === "collapsed");
+  const [navOrder, setNavOrder] = useState<SidebarNavOrder>(() => {
+    const saved = loadSidebarNavOrder();
+    return {
+      review: applyNavOrder(REVIEW_NAV, saved?.review).map((n) => n.to),
+      settings: applyNavOrder(SETTINGS_NAV, saved?.settings).map((n) => n.to),
+    };
+  });
+  const [dragState, setDragState] = useState<{ group: NavGroupKey; to: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ group: NavGroupKey; to: string } | null>(null);
 
   useEffect(() => {
     localStorage.setItem("va-sidebar", collapsed ? "collapsed" : "expanded");
   }, [collapsed]);
 
-  const item = ({ to, icon: Icon, label }: { to: string; icon: LucideIcon; label: string }, agent = false) => {
-    const active = pathname === to;
+  useEffect(() => {
+    if (
+      sameOrder(navOrder.review, DEFAULT_ORDER.review) &&
+      sameOrder(navOrder.settings, DEFAULT_ORDER.settings)
+    ) {
+      clearSidebarNavOrder();
+      return;
+    }
+    saveSidebarNavOrder(navOrder);
+  }, [navOrder]);
+
+  const reviewItems = useMemo(
+    () => applyNavOrder(REVIEW_NAV, navOrder.review),
+    [navOrder.review],
+  );
+  const settingsItems = useMemo(
+    () => applyNavOrder(SETTINGS_NAV, navOrder.settings),
+    [navOrder.settings],
+  );
+
+  const resetGroup = (group: NavGroupKey) => {
+    setNavOrder((prev) => ({ ...prev, [group]: [...DEFAULT_ORDER[group]] }));
+    setDragState(null);
+    setDropTarget(null);
+  };
+
+  const onDragStart = (group: NavGroupKey, to: string, e: DragEvent) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(DND_MIME, JSON.stringify({ group, to }));
+    // 部分浏览器需要 text/plain 才允许 drop
+    e.dataTransfer.setData("text/plain", to);
+    setDragState({ group, to });
+  };
+
+  const onDragEnd = () => {
+    setDragState(null);
+    setDropTarget(null);
+  };
+
+  const onDragOverItem = (group: NavGroupKey, to: string, e: DragEvent) => {
+    if (!dragState || dragState.group !== group) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!dropTarget || dropTarget.group !== group || dropTarget.to !== to) {
+      setDropTarget({ group, to });
+    }
+  };
+
+  const onDropItem = (group: NavGroupKey, to: string, e: DragEvent) => {
+    e.preventDefault();
+    if (!dragState || dragState.group !== group) {
+      setDragState(null);
+      setDropTarget(null);
+      return;
+    }
+    setNavOrder((prev) => ({
+      ...prev,
+      [group]: moveNavItem(prev[group], dragState.to, to),
+    }));
+    setDragState(null);
+    setDropTarget(null);
+  };
+
+  const item = (n: NavItem, group: NavGroupKey) => {
+    const active = pathname === n.to;
+    const agent = Boolean(n.agent);
+    const Icon = n.icon;
+    const dragging = dragState?.group === group && dragState.to === n.to;
+    const dropHere = dropTarget?.group === group && dropTarget.to === n.to && !dragging;
+
     return (
-      <Link
-        key={to}
-        to={to}
-        title={collapsed ? label : undefined}
+      <div
+        key={n.to}
+        draggable
+        onDragStart={(e) => onDragStart(group, n.to, e)}
+        onDragEnd={onDragEnd}
+        onDragOver={(e) => onDragOverItem(group, n.to, e)}
+        onDrop={(e) => onDropItem(group, n.to, e)}
         className={cn(
-          "flex items-center rounded-lg text-sm transition-colors",
-          collapsed ? "justify-center p-2.5" : "gap-2.5 px-3 py-2.5",
-          active
-            ? "bg-primary/15 font-medium text-primary shadow-glow"
-            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+          "rounded-lg transition-[opacity,box-shadow]",
+          dragging && "opacity-40",
+          dropHere && "ring-1 ring-primary/50",
         )}
       >
-        {agent ? (
-          <span className="relative flex shrink-0">
-            <Icon className="h-4 w-4" />
-            <Bot className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-background text-primary" />
-          </span>
-        ) : (
-          <Icon className="h-4 w-4 shrink-0" />
-        )}
-        {!collapsed && label}
-      </Link>
+        <Link
+          to={n.to}
+          title={collapsed ? n.label : undefined}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          className={cn(
+            "flex items-center rounded-lg text-sm transition-colors",
+            collapsed ? "justify-center p-2.5" : "gap-2 px-2 py-2.5",
+            active
+              ? "bg-primary/15 font-medium text-primary shadow-glow"
+              : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+          )}
+        >
+          {!collapsed && (
+            <GripVertical
+              className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/40 active:cursor-grabbing"
+              aria-hidden
+            />
+          )}
+          {agent ? (
+            <span className="relative flex shrink-0">
+              <Icon className="h-4 w-4" />
+              <Bot className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-background text-primary" />
+            </span>
+          ) : (
+            <Icon className="h-4 w-4 shrink-0" />
+          )}
+          {!collapsed && <span className="truncate">{n.label}</span>}
+        </Link>
+      </div>
     );
   };
 
-  const groupLabel = (text: string) =>
-    !collapsed && (
-      <div className="mb-1 mt-3 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground/60 first:mt-0">{text}</div>
+  const groupLabel = (text: string, group: NavGroupKey) => {
+    if (collapsed) return null;
+    return (
+      <div className="group/navlabel mb-1 mt-3 flex items-center gap-2 px-3 first:mt-0">
+        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground/60">
+          {text}
+        </div>
+        <button
+          type="button"
+          onClick={() => resetGroup(group)}
+          className="ml-auto whitespace-nowrap text-[10px] text-muted-foreground/70 opacity-0 pointer-events-none transition-opacity hover:text-primary group-hover/navlabel:pointer-events-auto group-hover/navlabel:opacity-100"
+        >
+          重置默认排序
+        </button>
+      </div>
     );
+  };
 
   return (
     <StockPanelProvider>
@@ -140,12 +270,12 @@ export function Layout() {
 
           {/* Nav */}
           <nav className={cn("flex-1 space-y-0.5 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
-            {groupLabel("短线")}
-            {REVIEW_NAV.map((n) => item(n, "agent" in n && n.agent))}
+            {groupLabel("短线", "review")}
+            {reviewItems.map((n) => item(n, "review"))}
 
             {!collapsed && <div className="my-2 border-t border-border/40" />}
-            {groupLabel("设置")}
-            {SETTINGS_NAV.map((n) => item(n))}
+            {groupLabel("设置", "settings")}
+            {settingsItems.map((n) => item(n, "settings"))}
           </nav>
 
           {/* Footer */}
