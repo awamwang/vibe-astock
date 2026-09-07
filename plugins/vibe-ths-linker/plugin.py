@@ -33,9 +33,32 @@ _WS_URL = os.environ.get("THS_LINKER_WS_URL", "ws://127.0.0.1:8765")
 _SYNC_INTERVAL = 60.0
 _WS_TIMEOUT = 20.0
 _DRAIN_TIMEOUT = 2.0
-# 未就绪时的重连退避（秒）：1 → 2 → … → 30
+# 未就绪 / 同步失败时的退避（秒）：1 → 2 → … → 30
 _RECONNECT_BASE = 1.0
 _RECONNECT_CAP = 30.0
+
+
+def _is_link_error(exc: BaseException) -> bool:
+    """连接/通道类错误需断开重连；业务 API 失败（如 Pro 权限）应保持连接并退避。"""
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    name = type(exc).__name__.lower()
+    if "websocket" in name:
+        return True
+    msg = str(exc).lower()
+    return any(
+        key in msg
+        for key in (
+            "连接",
+            "timeout",
+            "timed out",
+            "broken pipe",
+            "connection",
+            "closed",
+            "断连",
+            "未连接",
+        )
+    )
 
 
 def _ensure_vr_path() -> None:
@@ -377,7 +400,7 @@ class ThsLinkerBridge:
     def _run_loop(self) -> None:
         last_sync = 0.0
         backoff = _RECONNECT_BASE
-        # 相同失败文案只打一次日志，退避重试期间静默（ths-linker 常关着）
+        # 相同失败文案只打一次日志，退避重试期间静默（ths-linker 常关着 / Pro 权限等）
         last_fail_log: str | None = None
         while not self._stop.is_set():
             if not self._ready:
@@ -390,7 +413,22 @@ class ThsLinkerBridge:
                         self._sync_watchlist()
                         last_sync = time.monotonic()
                     except Exception as exc:  # noqa: BLE001
-                        print(f"⚠️ [vibe-ths-linker] 启动自选股同步失败：{exc}")
+                        err = f"{type(exc).__name__}: {exc}"
+                        if err != last_fail_log:
+                            print(
+                                f"⚠️ [vibe-ths-linker] 启动自选股同步失败"
+                                f"（将退避重试，不再重复打印）：{err}"
+                            )
+                            last_fail_log = err
+                        self._report_status("warn", f"自选股同步失败：{err}", str(exc))
+                        if _is_link_error(exc):
+                            self._ready = False
+                            try:
+                                self._client.close()
+                            except Exception:  # noqa: BLE001
+                                pass
+                        self._wait_reconnect(backoff)
+                        backoff = min(_RECONNECT_CAP, backoff * 2)
                     continue
                 except Exception as exc:  # noqa: BLE001
                     err = f"{type(exc).__name__}: {exc}"
@@ -413,19 +451,26 @@ class ThsLinkerBridge:
                     self._sync_watchlist()
                     self._sync_risk_control()
                     last_sync = now
+                    backoff = _RECONNECT_BASE
+                    last_fail_log = None
                     self._restore_ok_if_needed()
             except Exception as exc:  # noqa: BLE001
                 err = f"{type(exc).__name__}: {exc}"
-                print(f"⚠️ [vibe-ths-linker] 同步异常：{err}")
-                traceback.print_exc()
-                self._report_status("warn", f"同步异常：{err}", traceback.format_exc())
-                self._ready = False
-                last_fail_log = None  # 下次连接失败再打一条
-                try:
-                    self._client.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                backoff = _RECONNECT_BASE
+                if err != last_fail_log:
+                    print(
+                        f"⚠️ [vibe-ths-linker] 同步异常（将退避重试，不再重复打印）：{err}"
+                    )
+                    last_fail_log = err
+                self._report_status("warn", f"同步异常：{err}", str(exc))
+                # 业务错误（如 Pro 权限）保持连接；仅通道故障才断开重连
+                if _is_link_error(exc):
+                    self._ready = False
+                    try:
+                        self._client.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self._wait_reconnect(backoff)
+                backoff = min(_RECONNECT_CAP, backoff * 2)
                 continue
             time.sleep(0.15)
 
