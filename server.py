@@ -904,6 +904,40 @@ def api_watchlist_put(request: Request, body: dict = Body(...)):
         return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
 
 
+@app.post("/api/watchlist/add")
+def api_watchlist_add(request: Request, body: dict = Body(...)):
+    """增量添加自选股，并派发 watchlist.add 钩子给已实现该回调的插件。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    _add_vr_to_path()
+    import watchlist as wl  # noqa: PLC0415
+    import watchtower as wt  # noqa: PLC0415
+    from duanxian import hooks  # noqa: PLC0415
+
+    try:
+        raw = body.get("codes")
+        if raw is None and body.get("code") is not None:
+            raw = [body.get("code")]
+        name = body.get("name")
+        name_s = str(name).strip() if name else None
+        out = wl.add_codes(raw, source=wl.SOURCE_MANUAL)
+        wt.set_watch(out["codes"])
+        wt.poke()
+        # 即使用户点的票已在本地，仍通知插件（便于补写外部终端自选）
+        emit_codes = wl.normalize_codes(raw)
+        hooks_n = hooks.RUNNER.emit_watchlist_add(
+            emit_codes,
+            source=wl.SOURCE_MANUAL,
+            name=name_s,
+        )
+        out["hooks_dispatched"] = hooks_n
+        return out
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
 def _portfolio_holdings() -> tuple[list, float]:
     """读 VR 持仓；失败当空。返回 (holdings, market_value)。"""
     try:

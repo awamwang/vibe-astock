@@ -631,6 +631,13 @@ export interface WatchlistData {
   updated_at: string | null;
 }
 
+/** 增量添加自选响应 */
+export interface WatchlistAddResult extends WatchlistData {
+  added: string[];
+  skipped: string[];
+  hooks_dispatched?: number;
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
@@ -644,6 +651,11 @@ export const api = {
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),
   watchlist: () => get<WatchlistData>("/watchlist"),
   saveWatchlist: (codes: string[]) => request<WatchlistData>("/watchlist", "PUT", { codes }),
+  addWatchlist: (codes: string | string[], name?: string) =>
+    request<WatchlistAddResult>("/watchlist/add", "POST", {
+      codes: Array.isArray(codes) ? codes : [codes],
+      ...(name ? { name } : {}),
+    }),
   firstBoard: () => get<FirstBoardData>("/market/first-board"),
   parseZtReasons: (text: string) =>
     request<ZtReasonPreview>("/market/first-board/parse-reasons", "POST", { text }),

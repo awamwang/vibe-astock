@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Database, Swords } from "lucide-react";
+import { Database, Star, Swords } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { stockMatchedClass, isStockMatched } from "@/lib/stocks";
 import { useStockPanelOptional } from "./StockPanelContext";
 import { useStockResolve, useStockResolveOptional } from "./StockResolveContext";
-import type { StockResolveItem } from "@/lib/api";
+import { api, ApiError, type StockResolveItem } from "@/lib/api";
+import { applyWatchlistAddResult } from "@/lib/watchlist";
 
 interface Props {
   code: string;
@@ -26,7 +28,7 @@ interface MenuState {
 }
 
 /**
- * 统一股票名称/代码展示，右键打开「个股数据 / 多空辩论」菜单。
+ * 统一股票名称/代码展示，右键打开「个股数据 / 多空辩论 / 添加自选股」菜单。
  */
 export function StockLabel({
   code,
@@ -49,8 +51,10 @@ export function StockLabel({
   const canOpen = !!panel && !!displayCode;
 
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [adding, setAdding] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const canDebate = /^\d{6}$/.test(displayCode);
+  const canAddWatch = /^\d{6}$/.test(displayCode);
 
   useEffect(() => {
     if (!menu) return;
@@ -76,6 +80,28 @@ export function StockLabel({
     setMenu({ x: e.clientX, y: e.clientY });
   };
 
+  const onAddWatch = async () => {
+    if (!canAddWatch || adding) return;
+    setAdding(true);
+    setMenu(null);
+    try {
+      const out = await api.addWatchlist(displayCode, displayName || undefined);
+      applyWatchlistAddResult(out);
+      const label = displayName ? `${displayName}（${displayCode}）` : displayCode;
+      if (out.added?.length) {
+        const hookHint = (out.hooks_dispatched ?? 0) > 0 ? "，并已通知联动插件" : "";
+        toast.success(`已加入自选：${label}${hookHint}`);
+      } else {
+        const hookHint = (out.hooks_dispatched ?? 0) > 0 ? "；已再通知联动插件" : "";
+        toast.message(`已在自选中：${label}${hookHint}`);
+      }
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "添加自选股失败");
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const body = children ?? (
     variant === "codeOnly" ? (
       <span className={cn("font-mono text-xs text-muted-foreground", codeClassName)}>{displayCode}</span>
@@ -92,7 +118,7 @@ export function StockLabel({
   const title = canOpen
     ? matched
       ? `已映射 A 股 ${displayCode} · 右键查看详情`
-      : "右键：个股数据 / 多空辩论"
+      : "右键：个股数据 / 多空辩论 / 添加自选"
     : hasScope && resolved?.status === "unmatched"
       ? "未映射到 A 股列表"
       : undefined;
@@ -117,7 +143,7 @@ export function StockLabel({
           className="fixed z-[80] min-w-[10.5rem] overflow-hidden rounded-lg border border-border bg-card py-1 text-sm text-foreground shadow-lg"
           style={{
             left: Math.min(menu.x, window.innerWidth - 180),
-            top: Math.min(menu.y, window.innerHeight - 100),
+            top: Math.min(menu.y, window.innerHeight - 140),
           }}
           role="menu"
         >
@@ -138,6 +164,16 @@ export function StockLabel({
           >
             <Swords className="h-3.5 w-3.5 text-primary" /> 多空辩论
             {!canDebate && <span className="ml-auto text-[10px] text-muted-foreground">仅 A 股</span>}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canAddWatch || adding}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60 disabled:opacity-40"
+            onClick={() => { void onAddWatch(); }}
+          >
+            <Star className="h-3.5 w-3.5 text-primary" /> 添加自选股
+            {!canAddWatch && <span className="ml-auto text-[10px] text-muted-foreground">仅 A 股</span>}
           </button>
         </div>,
         document.body,

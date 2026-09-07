@@ -22,6 +22,7 @@
 | `on_budget_snapshot` | `budget.snapshot` | [附录 A.4](#a4-on_budget_snapshot) |
 | `on_review_saved` | `review.saved` | [附录 A.5](#a5-on_review_saved) |
 | `enable_review_saved` | —（控制是否收聚合事件） | [附录 A.6](#a6-enable_review_saved) |
+| `on_watchlist_add` | `watchlist.add` | [附录 A.9](#a9-on_watchlist_add) |
 
 ### 写入接口（插件 → 引擎）
 
@@ -447,6 +448,38 @@ python -m duanxian.plugin_cli list
 
 ---
 
+### A.9 `on_watchlist_add` {#a9-on_watchlist_add}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 系统发起「添加自选股」时通知插件；插件按自身方式写入外部终端（如同花顺「我的自选」）。未实现该回调的插件不会收到事件。 |
+| **HookPack 字段** | `on_watchlist_add` |
+| **事件名** | `watchlist.add` |
+| **触发时机** | `POST /api/watchlist/add`（个股右键「添加自选股」等）；本地自选先落盘，再 `RUNNER.emit_watchlist_add`。 |
+| **对应页面** | [自选股](/watchlist)；个股右键菜单 |
+| **对应 API** | `POST /api/watchlist/add` |
+| **回调签名** | `on_watchlist_add(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 结构**（`$schema` = `watchlist-add/1.0.0`）：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/watchlist-add/1.0.0",
+  "schema_version": "1.0.0",
+  "codes": ["600519"],
+  "source": "手动添加",
+  "name": "贵州茅台"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `codes` | 本次请求的 6 位代码列表（即使用户本地已有该票，也会派发，便于补写外部终端）。 |
+| `source` | 来源文案，默认「手动添加」。 |
+| `name` | 可选；右键添加时带入显示名。 |
+
+---
+
 ## 附录 B：写入接口（插件 → 引擎）
 
 ---
@@ -812,6 +845,7 @@ class HookPack:
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None
     on_review_saved: Callable[[HookContext, dict], None] | None = None
+    on_watchlist_add: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 ```
 

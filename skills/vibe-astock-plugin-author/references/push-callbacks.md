@@ -8,6 +8,7 @@
 | `on_verification_snapshot` | `verification.snapshot` | 复盘保存后；用户保存验证条件 |
 | `on_budget_snapshot` | `budget.snapshot` | `trade_store.refresh(emit_hooks=True)`；复盘保存后有预算时 |
 | `on_review_saved` | `review.saved` | 复盘保存后聚合包（可用 `enable_review_saved=False` 关闭） |
+| `on_watchlist_add` | `watchlist.add` | `POST /api/watchlist/add`（个股右键添加自选等） |
 
 签名：`callback(ctx: HookContext, envelope: dict) -> None`。
 

@@ -210,3 +210,15 @@ export async function pushServerWatch(
     return null;
   }
 }
+
+/** 用增量添加接口的响应回写本地自选缓存。 */
+export function applyWatchlistAddResult(remote: {
+  codes: string[];
+  items?: WatchItem[];
+  updated_at: string | null;
+}): WatchItem[] {
+  const synced = remoteItemsOf(remote);
+  saveWatchItems(synced);
+  if (remote.updated_at) saveServerStamp(remote.updated_at);
+  return synced;
+}

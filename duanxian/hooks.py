@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import hook_schemas as hs
-from .util import china_now
+from .util import china_now, china_today
 
 _BUILTIN_METRIC_PATHS: dict[str, tuple[str, ...]] = {
     "limit_up_count": ("emotion_metrics", "promotion", "limit_up_count"),
@@ -79,6 +79,7 @@ class HookPack:
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None
     on_review_saved: Callable[[HookContext, dict], None] | None = None
+    on_watchlist_add: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 
 
@@ -579,6 +580,25 @@ def build_verification_payload(date: str, review: dict) -> dict:
     }
 
 
+def build_watchlist_add_payload(
+    codes: list[str],
+    *,
+    source: str = "手动添加",
+    name: str | None = None,
+) -> dict:
+    """构造 watchlist.add 事件 payload。"""
+    clean = [str(c).strip() for c in codes if str(c or "").strip()]
+    body: dict[str, Any] = {
+        "$schema": hs.WATCHLIST_ADD,
+        "schema_version": hs.SCHEMA_VERSION,
+        "codes": clean,
+        "source": str(source or "手动添加").strip() or "手动添加",
+    }
+    if name:
+        body["name"] = str(name).strip()
+    return body
+
+
 def _envelope(event: str, date: str, payload: dict, plugin: LoadedPlugin) -> dict:
     now = china_now().strftime("%Y-%m-%dT%H:%M:%S%z")
     if len(now) > 5 and now[-5] in "+-":
@@ -722,6 +742,33 @@ class HookRunner:
             date, review, budget_env,
             metrics_payload=mp, verification_payload=vp, budget_payload=bp,
         )
+
+    def emit_watchlist_add(
+        self,
+        codes: list[str],
+        *,
+        source: str = "手动添加",
+        name: str | None = None,
+        date: str | None = None,
+    ) -> int:
+        """向已实现 on_watchlist_add 的插件派发添加自选股事件；返回收到回调的插件数。"""
+        clean = [str(c).strip() for c in codes if str(c or "").strip()]
+        if not clean:
+            return 0
+        day = date or china_today()
+        payload = build_watchlist_add_payload(clean, source=source, name=name)
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_watchlist_add is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_watchlist_add,
+                lp,
+                _ctx(day, "watchlist.add", lp),
+                _envelope("watchlist.add", day, payload, lp),
+            )
+        return n
 
 
 def _validate_providers(providers: tuple[MetricProvider, ...]) -> tuple[MetricProvider, ...]:

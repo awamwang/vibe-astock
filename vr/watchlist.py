@@ -195,6 +195,38 @@ def sync_codes_from_ui(codes: Any) -> dict:
     return get_watchlist()
 
 
+def add_codes(codes: Any, *, source: str = SOURCE_MANUAL) -> dict:
+    """增量添加自选股；已存在的代码保持原有来源与时间。
+
+    返回导出形状，并附带 ``added``（新加入）与 ``skipped``（已在列表中）。
+    """
+    clean = normalize_codes(codes)
+    src = str(source or SOURCE_MANUAL).strip() or SOURCE_MANUAL
+    stamp = _now()
+    with _LOCK:
+        data = _load()
+        by_code = {it["code"]: dict(it) for it in data.get("items") or []}
+        added: list[str] = []
+        skipped: list[str] = []
+        for code in clean:
+            if code in by_code:
+                skipped.append(code)
+                continue
+            by_code[code] = _item(code, src, stamp)
+            added.append(code)
+        if added:
+            ordered = list(data.get("items") or [])
+            for code in added:
+                ordered.append(by_code[code])
+            data["items"] = ordered[:_MAX_CODES]
+            data["updated_at"] = stamp
+            _save(data)
+        out = _export(data)
+    out["added"] = added
+    out["skipped"] = skipped
+    return out
+
+
 def get_codes() -> list[str]:
     with _LOCK:
         data = _load()

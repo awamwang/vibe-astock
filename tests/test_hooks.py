@@ -205,6 +205,23 @@ class TestHookRegistryImport:
         items = {it["code"]: it for it in second["items"]}
         assert items["600000"]["source"] == wl.SOURCE_MANUAL
 
+    def test_add_codes_incremental(self, tmp_path, monkeypatch):
+        import watchlist as wl
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        first = wl.add_codes(["600519"])
+        assert first["added"] == ["600519"]
+        assert first["skipped"] == []
+        assert first["codes"] == ["600519"]
+        second = wl.add_codes(["600519", "000001"])
+        assert second["added"] == ["000001"]
+        assert second["skipped"] == ["600519"]
+        assert second["codes"] == ["600519", "000001"]
+
     def test_import_watchlist_rejects_invalid_mode(self):
         from duanxian.hooks import HookRegistry
 
@@ -345,6 +362,38 @@ class TestHookRunner:
         assert events.count("b:metrics") == 1
         assert events.count("a:review") == 1
         assert events.count("b:review") == 1
+
+    def test_emit_watchlist_add_only_to_registered_plugins(self):
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
+
+        seen: list[tuple[str, list[str]]] = []
+
+        def _on_add(name: str):
+            def _cb(ctx, envelope):
+                codes = (envelope.get("payload") or {}).get("codes") or []
+                seen.append((name, list(codes)))
+
+            return _cb
+
+        with_hook = LoadedPlugin(
+            id="with",
+            path="/x",
+            pack=HookPack(
+                name="with",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_watchlist_add=_on_add("with"),
+            ),
+        )
+        without = LoadedPlugin(
+            id="without",
+            path="/y",
+            pack=HookPack(name="without", version="1.0.0", schema_bundle="t/1"),
+        )
+        runner = HookRunner([with_hook, without], HookRegistry())
+        n = runner.emit_watchlist_add(["600519"], name="贵州茅台")
+        assert n == 1
+        assert seen == [("with", ["600519"])]
 
     def test_callback_error_does_not_raise(self):
         from duanxian import plugin_status as ps

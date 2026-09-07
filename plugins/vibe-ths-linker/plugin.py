@@ -283,6 +283,7 @@ class ThsLinkerBridge:
         self._ready = False
         self._pending_pushes: list[dict] = []
         self._push_queue: queue.Queue[dict | None] = queue.Queue()
+        self._cmd_queue: queue.Queue[tuple[str, Any] | None] = queue.Queue()
         self._stop = threading.Event()
         self._reconnect_soon = threading.Event()
         self._thread: threading.Thread | None = None
@@ -316,6 +317,10 @@ class ThsLinkerBridge:
             self._push_queue.put_nowait(None)
         except queue.Full:
             pass
+        try:
+            self._cmd_queue.put_nowait(None)
+        except queue.Full:
+            pass
         self._client.close()
         if self._push_thread is not None and self._push_thread.is_alive():
             self._push_thread.join(timeout=3.0)
@@ -331,6 +336,18 @@ class ThsLinkerBridge:
 
     def is_ready(self) -> bool:
         return self._ready
+
+    def enqueue_add_self_stocks(self, codes: list[str]) -> None:
+        """入队添加同花顺自选；由桥接主循环串行执行，避免与同步请求争用 WS。"""
+        clean = [str(c).strip() for c in codes if len(str(c or "").strip()) == 6]
+        if not clean:
+            return
+        try:
+            self._cmd_queue.put_nowait(("add_self_stock", clean))
+        except queue.Full:
+            print("⚠️ [vibe-ths-linker] 命令队列已满，丢弃自选添加请求")
+        else:
+            self.request_reconnect()
 
     def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
         from duanxian import plugin_status as ps
@@ -429,6 +446,20 @@ class ThsLinkerBridge:
                                 pass
                         self._wait_reconnect(backoff)
                         backoff = min(_RECONNECT_CAP, backoff * 2)
+                        continue
+                    try:
+                        self._drain_commands()
+                    except Exception as exc:  # noqa: BLE001
+                        err = f"{type(exc).__name__}: {exc}"
+                        print(f"⚠️ [vibe-ths-linker] 添加同花顺自选失败：{err}")
+                        if _is_link_error(exc):
+                            self._ready = False
+                            try:
+                                self._client.close()
+                            except Exception:  # noqa: BLE001
+                                pass
+                            self._wait_reconnect(backoff)
+                            backoff = min(_RECONNECT_CAP, backoff * 2)
                     continue
                 except Exception as exc:  # noqa: BLE001
                     err = f"{type(exc).__name__}: {exc}"
@@ -446,6 +477,20 @@ class ThsLinkerBridge:
                     continue
 
             now = time.monotonic()
+            try:
+                self._drain_commands()
+            except Exception as exc:  # noqa: BLE001
+                err = f"{type(exc).__name__}: {exc}"
+                print(f"⚠️ [vibe-ths-linker] 添加同花顺自选失败：{err}")
+                if _is_link_error(exc):
+                    self._ready = False
+                    try:
+                        self._client.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._wait_reconnect(backoff)
+                    backoff = min(_RECONNECT_CAP, backoff * 2)
+                    continue
             try:
                 if now - last_sync >= _SYNC_INTERVAL:
                     self._sync_watchlist()
@@ -482,6 +527,41 @@ class ThsLinkerBridge:
         if pid:
             body["pid"] = str(pid)
         return body
+
+    def _drain_commands(self) -> None:
+        while not self._stop.is_set():
+            try:
+                cmd = self._cmd_queue.get_nowait()
+            except queue.Empty:
+                return
+            if cmd is None:
+                return
+            kind, payload = cmd
+            if kind == "add_self_stock":
+                self._add_self_stocks(list(payload or []))
+
+    def _add_self_stocks(self, codes: list[str]) -> None:
+        """经 ths-linker WebSocket 向「我的自选」追加代码。"""
+        if not self._ready:
+            raise RuntimeError("ths-linker 未就绪，无法添加自选股")
+        for code in codes:
+            c = str(code or "").strip()
+            if len(c) != 6 or not c.isdigit():
+                continue
+            resp = self._client.request(
+                {
+                    "type": "self_stock",
+                    "action": "add",
+                    "code": c,
+                    **self._instance_payload(),
+                },
+                expect_type="self_stock_result",
+            )
+            if not resp.get("ok"):
+                raise RuntimeError(resp.get("error") or f"添加自选股失败：{c}")
+            print(f"[vibe-ths-linker] 已添加同花顺自选 {c}")
+        # 使下次全量同步重新读取（避免沿用添加前签名）
+        self._last_watchlist = None
 
     def _on_ws_push(self, msg: dict) -> None:
         if not self._ready:
@@ -773,6 +853,20 @@ def on_disable() -> None:
     _BRIDGE = None
 
 
+def on_watchlist_add(_ctx, envelope: dict) -> None:
+    """系统添加自选股时：把代码写入同花顺「我的自选」。"""
+    bridge = _BRIDGE
+    if bridge is None:
+        return
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    if not isinstance(payload, dict):
+        payload = {}
+    codes = payload.get("codes") or []
+    if not isinstance(codes, list) or not codes:
+        return
+    bridge.enqueue_add_self_stocks([str(c) for c in codes])
+
+
 def ensure_bridge_alive() -> bool:
     """供引擎按需调用：未就绪时打断重连退避，尽快恢复个股联动。"""
     bridge = _BRIDGE
@@ -790,5 +884,6 @@ PACK = HookPack(
     schema_bundle="vibe-ths-linker/1.0.0",
     on_enable=on_enable,
     on_disable=on_disable,
+    on_watchlist_add=on_watchlist_add,
     enable_review_saved=False,
 )
