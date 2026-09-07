@@ -322,6 +322,8 @@ export interface AnalyzedMessageDetail extends AnalyzedMessage {
 export interface MessageListResult {
   items: AnalyzedMessage[];
   total: number;
+  /** 日历月视图：每日命中总数（含未预加载的折叠项） */
+  day_totals?: Record<string, number>;
   /** 请求 match_current_stock 时由后端回传的焦点股代码 */
   current_stock_code?: string | null;
   /** 请求 match_current_stock 时由后端回传的焦点股名称 */
@@ -877,6 +879,8 @@ export const api = {
     order?: string;
     limit?: number;
     offset?: number;
+    /** >0 时按生效日取展示优先级前 N 条，并返回 day_totals */
+    per_day_limit?: number;
   } = {}) => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {

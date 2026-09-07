@@ -692,6 +692,20 @@ _EFFECTIVE_DT_SQL = """
 END)
 """
 
+# 与前端 compareCalendarDayItems 一致：优先档 → 重要程度 → 生效时间新到旧
+_CALENDAR_DAY_ORDER_SQL = f"""
+CASE WHEN favorited = 1 OR effect_status = 'pending_verify' THEN 0 ELSE 1 END ASC,
+CASE impact_level
+  WHEN 'critical' THEN 0
+  WHEN 'high' THEN 1
+  WHEN 'medium' THEN 2
+  WHEN 'low' THEN 3
+  WHEN 'noise' THEN 4
+  ELSE 2
+END ASC,
+{_EFFECTIVE_DT_SQL} DESC
+"""
+
 
 def _effective_end_sql(default_days: int) -> str:
     """结束时间：有 end_at 用 end_at，否则生效时间 + default_days。"""
@@ -836,29 +850,63 @@ def _build_analyzed_where(
     return " AND ".join(parts), args
 
 
+def _resolve_stock_match_context(
+    q: ListQuery, db: str
+) -> tuple[str | None, set[str] | None, CurrentStockMatchIds | None]:
+    """解析跟随焦点股筛选所需的匹配集合。"""
+    current_stock_code: str | None = None
+    stock_match_ids: set[str] | None = None
+    stock_match_buckets: CurrentStockMatchIds | None = None
+    if not q.match_current_stock:
+        return None, None, None
+    selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
+    want_yes = "yes" in selected or "1" in selected or "true" in selected
+    if not want_yes:
+        return None, None, None
+    from duanxian import current_stock as cs
+
+    rec = cs.get_current()
+    if rec and rec.code:
+        current_stock_code = rec.code
+        with closing(_connect(db)) as conn:
+            stock_match_buckets = collect_match_ids(conn, rec.code)
+            stock_match_ids = stock_match_buckets.all_ids()
+    else:
+        stock_match_ids = set()
+    return current_stock_code, stock_match_ids, stock_match_buckets
+
+
+def _hydrate_analyzed_rows(
+    conn: Any,
+    rows: list[Any],
+    *,
+    current_stock_code: str | None = None,
+) -> list[AnalyzedMessage]:
+    follow_kws = load_keywords()
+    follow_blocks = load_blocks()
+    out: list[AnalyzedMessage] = []
+    for r in rows:
+        aids = r["id"]
+        targets = _load_targets(conn, aids)
+        raw_ids = _load_raw_ids(conn, aids)
+        msg = enrich_follow(
+            _row_analyzed(r, targets, raw_ids),
+            follow_kws,
+            follow_blocks,
+        )
+        if current_stock_code:
+            msg = enrich_current_stock(msg, current_stock_code)
+        out.append(msg)
+    return out
+
+
 def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[AnalyzedMessage], int]:
     from . import archive as msg_archive
 
     msg_archive.archive_immediate_expired(main_path=path)
     init_db(path)
     db = path or DB_PATH
-    current_stock_code: str | None = None
-    stock_match_ids: set[str] | None = None
-    stock_match_buckets: CurrentStockMatchIds | None = None
-    if q.match_current_stock:
-        selected = {x.strip().lower() for x in q.match_current_stock.split(",") if x.strip()}
-        want_yes = "yes" in selected or "1" in selected or "true" in selected
-        if want_yes:
-            from duanxian import current_stock as cs
-
-            rec = cs.get_current()
-            if rec and rec.code:
-                current_stock_code = rec.code
-                with closing(_connect(db)) as conn:
-                    stock_match_buckets = collect_match_ids(conn, rec.code)
-                    stock_match_ids = stock_match_buckets.all_ids()
-            else:
-                stock_match_ids = set()
+    current_stock_code, stock_match_ids, stock_match_buckets = _resolve_stock_match_context(q, db)
     where, args = _build_analyzed_where(q, stock_match_ids=stock_match_ids)
     sort_map = {
         "produced_at": "produced_at",
@@ -869,8 +917,6 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
         "status": "status",
         "title": "title",
     }
-    sort_col = sort_map.get(q.sort, "produced_at")
-    order = "ASC" if q.order == "asc" else "DESC"
     priority_sql, priority_args = _stock_match_priority_order(stock_match_buckets)
     block_size_sql, block_size_args = _stock_match_block_size_order(stock_match_buckets)
     order_parts: list[str] = []
@@ -881,7 +927,12 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
     if block_size_sql:
         order_parts.append(block_size_sql)
         order_args.extend(block_size_args)
-    order_parts.append(f"{sort_col} {order}")
+    if q.sort == "calendar_day":
+        order_parts.append(_CALENDAR_DAY_ORDER_SQL)
+    else:
+        sort_col = sort_map.get(q.sort, "produced_at")
+        order = "ASC" if q.order == "asc" else "DESC"
+        order_parts.append(f"{sort_col} {order}")
     order_by = ", ".join(order_parts)
     cap = 1000 if q.from_dt and q.to_dt else 200
     limit = max(1, min(q.limit, cap))
@@ -898,22 +949,64 @@ def list_analyzed(q: ListQuery, *, path: Optional[str] = None) -> tuple[list[Ana
                 """,
                 [*args, *order_args, limit, offset],
             ).fetchall()
-            follow_kws = load_keywords()
-            follow_blocks = load_blocks()
-            out: list[AnalyzedMessage] = []
-            for r in rows:
-                aids = r["id"]
-                targets = _load_targets(conn, aids)
-                raw_ids = _load_raw_ids(conn, aids)
-                msg = enrich_follow(
-                    _row_analyzed(r, targets, raw_ids),
-                    follow_kws,
-                    follow_blocks,
-                )
-                if current_stock_code:
-                    msg = enrich_current_stock(msg, current_stock_code)
-                out.append(msg)
+            out = _hydrate_analyzed_rows(conn, rows, current_stock_code=current_stock_code)
     return out, int(total)
+
+
+def list_analyzed_calendar(
+    q: ListQuery,
+    *,
+    per_day_limit: int = 5,
+    path: Optional[str] = None,
+) -> tuple[list[AnalyzedMessage], int, dict[str, int]]:
+    """按生效日分组取每日展示优先级前 N 条，并返回每日命中总数。"""
+    from . import archive as msg_archive
+
+    msg_archive.archive_immediate_expired(main_path=path)
+    init_db(path)
+    db = path or DB_PATH
+    day_cap = max(1, min(int(per_day_limit or 5), 20))
+    current_stock_code, stock_match_ids, _buckets = _resolve_stock_match_context(q, db)
+    where, args = _build_analyzed_where(q, stock_match_ids=stock_match_ids)
+    day_expr = f"substr({_EFFECTIVE_DT_SQL}, 1, 10)"
+    with _LOCK:
+        with closing(_connect(db)) as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) AS c FROM analyzed_message WHERE {where}", args
+            ).fetchone()["c"]
+            day_rows = conn.execute(
+                f"""
+                SELECT {day_expr} AS day, COUNT(*) AS c
+                FROM analyzed_message
+                WHERE {where}
+                GROUP BY day
+                """,
+                args,
+            ).fetchall()
+            day_totals = {str(r["day"]): int(r["c"]) for r in day_rows if r["day"]}
+            rows = conn.execute(
+                f"""
+                WITH filtered AS (
+                  SELECT analyzed_message.*, {day_expr} AS _cal_day
+                  FROM analyzed_message
+                  WHERE {where}
+                ),
+                ranked AS (
+                  SELECT *,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY _cal_day
+                      ORDER BY {_CALENDAR_DAY_ORDER_SQL}
+                    ) AS _cal_rn
+                  FROM filtered
+                )
+                SELECT * FROM ranked
+                WHERE _cal_rn <= ?
+                ORDER BY _cal_day ASC, _cal_rn ASC
+                """,
+                [*args, day_cap],
+            ).fetchall()
+            out = _hydrate_analyzed_rows(conn, rows, current_stock_code=current_stock_code)
+    return out, int(total), day_totals
 
 
 def get_analyzed(analyzed_id: str, *, path: Optional[str] = None) -> AnalyzedMessage | None:

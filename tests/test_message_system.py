@@ -1626,3 +1626,78 @@ def test_list_analyzed_excludes_expired_unless_include_history(msg_db):
     assert long_total == 1
     assert long_days[0].title == "默认有效期"
 
+
+def test_list_analyzed_calendar_per_day_priority(msg_db):
+    """日历按日取展示优先级前 N 条，保证多日均有预载且排序正确。"""
+    day_a = "2026-09-03"
+    day_b = "2026-09-07"
+
+    def _make(title: str, *, produced_at: str, impact: str, favorited=False, effect="not_erupted"):
+        d = RawMessageDraft(
+            draft_key=f"cal-{title}",
+            source_id="manual",
+            source_label="粘贴",
+            content=title,
+            title=title,
+            produced_at=produced_at,
+        )
+        raw = store.insert_raw_batch([d], path=msg_db)[0]
+        msg = store.upsert_analyzed_from_raw(
+            raw,
+            patch={
+                "impact_level": impact,
+                "effect_status": effect,
+                "effective_mode": "immediate",
+            },
+            path=msg_db,
+        )
+        if favorited:
+            store.set_favorited_batch([msg.id], True, path=msg_db)
+        return msg
+
+    # day_a：6 条噪声 + 1 条收藏高优，按日 limit=2 应只拿到收藏与最高优
+    for i in range(6):
+        _make(f"A噪声{i}", produced_at=f"{day_a} 10:0{i}:00", impact="noise")
+    _make("A收藏", produced_at=f"{day_a} 09:00:00", impact="low", favorited=True)
+
+    # day_b：大量低优 + 待验证，应出现在预载中（不被 day_a 挤掉）
+    for i in range(12):
+        _make(f"B低{i}", produced_at=f"{day_b} 11:{i:02d}:00", impact="low")
+    _make("B待验证", produced_at=f"{day_b} 08:00:00", impact="medium", effect="pending_verify")
+
+    rows, total, day_totals = store.list_analyzed_calendar(
+        store.ListQuery(
+            from_dt="2026-09-01 00:00:00",
+            to_dt="2026-09-30 23:59:59",
+            include_history=True,
+        ),
+        per_day_limit=2,
+        path=msg_db,
+    )
+    assert total == 6 + 1 + 12 + 1
+    assert day_totals[day_a] == 7
+    assert day_totals[day_b] == 13
+    by_day = {}
+    for r in rows:
+        key = r.produced_at[:10]
+        by_day.setdefault(key, []).append(r.title)
+    assert set(by_day) == {day_a, day_b}
+    assert by_day[day_a][0] == "A收藏"
+    assert len(by_day[day_a]) == 2
+    assert by_day[day_b][0] == "B待验证"
+    assert len(by_day[day_b]) == 2
+
+    # 全日按 calendar_day 排序展开
+    full_b, full_total = store.list_analyzed(
+        store.ListQuery(
+            from_dt=f"{day_b} 00:00:00",
+            to_dt=f"{day_b} 23:59:59",
+            sort="calendar_day",
+            include_history=True,
+            limit=100,
+        ),
+        path=msg_db,
+    )
+    assert full_total == 13
+    assert full_b[0].title == "B待验证"
+    assert len(full_b) == 13

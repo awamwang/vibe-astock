@@ -147,8 +147,18 @@ class ListQuery(BaseModel):
     # 筛选「是否已结束」的参照时间（搜索时间）；空则用查询时的当前时间
     as_of: str | None = None
     sort: Literal[
-        "produced_at", "ingested_at", "impact_level", "effect_status", "freshness", "status", "title"
+        "produced_at",
+        "ingested_at",
+        "impact_level",
+        "effect_status",
+        "freshness",
+        "status",
+        "title",
+        # 日历日内排序：收藏/待验证 → 重要程度 → 生效时间新到旧
+        "calendar_day",
     ] = "produced_at"
     order: Literal["asc", "desc"] = "desc"
     limit: int = 50
     offset: int = 0
+    # >0 时按生效日分组，每日只取展示优先级前 N 条（日历月视图）
+    per_day_limit: int | None = None

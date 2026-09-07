@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Sparkles, Newspaper, Radio, X, Star,
   RotateCcw, LayoutList, CalendarDays, Volume2, Square,
 } from "lucide-react";
-import { MessageCalendar } from "@/components/MessageCalendar";
+import { MessageCalendar, CALENDAR_PER_DAY } from "@/components/MessageCalendar";
 import { MessageDetailPanel } from "@/components/MessageDetailPanel";
 import { MessageStockPopupButton } from "@/components/MessageStockPip";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ import {
 } from "@/lib/api";
 import {
   EFFECT_LABEL, EFFECT_STATUS_OPTIONS, FRESHNESS_LABEL, IMPACT_LABEL, MARK_FILTER_OPTIONS, TARGET_KIND_LABEL,
-  effectiveAt, endAt, getDefaultEndDays, hasExplicitEndAt, keywordHint,
+  dateKeyFromEffective, effectiveAt, endAt, getDefaultEndDays, hasExplicitEndAt, keywordHint,
   monthRange, setDefaultEndDays, clampDefaultEndDays, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
@@ -47,7 +47,6 @@ import {
 } from "@/lib/speech";
 
 const PAGE_SIZE = 100;
-const CALENDAR_LIMIT = 1000;
 const SEARCH_DEBOUNCE_MS = 300;
 const HIDDEN_SOURCE_IDS = new Set(["paste", "structured"]);
 
@@ -679,9 +678,8 @@ export function MessageAnalysis() {
   const [calendarMonth, setCalendarMonth] = useState(nowInit.getMonth());
   const [calendarItems, setCalendarItems] = useState<AnalyzedMessage[]>([]);
   const [calendarTotal, setCalendarTotal] = useState(0);
+  const [calendarDayTotals, setCalendarDayTotals] = useState<Record<string, number>>({});
   const [calendarLoading, setCalendarLoading] = useState(false);
-  /** 列表/日历最近一次成功加载时间（用于刷新按钮悬浮提示） */
-  const [lastMessagesRefreshAt, setLastMessagesRefreshAt] = useState<string | null>(null);
 
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestFormat, setIngestFormat] = useState<"plain" | "structured" | "calendar" | "article">("plain");
@@ -814,7 +812,6 @@ export function MessageAnalysis() {
       const list = data.items || [];
       setItems(list);
       setTotal(data.total || 0);
-      setLastMessagesRefreshAt(nowStorageDatetime());
       return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "加载失败");
@@ -841,15 +838,12 @@ export function MessageAnalysis() {
         default_end_days: defaultEndDays,
         from_dt: range.from_dt,
         to_dt: range.to_dt,
-        sort: "produced_at",
-        order: "asc",
-        limit: CALENDAR_LIMIT,
-        offset: 0,
+        per_day_limit: CALENDAR_PER_DAY,
       });
       const list = data.items || [];
       setCalendarItems(list);
       setCalendarTotal(data.total || 0);
-      setLastMessagesRefreshAt(nowStorageDatetime());
+      setCalendarDayTotals(data.day_totals || {});
       return list;
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : "日历加载失败");
@@ -858,6 +852,42 @@ export function MessageAnalysis() {
       setCalendarLoading(false);
     }
   }, [calendarYear, calendarMonth, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, markFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode]);
+
+  const loadCalendarDay = useCallback(async (dateKey: string): Promise<AnalyzedMessage[]> => {
+    try {
+      const dayTotal = calendarDayTotals[dateKey] ?? CALENDAR_PER_DAY;
+      const data = await api.messageAnalyzedList({
+        q: q.trim() || undefined,
+        source: sourcesFilter.length ? sourcesFilter : undefined,
+        impact_level: impactLevels.length ? impactLevels : undefined,
+        effect_status: effectStatuses.length ? effectStatuses : undefined,
+        followed: followedFilter.length ? followedFilter : undefined,
+        favorited: favoritedFilter.length ? favoritedFilter : undefined,
+        mark: markFilter.length ? markFilter : undefined,
+        match_current_stock: followStockChange ? "yes" : undefined,
+        include_history: includeHistory ? "yes" : undefined,
+        default_end_days: defaultEndDays,
+        from_dt: `${dateKey} 00:00:00`,
+        to_dt: `${dateKey} 23:59:59`,
+        sort: "calendar_day",
+        limit: Math.min(1000, Math.max(dayTotal, CALENDAR_PER_DAY)),
+        offset: 0,
+      });
+      const list = data.items || [];
+      setCalendarItems((prev) => {
+        const others = prev.filter((x) => dateKeyFromEffective(x) !== dateKey);
+        return [...others, ...list];
+      });
+      setCalendarDayTotals((prev) => ({
+        ...prev,
+        [dateKey]: data.total ?? list.length,
+      }));
+      return list;
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "当日消息加载失败");
+      throw e;
+    }
+  }, [calendarDayTotals, q, sourcesFilter, impactLevels, effectStatuses, followedFilter, favoritedFilter, markFilter, followStockChange, includeHistory, defaultEndDays, currentStockCode]);
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1595,17 +1625,6 @@ export function MessageAnalysis() {
               拉选股宝
             </button>
           </ActionHint>
-          <ActionHint hint={withLastRefreshHint("重新加载当前列表或日历中的消息", lastMessagesRefreshAt)}>
-            <button
-              type="button"
-              onClick={() => refreshMessages()}
-              disabled={loading || calendarLoading}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {(loading || calendarLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              {(loading || calendarLoading) ? "加载中…" : "刷新"}
-            </button>
-          </ActionHint>
         </div>
       </div>
 
@@ -1801,8 +1820,8 @@ export function MessageAnalysis() {
               {viewMode === "list" && total > 0 && (
                 <> · 当前 {pageFrom}–{pageTo}</>
               )}
-              {viewMode === "calendar" && calendarTotal > CALENDAR_LIMIT && (
-                <> · 日历仅展示前 {CALENDAR_LIMIT} 条</>
+              {viewMode === "calendar" && (
+                <> · 每日预载优先 {CALENDAR_PER_DAY} 条</>
               )}
             </span>
             {analyzeProgress && (
@@ -1883,6 +1902,7 @@ export function MessageAnalysis() {
                   year={calendarYear}
                   month={calendarMonth}
                   items={calendarItems}
+                  dayTotals={calendarDayTotals}
                   loading={calendarLoading}
                   selectedId={selected?.id}
                   onMonthChange={(y, m) => {
@@ -1890,6 +1910,7 @@ export function MessageAnalysis() {
                     setCalendarMonth(m);
                   }}
                   onSelect={selectItem}
+                  onLoadDay={loadCalendarDay}
                 />
               </div>
             ) : (

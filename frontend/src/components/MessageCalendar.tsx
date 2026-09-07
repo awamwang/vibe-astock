@@ -13,7 +13,9 @@ import {
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 const WEEKDAY_LABELS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-const MAX_VISIBLE = 4;
+/** 格子内直接展示条数；月视图预取与此对齐 */
+export const CALENDAR_PER_DAY = 5;
+const MAX_VISIBLE = CALENDAR_PER_DAY;
 const POPOVER_WIDTH = 288;
 const POPOVER_PAD = 8;
 const POPOVER_GAP = 6;
@@ -26,6 +28,8 @@ export interface CalendarCell {
   isToday: boolean;
   key: string;
   items: AnalyzedMessage[];
+  /** 当日命中总数（含未预加载） */
+  total: number;
 }
 
 function padDate(d: Date): string {
@@ -43,7 +47,12 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
-function buildMonthGrid(year: number, month: number, items: AnalyzedMessage[]): CalendarCell[] {
+function buildMonthGrid(
+  year: number,
+  month: number,
+  items: AnalyzedMessage[],
+  dayTotals?: Record<string, number>,
+): CalendarCell[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -68,12 +77,15 @@ function buildMonthGrid(year: number, month: number, items: AnalyzedMessage[]): 
     date.setDate(gridStart.getDate() + i);
     date.setHours(0, 0, 0, 0);
     const key = padDate(date);
+    const dayItems = byDay.get(key) ?? [];
+    const total = dayTotals?.[key] ?? dayItems.length;
     cells.push({
       date,
       inMonth: date.getMonth() === month,
       isToday: isSameDay(date, today),
       key,
-      items: byDay.get(key) ?? [],
+      items: dayItems,
+      total,
     });
   }
   return cells;
@@ -153,12 +165,16 @@ function clampPopoverPosition(
 
 function DayOverflowPopover({
   cell,
+  items,
+  loading,
   selectedId,
   anchorRect,
   onClose,
   onSelect,
 }: {
   cell: CalendarCell;
+  items: AnalyzedMessage[];
+  loading?: boolean;
   selectedId?: string | null;
   anchorRect: DOMRect;
   onClose: () => void;
@@ -179,7 +195,7 @@ function DayOverflowPopover({
     el.style.maxHeight = `${capped.maxHeight}px`;
     const actual = el.offsetHeight;
     setPos(clampPopoverPosition(anchorRect, width, actual));
-  }, [anchorRect, cell.key, cell.items.length]);
+  }, [anchorRect, cell.key, items.length, loading]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -220,7 +236,7 @@ function DayOverflowPopover({
           {" · "}
           {cell.date.getDate()} 日
           <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-            共 {cell.items.length} 项
+            共 {cell.total} 项
           </span>
         </div>
         <button
@@ -229,21 +245,34 @@ function DayOverflowPopover({
           onClick={onClose}
           aria-label="关闭"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-        {cell.items.map((item) => (
-          <EventChip
-            key={item.id}
-            item={item}
-            selected={selectedId === item.id}
-            onSelect={(it) => {
-              onSelect(it);
-              onClose();
-            }}
-          />
-        ))}
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+        {loading && items.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            加载中…
+          </div>
+        ) : (
+          items.map((item) => (
+            <EventChip
+              key={item.id}
+              item={item}
+              selected={selectedId === item.id}
+              onSelect={(it) => {
+                onSelect(it);
+                onClose();
+              }}
+            />
+          ))
+        )}
+        {loading && items.length > 0 && (
+          <div className="flex items-center justify-center gap-1.5 py-2 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            加载剩余…
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -254,36 +283,67 @@ export function MessageCalendar({
   year,
   month,
   items,
+  dayTotals,
   loading,
   selectedId,
   onMonthChange,
   onSelect,
+  onLoadDay,
 }: {
   year: number;
   month: number;
   items: AnalyzedMessage[];
+  dayTotals?: Record<string, number>;
   loading?: boolean;
   selectedId?: string | null;
   onMonthChange: (year: number, month: number) => void;
   onSelect: (item: AnalyzedMessage) => void;
+  /** 展开某日折叠项时懒加载全日消息（按展示优先级） */
+  onLoadDay?: (dateKey: string) => Promise<AnalyzedMessage[]>;
 }) {
   const [expandedCell, setExpandedCell] = useState<CalendarCell | null>(null);
   const [popoverRect, setPopoverRect] = useState<DOMRect | null>(null);
+  const [expandedItems, setExpandedItems] = useState<AnalyzedMessage[]>([]);
+  const [expandLoading, setExpandLoading] = useState(false);
 
   const cells = useMemo(
-    () => buildMonthGrid(year, month, items),
-    [year, month, items],
+    () => buildMonthGrid(year, month, items, dayTotals),
+    [year, month, items, dayTotals],
   );
 
   const closePopover = () => {
     setExpandedCell(null);
     setPopoverRect(null);
+    setExpandedItems([]);
+    setExpandLoading(false);
   };
 
   useEffect(() => {
     setExpandedCell(null);
     setPopoverRect(null);
+    setExpandedItems([]);
+    setExpandLoading(false);
   }, [year, month]);
+
+  const openDayOverflow = async (cell: CalendarCell, rect: DOMRect) => {
+    setExpandedCell(cell);
+    setPopoverRect(rect);
+    setExpandedItems(cell.items);
+    const needMore = cell.total > cell.items.length && onLoadDay;
+    if (!needMore) {
+      setExpandLoading(false);
+      return;
+    }
+    setExpandLoading(true);
+    try {
+      const full = await onLoadDay(cell.key);
+      setExpandedItems(full);
+    } catch {
+      /* 父级已 notify；保留预取条 */
+    } finally {
+      setExpandLoading(false);
+    }
+  };
 
   const monthLabel = `${year}年${month + 1}月`;
 
@@ -358,7 +418,7 @@ export function MessageCalendar({
         <div className="grid grid-cols-7">
           {cells.map((cell) => {
             const visible = cell.items.slice(0, MAX_VISIBLE);
-            const overflow = cell.items.length - visible.length;
+            const overflow = Math.max(0, cell.total - visible.length);
             return (
               <div
                 key={cell.key}
@@ -380,9 +440,9 @@ export function MessageCalendar({
                   >
                     {cell.date.getDate()}
                   </span>
-                  {cell.items.length > 0 && (
+                  {cell.total > 0 && (
                     <span className="text-[10px] tabular-nums text-muted-foreground">
-                      {cell.items.length}
+                      {cell.total}
                     </span>
                   )}
                 </div>
@@ -403,8 +463,7 @@ export function MessageCalendar({
                         // 以日期格为锚点（类似谷歌日历），贴右列时弹层可向左翻入视口
                         const cellEl = e.currentTarget.closest("[data-cal-cell]");
                         const rect = (cellEl ?? e.currentTarget).getBoundingClientRect();
-                        setExpandedCell(cell);
-                        setPopoverRect(rect);
+                        void openDayOverflow(cell, rect);
                       }}
                     >
                       另外 {overflow} 项
@@ -419,6 +478,8 @@ export function MessageCalendar({
       {expandedCell && popoverRect && (
         <DayOverflowPopover
           cell={expandedCell}
+          items={expandedItems}
+          loading={expandLoading}
           selectedId={selectedId}
           anchorRect={popoverRect}
           onClose={closePopover}

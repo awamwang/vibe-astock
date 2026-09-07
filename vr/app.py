@@ -867,7 +867,19 @@ def _list_query(
         include_history=want_history,
         default_end_days=days,
         as_of=as_of or None,
-        sort=sort if sort in ("produced_at", "ingested_at", "impact_level", "title") else "produced_at",
+        sort=sort
+        if sort
+        in (
+            "produced_at",
+            "ingested_at",
+            "impact_level",
+            "effect_status",
+            "freshness",
+            "status",
+            "title",
+            "calendar_day",
+        )
+        else "produced_at",
         order=order if order in ("asc", "desc") else "desc",
         limit=limit,
         offset=offset,
@@ -980,6 +992,7 @@ def messages_analyzed_list(
     order: str = "desc",
     limit: int = 50,
     offset: int = 0,
+    per_day_limit: int | None = None,
 ):
     query = _list_query(
         source=source,
@@ -1001,13 +1014,21 @@ def messages_analyzed_list(
         limit=limit,
         offset=offset,
     )
-    rows, total = msg_layer.store.list_analyzed(query)
+    day_totals: dict[str, int] | None = None
+    if per_day_limit is not None and int(per_day_limit) > 0:
+        rows, total, day_totals = msg_layer.store.list_analyzed_calendar(
+            query, per_day_limit=int(per_day_limit)
+        )
+    else:
+        rows, total = msg_layer.store.list_analyzed(query)
     items = [r.model_dump() for r in rows]
     try:
         ths_block_layer.feed_message_targets(items)
     except Exception:  # noqa: BLE001
         pass
     payload: dict = {"items": items, "total": total}
+    if day_totals is not None:
+        payload["day_totals"] = day_totals
     # 跟随焦点股时回传当前代码/名称，供弹窗与列表同源展示（避免仅靠 SSE）
     if query.match_current_stock:
         from duanxian import current_stock as cs
