@@ -40,7 +40,10 @@ def resolve_stock_name(stock_code: str) -> str:
 
 
 def collect_match_ids(conn: sqlite3.Connection, stock_code: str) -> CurrentStockMatchIds:
-    """收集直接标的、内容/摘要含名称、板块成分股三类命中消息 id。"""
+    """收集直接标的、标题/摘要/正文含名称、板块成分股三类命中消息 id。
+
+    直接标的同时认 code 与 stock 名称（AI 常只写名称不写代码）。
+    """
     code = (stock_code or "").strip().zfill(6)
     if not code.isdigit() or len(code) != 6:
         return CurrentStockMatchIds(frozenset(), frozenset(), frozenset())
@@ -52,6 +55,17 @@ def collect_match_ids(conn: sqlite3.Connection, stock_code: str) -> CurrentStock
     ):
         target.add(str(row["analyzed_id"]))
 
+    name = resolve_stock_name(code).strip()
+    if name:
+        for row in conn.execute(
+            """
+            SELECT DISTINCT analyzed_id FROM impact_target
+            WHERE kind = 'stock' AND name = ?
+            """,
+            (name,),
+        ):
+            target.add(str(row["analyzed_id"]))
+
     block_counts_raw = block_match.analyzed_ids_with_stock_in_block_targets(conn, code)
     if isinstance(block_counts_raw, dict):
         block_counts = {str(k): int(v) for k, v in block_counts_raw.items()}
@@ -61,15 +75,14 @@ def collect_match_ids(conn: sqlite3.Connection, stock_code: str) -> CurrentStock
     block = set(block_counts)
 
     content: set[str] = set()
-    name = resolve_stock_name(code).strip()
     if name:
         like = f"%{name}%"
         for row in conn.execute(
             """
             SELECT id FROM analyzed_message
-            WHERE summary LIKE ? OR detail LIKE ?
+            WHERE title LIKE ? OR summary LIKE ? OR detail LIKE ?
             """,
-            (like, like),
+            (like, like, like),
         ):
             content.add(str(row["id"]))
 

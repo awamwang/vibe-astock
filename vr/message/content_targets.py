@@ -146,3 +146,41 @@ def attach_targets_to_draft(draft: Any) -> Any:
     meta["_targets_json"] = [t.model_dump() for t in merged]
     draft.meta = meta
     return draft
+
+
+def fill_stock_code(kind: str, code: str | None, name: str) -> str | None:
+    """个股标的缺代码时按名称补全；失败则原样返回。"""
+    code_s = str(code).strip() if code not in (None, "") else ""
+    if code_s:
+        return code_s
+    if str(kind or "").strip() != "stock":
+        return None
+    n = _norm_name(name)
+    if not n:
+        return None
+    try:
+        import stock_universe  # noqa: PLC0415
+
+        stock_universe.ensure_loaded()
+        resolved = stock_universe.resolve_code_by_name(n)
+    except Exception:  # noqa: BLE001
+        return None
+    return str(resolved).strip() if resolved else None
+
+
+def fill_target_stock_codes(
+    targets: Iterable[ImpactTarget | dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """批量补全 stock 标的缺失的代码，返回可入库的 dict 列表。"""
+    out: list[dict[str, Any]] = []
+    for raw in targets or []:
+        d = _as_dict(raw)
+        kind = d["kind"] if d["kind"] in ("market", "sector", "theme", "stock", "other") else "other"
+        name = _norm_name(str(d.get("name") or ""))
+        code = fill_stock_code(kind, d.get("code"), name)
+        if not name and code:
+            name = code
+        if not name and not code:
+            continue
+        out.append({"kind": kind, "code": code, "name": name or code or ""})
+    return out

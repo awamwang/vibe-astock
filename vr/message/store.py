@@ -533,24 +533,25 @@ def _sync_impact_targets(
     analyzed_id: str,
     targets: list[Any],
 ) -> None:
+    from .content_targets import fill_target_stock_codes
+
     conn.execute("DELETE FROM impact_target WHERE analyzed_id = ?", (analyzed_id,))
     if not isinstance(targets, list):
         return
-    for i, t in enumerate(targets):
-        if isinstance(t, dict):
-            conn.execute(
-                """
-                INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    analyzed_id,
-                    t.get("kind", "other"),
-                    t.get("code"),
-                    t.get("name", ""),
-                    i,
-                ),
-            )
+    for i, t in enumerate(fill_target_stock_codes(targets)):
+        conn.execute(
+            """
+            INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                analyzed_id,
+                t.get("kind", "other"),
+                t.get("code"),
+                t.get("name", ""),
+                i,
+            ),
+        )
 
 
 def _resolve_targets(raw: RawMessage, patch: dict[str, Any]) -> list[Any]:
@@ -1227,22 +1228,23 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                     args,
                 )
             if "targets" in patch:
+                from .content_targets import fill_target_stock_codes
+
                 conn.execute("DELETE FROM impact_target WHERE analyzed_id = ?", (analyzed_id,))
-                for i, t in enumerate(patch["targets"] or []):
-                    if isinstance(t, dict):
-                        conn.execute(
-                            """
-                            INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
-                            VALUES (?, ?, ?, ?, ?)
-                            """,
-                            (
-                                analyzed_id,
-                                t.get("kind", "other"),
-                                t.get("code"),
-                                t.get("name", ""),
-                                i,
-                            ),
-                        )
+                for i, t in enumerate(fill_target_stock_codes(patch["targets"] or [])):
+                    conn.execute(
+                        """
+                        INSERT INTO impact_target (analyzed_id, kind, code, name, sort_order)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            analyzed_id,
+                            t.get("kind", "other"),
+                            t.get("code"),
+                            t.get("name", ""),
+                            i,
+                        ),
+                    )
             conn.commit()
     return get_analyzed(analyzed_id, path=path)
 

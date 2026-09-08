@@ -541,6 +541,70 @@ def test_list_analyzed_match_current_stock_via_content(msg_db, monkeypatch):
     assert matched[0].title == "提价传闻"
 
 
+def test_list_analyzed_match_current_stock_via_name_only_target(msg_db, monkeypatch):
+    """标的仅有股票名称、无代码时，跟随焦点股仍应命中（如 AI 未写 code）。"""
+    from duanxian import current_stock as cs
+
+    # 模拟历史脏数据：入库时未能按名称补全代码
+    monkeypatch.setattr(
+        "vr.message.content_targets.fill_stock_code",
+        lambda kind, code, name: (str(code).strip() or None) if code not in (None, "") else None,
+    )
+
+    d = RawMessageDraft(
+        draft_key="name-only-target",
+        source_id="manual",
+        source_label="手动",
+        content="伦敦金属交易所铜期货价格涨至历史新高",
+        title="LME铜价创历史新高",
+    )
+    raw = store.insert_raw_batch([d], path=msg_db)[0]
+    store.upsert_analyzed_from_raw(
+        raw,
+        patch={
+            "summary": "伦敦金属交易所（LME）铜期货价格涨至历史新高",
+            "detail": "【LME铜价创历史新高】财联社电，伦敦金属交易所铜期货价格涨至历史新高。",
+            "targets": [
+                {"kind": "theme", "code": None, "name": "有色·铜"},
+                {"kind": "stock", "code": None, "name": "精艺股份"},
+                {"kind": "stock", "code": None, "name": "北方铜业"},
+            ],
+        },
+        path=msg_db,
+    )
+
+    monkeypatch.setattr(
+        cs,
+        "get_current",
+        lambda: cs.CurrentStock(
+            code="002374",
+            plugin_id="test",
+            source="test",
+            prev=None,
+            updated_at="2026-09-07 23:05:00",
+        ),
+    )
+    monkeypatch.setattr(
+        "vr.message.current_stock_match.resolve_stock_name",
+        lambda code: "精艺股份" if code == "002374" else "",
+    )
+    monkeypatch.setattr(
+        "vr.ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        lambda conn, code: {},
+    )
+    monkeypatch.setattr(
+        "ths_block.match.analyzed_ids_with_stock_in_block_targets",
+        lambda conn, code: {},
+    )
+
+    matched, matched_total = store.list_analyzed(
+        store.ListQuery(match_current_stock="yes"),
+        path=msg_db,
+    )
+    assert matched_total == 1
+    assert matched[0].title == "LME铜价创历史新高"
+
+
 def test_list_analyzed_match_current_stock_sort_priority(msg_db, monkeypatch):
     from duanxian import current_stock as cs
 
@@ -620,7 +684,12 @@ def test_list_analyzed_match_current_stock_sort_priority(msg_db, monkeypatch):
     )
 
     matched, matched_total = store.list_analyzed(
-        store.ListQuery(match_current_stock="yes", sort="produced_at", order="desc"),
+        store.ListQuery(
+            match_current_stock="yes",
+            sort="produced_at",
+            order="desc",
+            include_history=True,
+        ),
         path=msg_db,
     )
     assert matched_total == 3
@@ -792,7 +861,12 @@ def test_list_analyzed_match_current_stock_block_size_order(msg_db, monkeypatch)
     monkeypatch.setattr("ths_block.match.block_name_stock_count", _stock_count)
 
     matched, matched_total = store.list_analyzed(
-        store.ListQuery(match_current_stock="yes", sort="produced_at", order="desc"),
+        store.ListQuery(
+            match_current_stock="yes",
+            sort="produced_at",
+            order="desc",
+            include_history=True,
+        ),
         path=msg_db,
     )
     assert matched_total == 4
