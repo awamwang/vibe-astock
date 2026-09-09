@@ -414,9 +414,10 @@ def api_market_live_zt_effect():
 
 @app.get("/api/market/short-board")
 def api_market_short_board():
-    """短线盘面环境指标条（情绪温度 / 涨跌家数 / 涨跌停 / 成交额 / 资金等）。
+    """短线盘面环境指标条（情绪温度 / 涨跌家数 / 涨跌停 / 预测量能 / 资金等）。
 
     对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；含 5/20 日量比。
+    上证 / A 股量能按开盘啦「今日累计÷昨日此时×昨日全天」外推。
     """
     return short_board.snapshot()
 

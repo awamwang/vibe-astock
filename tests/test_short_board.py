@@ -124,6 +124,46 @@ class TestShortBoardArchive:
 
 
 @pytest.mark.unit
+class TestPredictFullDayAmount:
+    """开盘啦预测量能：今日累计 ÷ 昨日此时 × 昨日全天。"""
+
+    def test_extrapolates_from_same_time_ratio(self):
+        from duanxian import short_board as sb
+
+        # 今日累计 100，昨日此时 50，昨日全天 200 → 预估 400
+        assert sb._predict_full_day_amount(100e8, 50e8, 200e8) == 400e8
+
+    def test_falls_back_to_current_without_same_time(self):
+        from duanxian import short_board as sb
+
+        assert sb._predict_full_day_amount(100e8, None, 200e8) == 100e8
+        assert sb._predict_full_day_amount(100e8, 0, 200e8) == 100e8
+        assert sb._predict_full_day_amount(None, 50e8, 200e8) is None
+
+    def test_longtou_maps_predicted_amounts(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        monkeypatch.setattr(sb, "_http_get_json", lambda *_a, **_k: {
+            "info": {
+                "SJZT": 10, "SJDT": 1, "ZT": 12, "DT": 1,
+                "SZJS": 2000, "XDJS": 1500,
+                "szln": 10000,      # 万 → 1e8 元
+                "qscln": 20000,
+                "s_zrcs": 5000,
+                "q_zrcs": 10000,
+                "s_zrtj": 20000,
+                "q_zrtj": 40000,
+            },
+        })
+        out = sb._fetch_longtou()
+        # 上证：1e8 / 5e7 * 2e8 = 4e8；A 股：2e8 / 1e8 * 4e8 = 8e8
+        assert out["v_sh"] == 4e8
+        assert out["v_ca"] == 8e8
+        assert out["v_sh_zr"] == 2e8
+        assert out["v_ca_zr"] == 4e8
+
+
+@pytest.mark.unit
 class TestVolumeRatios:
     """5/20 日量比：当日成交额 ÷ 此前 N 日均额。"""
 

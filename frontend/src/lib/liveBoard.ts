@@ -101,8 +101,10 @@ export interface ShortBoardEnv {
   n_down?: number | null;
   n_sjzt?: number | null;       // 实际涨停
   n_sjdt?: number | null;       // 实际跌停
-  v_sh?: number | null;         // 上证成交额，元
-  v_ca?: number | null;         // A 股成交额，元
+  /** 上证预测量能（元）：今日累计÷昨日此时×昨日全天；缺对照时为累计额 */
+  v_sh?: number | null;
+  /** A 股预测量能（元）：口径同上 */
+  v_ca?: number | null;
   m_net?: number | null;        // 主力净流入，元
   broken_r?: number | null;     // 炸板率，已 *100
   zt_avg_zr?: number | null;    // 涨停溢价，已 *100
@@ -117,9 +119,9 @@ export interface ShortBoardEnv {
   qcj_leader_top?: string | null; // 如「3天3板」
   qcj_themes?: string[] | null; // 主线题材
   qcj_date?: string | null;
-  /** 5 日量比：当日 A 股成交额 / 此前 5 个交易日均额 */
+  /** 5 日量比：当日 A 股预测量能 / 此前 5 个交易日均额 */
   vol_ratio_5d?: number | null;
-  /** 20 日量比：当日 A 股成交额 / 此前 20 个交易日均额 */
+  /** 20 日量比：当日 A 股预测量能 / 此前 20 个交易日均额 */
   vol_ratio_20d?: number | null;
 }
 

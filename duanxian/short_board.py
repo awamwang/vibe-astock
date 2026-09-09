@@ -2,9 +2,9 @@
 
 数据源对齐 awam-stock `Environment` 合并逻辑：
   · 选股宝 Flash `market_indicator/line` → 情绪温度 / 涨跌家数 / 炸板率 / 涨停溢价
-  · 开盘啦 `ZhangFuDetail` → 实际涨跌停、上证/A 股成交额（拿不到则降级）
+  · 开盘啦 `ZhangFuDetail` → 实际涨跌停、上证/A 股预测量能（拿不到则降级）
   · 东财 push2 → 主力净流入
-  · 腾讯行情 → 上证/深证成交额兜底（拼两市近似 A 股成交额）
+  · 腾讯行情 → 上证/深证成交额兜底（拼两市近似 A 股成交额；无昨日此时则无法外推）
   · 趣财经 qiniugu `/qng/api/v1/market` → 情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材
 
 「今日 / 昨日」对比按**数据场次**，不是日历今天：
@@ -13,8 +13,10 @@
   · 归档只在 as_of == 日历今天且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
 趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
-5 日 / 20 日量比：当日 A 股成交额 ÷ 此前 N 个交易日均额；历史额优先 short_board 落盘，
-不足时用 market_series 两市成交额序列补齐。
+上证 / A 股量能：按开盘啦「今日累计 ÷ 昨日此时 × 昨日全天」外推全日预测量能，
+与昨日全天成交额对照；缺昨日此时则回退为今日累计。
+5 日 / 20 日量比：当日 A 股成交额（预测量能口径）÷ 此前 N 个交易日均额；
+历史额优先 short_board 落盘，不足时用 market_series 两市成交额序列补齐。
 """
 
 from __future__ import annotations
@@ -219,6 +221,31 @@ def _fetch_baoer() -> dict:
         return {}
 
 
+def _wan_to_yuan(v) -> float | None:
+    """开盘啦成交额字段：万 → 元。"""
+    n = _num(v)
+    return (n * 10000) if n is not None else None
+
+
+def _predict_full_day_amount(
+    current: float | None,
+    same_time_zr: float | None,
+    full_zr: float | None,
+) -> float | None:
+    """按「今日累计 ÷ 昨日此时 × 昨日全天」外推全日预测量能。
+
+    缺昨日此时或昨日全天时回退为今日累计（腾讯兜底等无此时对照的场景）。
+    """
+    if current is None or current <= 0:
+        return None
+    if (
+        same_time_zr is not None and same_time_zr > 0
+        and full_zr is not None and full_zr > 0
+    ):
+        return float(current) / float(same_time_zr) * float(full_zr)
+    return float(current)
+
+
 def _fetch_longtou() -> dict:
     """开盘啦涨跌统计。errcode=0 但 info 空时返回 {}。"""
     try:
@@ -226,11 +253,13 @@ def _fetch_longtou() -> dict:
         info = raw.get("info")
         if not isinstance(info, dict) or not info:
             return {}
-        # 成交额字段单位：万 → 元（同 awam environment store *10000）
-        v_sh = _num(info.get("szln"))
-        v_ca = _num(info.get("qscln"))
-        v_sh_zr = _num(info.get("s_zrtj"))
-        v_ca_zr = _num(info.get("q_zrtj"))
+        # szln/qscln=今日累计；s_zrcs/q_zrcs=昨日此时；s_zrtj/q_zrtj=昨日全天（单位万）
+        v_sh_cur = _wan_to_yuan(info.get("szln"))
+        v_ca_cur = _wan_to_yuan(info.get("qscln"))
+        v_sh_zrcs = _wan_to_yuan(info.get("s_zrcs"))
+        v_ca_zrcs = _wan_to_yuan(info.get("q_zrcs"))
+        v_sh_zr = _wan_to_yuan(info.get("s_zrtj"))
+        v_ca_zr = _wan_to_yuan(info.get("q_zrtj"))
         return {
             "n_sjzt": int(_num(info.get("SJZT"), 0) or 0),
             "n_sjdt": int(_num(info.get("SJDT"), 0) or 0),
@@ -238,10 +267,10 @@ def _fetch_longtou() -> dict:
             "n_dt": int(_num(info.get("DT"), 0) or 0),
             "n_up": int(_num(info.get("SZJS"), 0) or 0) or None,
             "n_down": int(_num(info.get("XDJS"), 0) or 0) or None,
-            "v_sh": (v_sh * 10000) if v_sh is not None else None,
-            "v_ca": (v_ca * 10000) if v_ca is not None else None,
-            "v_sh_zr": (v_sh_zr * 10000) if v_sh_zr is not None else None,
-            "v_ca_zr": (v_ca_zr * 10000) if v_ca_zr is not None else None,
+            "v_sh": _predict_full_day_amount(v_sh_cur, v_sh_zrcs, v_sh_zr),
+            "v_ca": _predict_full_day_amount(v_ca_cur, v_ca_zrcs, v_ca_zr),
+            "v_sh_zr": v_sh_zr,
+            "v_ca_zr": v_ca_zr,
         }
     except Exception:  # noqa: BLE001
         return {}

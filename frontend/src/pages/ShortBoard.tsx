@@ -538,8 +538,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "归档只在「日历今天就是这场」且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。\n" +
           "涨跌宽度：情绪温度（衡量整个市场的情绪）、大盘宽度、题材投机、上涨/下跌/平盘家数、活跃度；按日归档作昨日对照。\n" +
-          "资金量能：上证 / A 股成交额、主力净流入；缺失字段按可用行情补全。\n" +
-          "5 日 / 20 日量比：当日 A 股成交额 ÷ 此前 N 个交易日均额；历史用 short_board 落盘与 market_series 两市成交额序列，当日用本次请求成交额。\n" +
+          "资金量能：上证 / A 股预测量能（今日累计÷昨日此时×昨日全天）、主力净流入；缺失字段按可用行情补全。\n" +
+          "5 日 / 20 日量比：当日 A 股预测量能 ÷ 此前 N 个交易日均额；历史用 short_board 落盘与 market_series 两市成交额序列，当日用本次请求预测量能。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。"
         }
         hint={
@@ -596,9 +596,9 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               <EnvCard name="平盘" today={sentiment?.flat} yesterday={sentY.flat} format={intFmt} />
               <EnvTextCard name="活跃度" today={sentiment?.active} yesterday={sentY.active} />
             </EnvGroup>
-            <EnvGroup label="资金量能" hint="成交额 · 主力净流入 · 量比">
-              <EnvCard name="上证成交额" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
-              <EnvCard name="A股成交额" today={t.v_ca} yesterday={y.v_ca} format={yiCompact} />
+            <EnvGroup label="资金量能" hint="预测量能 · 主力净流入 · 量比">
+              <EnvCard name="上证预测量能" today={t.v_sh} yesterday={y.v_sh} format={yiCompact} />
+              <EnvCard name="A股预测量能" today={t.v_ca} yesterday={y.v_ca} format={yiCompact} />
               <EnvCard name="主力净流入" today={t.m_net} yesterday={y.m_net} format={yiCompact} />
               <EnvCard name="5日量比" today={t.vol_ratio_5d} yesterday={y.vol_ratio_5d} format={ratioFmt} />
               <EnvCard name="20日量比" today={t.vol_ratio_20d} yesterday={y.vol_ratio_20d} format={ratioFmt} />
