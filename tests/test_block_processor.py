@@ -219,6 +219,187 @@ def test_scan_text_known_block_and_concept():
     assert any(p.get("raw") == "AI液冷" or p.get("mapped") == "AI液冷" for p in pending)
 
 
+def test_directory_nodes_not_indexed():
+    """概念分类夹与行业/地域根名排除；行业父节点与具体地域保留。"""
+    snap = _fake_snapshot()
+    concept = snap["kinds"]["conception"]
+    concept["blocks"].update(
+        {
+            "2B": "概念",
+            "DBD0": "概念中的概念",
+            "DBDG": "地域类",
+            "DBCF": "价格驱动",
+            "DBCE": "政策驱动",
+            "DBCD": "科技类",
+            "DBCC": "其它",
+            "DBCB": "事件驱动",
+            "DBCA": "工业类",
+            "D010": "华为概念",
+        }
+    )
+    concept["rows"] = [
+        {
+            "kind": "conception",
+            "kind_label": "概念",
+            "id": "2B",
+            "name": "概念",
+            "node_type": "branch",
+        },
+        {
+            "kind": "conception",
+            "kind_label": "概念",
+            "id": "DBDG",
+            "name": "地域类",
+            "node_type": "branch",
+        },
+        {
+            "kind": "conception",
+            "kind_label": "概念",
+            "id": "DBCF",
+            "name": "价格驱动",
+            "node_type": "branch",
+        },
+        {
+            "kind": "conception",
+            "kind_label": "概念",
+            "id": "D010",
+            "name": "华为概念",
+            "node_type": "leaf",
+        },
+    ]
+    industry = snap["kinds"]["industry"]
+    industry["blocks"].update(
+        {
+            "DFF8": "行业",
+            "DFB9": "半导体",
+            "DF97": "银行",
+            "BC83": "白酒",
+        }
+    )
+    industry["rows"] = [
+        {
+            "kind": "industry",
+            "kind_label": "行业",
+            "id": "DFF8",
+            "name": "行业",
+            "node_type": "branch",
+        },
+        {
+            "kind": "industry",
+            "kind_label": "行业",
+            "id": "DFB9",
+            "name": "半导体",
+            "node_type": "branch",
+        },
+        {
+            "kind": "industry",
+            "kind_label": "行业",
+            "id": "DF97",
+            "name": "银行",
+            "node_type": "branch",
+        },
+        {
+            "kind": "industry",
+            "kind_label": "行业",
+            "id": "BC83",
+            "name": "白酒",
+            "node_type": "branch",
+        },
+        {
+            "kind": "industry",
+            "kind_label": "行业",
+            "id": "I001",
+            "name": "半导体",
+            "node_type": "leaf",
+        },
+    ]
+    region = snap["kinds"]["region"]
+    region["blocks"].update(
+        {
+            "47": "地域",
+            "4D": "广东",
+            "61": "上海",
+            "48": "安徽",
+        }
+    )
+    region["rows"] = [
+        {
+            "kind": "region",
+            "kind_label": "地域",
+            "id": "47",
+            "name": "地域",
+            "node_type": "branch",
+        },
+        {
+            "kind": "region",
+            "kind_label": "地域",
+            "id": "4D",
+            "name": "广东",
+            "node_type": "branch",
+        },
+        {
+            "kind": "region",
+            "kind_label": "地域",
+            "id": "61",
+            "name": "上海",
+            "node_type": "branch",
+        },
+        {
+            "kind": "region",
+            "kind_label": "地域",
+            "id": "48",
+            "name": "安徽",
+            "node_type": "leaf",
+        },
+    ]
+    block_cache.set_snapshot(snap)
+    bp.invalidate_index()
+
+    for raw in (
+        "概念",
+        "概念中的概念",
+        "地域类",
+        "价格驱动",
+        "政策驱动",
+        "科技类",
+        "其它",
+        "事件驱动",
+        "工业类",
+        "行业",
+        "地域",
+    ):
+        r = bp.resolve_one(raw)
+        assert r["status"] != "matched", raw
+        assert r["block"] is None, raw
+
+    ok = bp.resolve_one("华为概念")
+    assert ok["status"] == "matched"
+    assert ok["block"]["id"] == "D010"
+
+    for raw, kind in (
+        ("半导体", "industry"),
+        ("银行", "industry"),
+        ("白酒", "industry"),
+        ("广东", "region"),
+        ("上海", "region"),
+        ("安徽", "region"),
+    ):
+        r = bp.resolve_one(raw)
+        assert r["status"] == "matched", raw
+        assert r["block"]["kind"] == kind, raw
+
+    scanned = bp.scan_text(
+        "行业与地域板块分化，关注价格驱动、半导体与广东、华为概念。",
+        feed_unmatched=False,
+    )
+    matched = {
+        (r.get("block") or {}).get("name")
+        for r in scanned
+        if r.get("status") == "matched"
+    }
+    assert matched == {"华为概念", "半导体", "广东"}
+
+
 def test_schedule_ensure_kinds_cached_async(monkeypatch: pytest.MonkeyPatch):
     block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
     called: list[str] = []

@@ -47,6 +47,26 @@ _CONCEPT_SUFFIX_RE = re.compile(r"概念股|概念")
 _CONCEPT_FRAG_RE = re.compile(r"[A-Za-z0-9]{0,8}[\u4e00-\u9fff]{2,6}$")
 _CONCEPT_SPLIT_RE = re.compile(r"[，。；、！？\s「」『』\"'“”‘’\[\]（）()《》【】:：]")
 
+# 概念树分类夹 + 行业/地域根名；行业父节点与具体地域不在此列
+_DIRECTORY_BLOCK_NAMES = frozenset(
+    {
+        "概念",
+        "概念中的概念",
+        "地域类",
+        "价格驱动",
+        "政策驱动",
+        "科技类",
+        "其它",
+        "其他",
+        "事件驱动",
+        "工业类",
+        "行业",
+        "地域",
+    }
+)
+# 概念 / 行业 / 地域树根 id（与 tree._TREE_ROOT_IDS 一致）
+_TREE_ROOT_BLOCK_IDS = frozenset({"2B", "DFF8", "47"})
+
 
 def _extract_concept_names(text: str) -> list[str]:
     """从「xx概念股/概念」抽取题材名：在后缀前取尽可能短且合理的片段。"""
@@ -163,6 +183,38 @@ def _suggested_canonical(status: str, candidates: list[dict[str, Any]]) -> str:
     return " ".join(_unique_names_from_refs(candidates))
 
 
+def _is_directory_block_name(name: str) -> bool:
+    """目录型/根分类名称，不可当作真实板块。"""
+    return _norm(name) in _DIRECTORY_BLOCK_NAMES
+
+
+def _skip_block_in_name_index(
+    kind: str,
+    bid: str,
+    name: str,
+    *,
+    node_type: str = "",
+    conception_branch_ids: set[str] | None = None,
+) -> bool:
+    """是否从名称索引排除。
+
+    排除：概念树全部分组夹、行业/地域根节点、已知目录名。
+    保留：行业带下级的父节点、地域下的具体地域（含广东/上海等 branch）。
+    """
+    name_norm = _norm(name)
+    if not name_norm or _is_directory_block_name(name_norm):
+        return True
+    bid_norm = str(bid or "").strip()
+    if bid_norm in _TREE_ROOT_BLOCK_IDS:
+        return True
+    if kind == "conception" and (
+        node_type == "branch"
+        or (conception_branch_ids is not None and bid_norm in conception_branch_ids)
+    ):
+        return True
+    return False
+
+
 def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     index: dict[str, list[dict[str, Any]]] = {}
     for kind, entry in (snapshot.get("kinds") or {}).items():
@@ -171,25 +223,50 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
         kind_label = str(entry.get("kind_label") or kind)
         seen_ids: set[tuple[str, str]] = set()
         meta_map = entry.get("blocks_meta") or {}
+        # 仅概念树的分组夹 id 需在 flat blocks 侧一并排除
+        conception_branch_ids: set[str] = set()
+        if kind == "conception":
+            for row in entry.get("rows") or []:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("node_type") or "") == "branch":
+                    bid = str(row.get("id") or "").strip()
+                    if bid:
+                        conception_branch_ids.add(bid)
 
-        def _add(bid: str, name: str, *, code: str | None = None) -> None:
-            name = _norm(name)
-            if not name:
+        def _add(
+            bid: str,
+            name: str,
+            *,
+            code: str | None = None,
+            node_type: str = "",
+        ) -> None:
+            if _skip_block_in_name_index(
+                str(kind),
+                bid,
+                name,
+                node_type=node_type,
+                conception_branch_ids=conception_branch_ids or None,
+            ):
                 return
-            key = (str(kind), str(bid))
+            name_norm = _norm(name)
+            bid_norm = str(bid or "").strip()
+            key = (str(kind), bid_norm)
             if key in seen_ids:
                 return
             seen_ids.add(key)
-            ref = _block_ref(str(kind), kind_label, str(bid), name, code=code)
-            index.setdefault(name, []).append(ref)
+            ref = _block_ref(str(kind), kind_label, bid_norm, name_norm, code=code)
+            index.setdefault(name_norm, []).append(ref)
 
         for row in entry.get("rows") or []:
-            if isinstance(row, dict):
-                _add(
-                    str(row.get("id") or ""),
-                    str(row.get("name") or ""),
-                    code=str(row.get("code") or "") or None,
-                )
+            if not isinstance(row, dict):
+                continue
+            _add(
+                str(row.get("id") or ""),
+                str(row.get("name") or ""),
+                code=str(row.get("code") or "") or None,
+                node_type=str(row.get("node_type") or ""),
+            )
         for bid, name in (entry.get("blocks") or {}).items():
             code = None
             meta = meta_map.get(str(bid)) if isinstance(meta_map, dict) else None
