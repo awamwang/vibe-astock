@@ -191,9 +191,14 @@ def _resolve_base(cfg: dict) -> str:
     base = (cfg.get("baseURL") or "").rstrip("/")
     if not base:
         raise ValueError("缺少 Base URL")
-    if not base.endswith(("/v1", "/v3", "/api/v3")):
-        base = base + "/v1"
-    return base
+    try:
+        import chat as chat_layer  # noqa: PLC0415  vr 已在 sys.path
+        return chat_layer.ensure_openai_compatible_base(base)
+    except ImportError:
+        # 兜底：与 chat.ensure_openai_compatible_base 同规则
+        if re.search(r"/v\d+$", base):
+            return base
+        return base + "/v1"
 
 
 def _extract_json_object(text: str) -> Any:

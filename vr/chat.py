@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import socket
 from urllib.parse import urlparse
 
@@ -91,6 +92,18 @@ def _ip_blocked(host: str) -> bool:
     return False
 
 
+def ensure_openai_compatible_base(url: str) -> str:
+    """把用户填的 baseURL 规范成可拼 `/chat/completions` 的根路径。
+
+    已带版本段（/v1、/v4、/api/paas/v4、compatible-mode/v1 等）则不改；
+    否则补 `/v1`（DeepSeek 等常见写法是只填主机）。
+    """
+    base = (url or "").rstrip("/")
+    if re.search(r"/v\d+$", base):
+        return base
+    return base + "/v1"
+
+
 def _check_base_url(url: str) -> None:
     """挡住把用户自带 baseURL 指向云元数据 / 内网的 SSRF。
     本地单用户（未设 VR_API_KEY）放行 127.0.0.1 等本机地址（方便接本机 Ollama / 网关），只挡 169.254 元数据；
@@ -115,10 +128,7 @@ def _check_base_url(url: str) -> None:
 
 def _call_llm(cfg: dict, messages: list, use_tools: bool) -> dict:
     _check_base_url(cfg.get("baseURL", ""))
-    base = cfg["baseURL"].rstrip("/")
-    if not base.endswith(("/v1", "/v3", "/api/v3")):
-        # 多数 OpenAI 兼容端点需要 /v1；已带版本段则不动。
-        base = base + "/v1"
+    base = ensure_openai_compatible_base(cfg["baseURL"])
     payload = {"model": cfg["model"], "messages": messages, "temperature": 0.3}
     if use_tools:
         payload["tools"] = TOOLS
@@ -192,10 +202,7 @@ def run_chat_cli(cfg: dict, user_messages: list, context: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 def _resolve_base(cfg: dict) -> str:
-    base = cfg["baseURL"].rstrip("/")
-    if not base.endswith(("/v1", "/v3", "/api/v3")):
-        base = base + "/v1"
-    return base
+    return ensure_openai_compatible_base(cfg["baseURL"])
 
 
 def _call_llm_stream(cfg: dict, messages: list, use_tools: bool):

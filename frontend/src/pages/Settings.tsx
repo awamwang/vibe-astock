@@ -338,7 +338,7 @@ export function Settings() {
             <h3 className="font-semibold">API 接入</h3>
             {mode === "api" && <Check className="ml-auto h-4 w-4 text-primary" />}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">粘贴 API key，支持 DeepSeek / 豆包 / MiniMax / OpenAI / OpenRouter / 任意兼容端点。<b className="text-foreground">现已可用。</b></p>
+          <p className="mt-1 text-xs text-muted-foreground">粘贴 API key，支持 DeepSeek / Kimi / 智谱 / 通义 / MiniMax / 豆包 / OpenAI / OpenRouter / 任意兼容端点。<b className="text-foreground">现已可用。</b></p>
         </GlassCard>
       </div>
 

@@ -10,6 +10,9 @@ export type ProviderId =
   | "silicon"
   | "openai"
   | "minimax"
+  | "moonshot"
+  | "zhipu"
+  | "qwen"
   | "openrouter"
   | "groq"
   | "together"
@@ -43,6 +46,9 @@ export const PROVIDER_BASE: Partial<Record<ProviderId, string>> = {
   silicon: "https://api.siliconflow.cn/v1",
   openai: "https://api.openai.com/v1",
   minimax: "https://api.minimaxi.com/v1",
+  moonshot: "https://api.moonshot.cn/v1",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   openrouter: "https://openrouter.ai/api/v1",
   groq: "https://api.groq.com/openai/v1",
   together: "https://api.together.xyz/v1",
@@ -66,11 +72,13 @@ export const aiModels: ModelConfig[] = [
   { id: "kimi", name: "Kimi", description: "Kimi 订阅", provider: "cli-kimi",
     comingSoon: true, autoApprove: true, blocked: "自动批准" },
   // —— API 版（填自己的 key）——
-  { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", description: "DeepSeek 官方 · 快而省 · 思考/非思考双模", provider: "deepseek" },
-  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", description: "DeepSeek 官方 · 旗舰 · 最强推理", provider: "deepseek" },
+  { id: "deepseek-flash", name: "DeepSeek V4.1 Flash", description: "DeepSeek 官方 · 新架构 · 原生多模态 · 取代 V4 Pro", provider: "deepseek" },
+  { id: "kimi-k3", name: "Kimi K3", description: "月之暗面 · 1M 上下文 · 长程推理/多模态", provider: "moonshot" },
+  { id: "glm-5.1", name: "智谱 GLM-5.1", description: "智谱 · 编程/Agent 强 · OpenAI 兼容", provider: "zhipu" },
+  { id: "qwen3.6-plus", name: "通义 Qwen3.6-Plus", description: "阿里云百炼 · 长上下文 · 中文综合", provider: "qwen" },
+  { id: "MiniMax-M3", name: "MiniMax M3", description: "MiniMax · 1M 上下文 · 原生多模态", provider: "minimax" },
   { id: "deepseek-ai/DeepSeek-V3", name: "SiliconFlow · DeepSeek V3", description: "硅基流动", provider: "silicon" },
   { id: "gpt-4o", name: "OpenAI GPT-4o", description: "OpenAI", provider: "openai" },
-  { id: "MiniMax-M2", name: "MiniMax M2", description: "MiniMax 海螺", provider: "minimax" },
   { id: "doubao-pro", name: "豆包 Pro", description: "火山方舟 · 填推理接入点 ID(ep-…)", provider: "openai-compatible" },
   { id: "openai/gpt-4o", name: "OpenRouter · GPT-4o", description: "OpenRouter 聚合（可改任意模型 id）", provider: "openrouter" },
   { id: "llama-3.3-70b-versatile", name: "Groq · Llama 3.3 70B", description: "Groq 超快推理", provider: "groq" },
