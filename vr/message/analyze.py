@@ -102,25 +102,10 @@ def _merge_keywords(*groups: list[str]) -> list[str]:
     return out
 
 
-def _target_key(t: dict[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(t.get("kind") or "other"),
-        str(t.get("code") or "").strip(),
-        str(t.get("name") or "").strip(),
-    )
-
-
 def _merge_targets(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str]] = set()
-    out: list[dict[str, Any]] = []
-    for group in groups:
-        for t in group:
-            key = _target_key(t)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(t)
-    return out
+    from .content_targets import merge_targets
+
+    return [t.model_dump() for t in merge_targets(None, *groups)]
 
 
 def _existing_targets(raw: RawMessage, analyzed: AnalyzedMessage) -> list[dict[str, Any]]:

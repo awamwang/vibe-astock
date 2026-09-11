@@ -31,8 +31,15 @@ def _reset_universe(monkeypatch):
 @pytest.mark.unit
 class TestStockProcessor:
     def test_make_key_prefers_code(self):
-        assert sp.make_key(code="1", name="平安银行") == "c:000001"
+        assert sp.make_key(code="000001", name="平安银行") == "c:000001"
+        assert sp.make_key(code="1", name="平安银行") == "n:平安银行"
         assert sp.make_key(name="平安银行") == "n:平安银行"
+
+    def test_norm_code_rejects_short_block_id(self):
+        assert sp._norm_code("61") == ""
+        assert sp._norm_code("49") == ""
+        assert sp._norm_code("000061") == "000061"
+        assert sp.resolve_one(code="61", name="上海")["status"] == "unmatched"
 
     def test_resolve_by_code(self):
         hit = sp.resolve_one(code="600000")

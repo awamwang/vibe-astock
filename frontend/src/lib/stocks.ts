@@ -1,10 +1,11 @@
 import type { StockResolveItem } from "@/lib/api";
 
+/** 仅接受已是 6 位的 A 股代码，避免板块短 ID（如 61）被补成 000061。 */
 export function normStockCode(code?: string | null): string {
-  const c = (code || "").trim();
+  let c = (code || "").trim();
   if (!c) return "";
-  const z = c.padStart(6, "0");
-  return /^\d{6}$/.test(z) ? z : "";
+  if (c.includes(".")) c = c.split(".", 1)[0].trim();
+  return /^\d{6}$/.test(c) ? c : "";
 }
 
 export function normStockName(name?: string | null): string {

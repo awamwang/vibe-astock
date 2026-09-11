@@ -15,10 +15,12 @@ def _norm_name(raw: str | None) -> str:
 
 
 def _norm_code(raw: str | None) -> str:
+    """仅接受已是 6 位的 A 股代码，避免板块短 ID（如 61）被补成 000061。"""
     c = (raw or "").strip()
     if not c:
         return ""
-    c = c.zfill(6)
+    if "." in c:
+        c = c.split(".", 1)[0].strip()
     return c if _CODE_RE.match(c) else ""
 
 

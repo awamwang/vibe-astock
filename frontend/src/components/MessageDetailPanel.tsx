@@ -194,7 +194,8 @@ function messageTargetSortTier(
   stockGet: (q: { code?: string | null; name?: string }) => StockResolveItem | undefined,
   blockGet: (name: string) => BlockResolveItem | undefined,
 ): number {
-  if (isStockMatched(stockGet({ code: t.code, name: t.name }))) return 1;
+  // 板块/题材代码常为短数字 ID，禁止当 A 股代码解析
+  if (t.kind === "stock" && isStockMatched(stockGet({ code: t.code, name: t.name }))) return 1;
   if (t.kind === "market") return 2;
   const showsAsBlock = t.kind === "sector" || t.kind === "theme" || !!t.name;
   if (showsAsBlock && isBlockMatched(blockGet(t.name))) return 0;
@@ -251,8 +252,13 @@ function MessageTargetBadge({
   t: AnalyzedMessage["targets"][number];
   stockHitBlockNames?: string[];
 }) {
-  const stockResolved = useStockResolve({ code: t.code, name: t.name });
-  const stockMatched = isStockMatched(stockResolved);
+  // 板块/题材不用其 code 做个股解析（短 ID 如 61→000061 会误命中农产品等）
+  const stockQuery =
+    t.kind === "sector" || t.kind === "theme" || t.kind === "market"
+      ? { code: null as string | null, name: "" }
+      : { code: t.code, name: t.name };
+  const stockResolved = useStockResolve(stockQuery);
+  const stockMatched = t.kind === "stock" && isStockMatched(stockResolved);
   const blockName = (t.name || "").replace(/\s+/g, "").trim();
   const isStockHitBlock = (t.kind === "sector" || t.kind === "theme")
     && !!blockName
@@ -283,7 +289,7 @@ function MessageTargetBadge({
       </Badge>
     );
   }
-  if (t.kind === "sector" || t.kind === "theme" || t.name) {
+  if (t.kind === "sector" || t.kind === "theme" || (t.kind !== "stock" && t.name)) {
     return (
       <Badge
         className={cn(

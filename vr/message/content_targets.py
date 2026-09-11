@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from .schemas import ImpactTarget
 
+# 名称末尾嵌入的代码，如「上海(61)」「浦发银行（600000）」
+_NAME_CODE_TAIL_RE = re.compile(
+    r"^(?P<name>.+?)\s*[（(]\s*(?P<code>\d{1,8})(?:\.(?:SZ|SH|BJ))?\s*[）)]\s*$",
+    re.IGNORECASE,
+)
+
 
 def _norm_name(raw: str | None) -> str:
     return (raw or "").replace("\u3000", "").replace(" ", "").strip()
+
+
+def _split_embedded_code(name: str, code: str | None) -> tuple[str, str | None]:
+    """把「名称(代码)」拆成纯名称 + 代码；已有 code 时以已有为准。"""
+    n = _norm_name(name)
+    c = str(code).strip() if code not in (None, "") else ""
+    m = _NAME_CODE_TAIL_RE.match(n)
+    if m:
+        n = _norm_name(m.group("name"))
+        if not c:
+            c = m.group("code").strip()
+    return n, (c or None)
 
 
 def _as_dict(t: ImpactTarget | dict[str, Any]) -> dict[str, Any]:
@@ -25,7 +44,11 @@ def merge_targets(
     existing: Iterable[ImpactTarget | dict[str, Any]] | None,
     *extra_groups: Iterable[ImpactTarget | dict[str, Any]],
 ) -> list[ImpactTarget]:
-    """已有标的在前，后续组增量追加；同身份只保留首次。"""
+    """已有标的在前，后续组增量追加；同身份只保留首次。
+
+    板块/题材按纯名称去重（「上海」与「上海(61)」视为同一）；
+    个股按 6 位代码或纯名称去重。
+    """
     out: list[ImpactTarget] = []
     seen_stock_codes: set[str] = set()
     seen_stock_names: set[str] = set()
@@ -38,62 +61,70 @@ def merge_targets(
     for group in groups:
         for raw in group or []:
             d = _as_dict(raw)
-            code = str(d.get("code") or "").strip()
-            name = _norm_name(str(d.get("name") or ""))
+            name, code = _split_embedded_code(str(d.get("name") or ""), d.get("code"))
+            code = str(code or "").strip()
             if not name and code:
                 name = code
-                d["name"] = code
             if not name and not code:
                 continue
             kind = d["kind"] if d["kind"] in ("market", "sector", "theme", "stock", "other") else "other"
             if kind == "stock":
-                if code and code in seen_stock_codes:
+                # 个股仅认 6 位代码，避免把板块短 ID 当成股票代码
+                stock_code = code if re.fullmatch(r"\d{6}", code) else ""
+                if stock_code and stock_code in seen_stock_codes:
                     continue
                 if name and name in seen_stock_names:
                     continue
-                if code:
-                    seen_stock_codes.add(code)
+                if stock_code:
+                    seen_stock_codes.add(stock_code)
                 if name:
                     seen_stock_names.add(name)
+                out.append(ImpactTarget(kind=kind, code=stock_code or None, name=name))
             elif kind in ("sector", "theme"):
                 if not name or name in seen_block_names:
                     continue
                 seen_block_names.add(name)
+                out.append(ImpactTarget(kind=kind, code=code or None, name=name))
             else:
                 key = (kind, code, name)
                 if key in seen_other:
                     continue
                 seen_other.add(key)
-            out.append(ImpactTarget(kind=kind, code=code or None, name=name))
+                out.append(ImpactTarget(kind=kind, code=code or None, name=name))
     return out
 
 
 def _stocks_from_scan(rows: list[dict[str, Any]]) -> list[ImpactTarget]:
+    """仅保留名称/代码精确匹配成功的个股。"""
     out: list[ImpactTarget] = []
     for row in rows or []:
-        stock = row.get("stock") if isinstance(row.get("stock"), dict) else None
-        if stock:
-            code = str(stock.get("code") or "").strip() or None
-            name = str(stock.get("name") or "").strip()
-            if code or name:
-                out.append(ImpactTarget(kind="stock", code=code, name=name or code or ""))
+        if str(row.get("status") or "") != "matched":
             continue
-        code = str(row.get("code") or "").strip() or None
-        name = str(row.get("name") or "").strip()
+        stock = row.get("stock") if isinstance(row.get("stock"), dict) else None
+        if not stock:
+            continue
+        code = str(stock.get("code") or "").strip() or None
+        name = str(stock.get("name") or "").strip()
         if code or name:
             out.append(ImpactTarget(kind="stock", code=code, name=name or code or ""))
     return out
 
 
 def _sectors_from_scan(rows: list[dict[str, Any]]) -> list[ImpactTarget]:
+    """保留精确命中板块，以及「xx概念」抽出但尚未入库的名称；丢弃 partial 模糊匹配。"""
     out: list[ImpactTarget] = []
     for row in rows or []:
+        status = str(row.get("status") or "")
+        if status == "partial":
+            continue
         block = row.get("block") if isinstance(row.get("block"), dict) else None
         if block:
             code = str(block.get("id") or "").strip() or None
             name = str(block.get("name") or "").strip()
             if name:
                 out.append(ImpactTarget(kind="sector", code=code, name=name))
+            continue
+        if status != "unmatched":
             continue
         name = str(row.get("mapped") or row.get("raw") or row.get("name") or "").strip()
         if name:
@@ -111,13 +142,14 @@ def resolve_content_targets(text: str) -> list[ImpactTarget]:
     try:
         import stock_processor  # noqa: PLC0415
 
-        stock_rows = stock_processor.scan_text(body)
+        stock_rows = stock_processor.scan_text(body, min_name_len=3)
     except Exception:  # noqa: BLE001
         stock_rows = []
     try:
         from ths_block import processor as block_processor  # noqa: PLC0415
 
-        sector_rows = block_processor.scan_text(body)
+        # 板块最短 3 字，降低「上海」「北京」等两字地名误命中
+        sector_rows = block_processor.scan_text(body, min_name_len=3)
     except Exception:  # noqa: BLE001
         sector_rows = []
     return merge_targets(
@@ -152,7 +184,10 @@ def fill_stock_code(kind: str, code: str | None, name: str) -> str | None:
     """个股标的缺代码时按名称补全；失败则原样返回。"""
     code_s = str(code).strip() if code not in (None, "") else ""
     if code_s:
-        return code_s
+        # 非个股或非 6 位代码时不改写（板块短 ID 原样保留）
+        if str(kind or "").strip() != "stock":
+            return code_s
+        return code_s if re.fullmatch(r"\d{6}", code_s) else None
     if str(kind or "").strip() != "stock":
         return None
     n = _norm_name(name)
@@ -176,8 +211,8 @@ def fill_target_stock_codes(
     for raw in targets or []:
         d = _as_dict(raw)
         kind = d["kind"] if d["kind"] in ("market", "sector", "theme", "stock", "other") else "other"
-        name = _norm_name(str(d.get("name") or ""))
-        code = fill_stock_code(kind, d.get("code"), name)
+        name, code_embedded = _split_embedded_code(str(d.get("name") or ""), d.get("code"))
+        code = fill_stock_code(kind, code_embedded, name)
         if not name and code:
             name = code
         if not name and not code:
