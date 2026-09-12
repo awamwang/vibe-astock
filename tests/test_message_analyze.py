@@ -98,10 +98,54 @@ def test_parse_llm_patch(msg_db):
     assert patch["impact_rationale"] == "板块政策力度较高"
     assert patch["freshness"] == "new"
     assert patch["keywords"] == ["9", "低空经济", "政策"]
-    assert patch["detail"] == raw.content
+    assert "detail" not in patch
     assert "marks" not in patch
     assert "effective_mode" not in patch
     assert "effective_at" not in patch
+
+
+def test_parse_llm_patch_preserves_edited_detail(msg_db):
+    """人工改过的详情是分析输入，AI 不得写回覆盖。"""
+    drafts = [
+        RawMessageDraft(
+            draft_key="d1-detail",
+            source_id="manual",
+            source_label="粘贴",
+            content="原始入库正文",
+            title="原标题",
+        )
+    ]
+    raw = store.insert_raw_batch(drafts, path=msg_db)[0]
+    analyzed = store.upsert_analyzed_from_raw(raw, path=msg_db)
+    edited = store.update_analyzed(
+        analyzed.id,
+        {"detail": "人工改过的详情正文", "analyzed_by": "human"},
+        path=msg_db,
+    )
+    assert edited is not None
+    patch = analyze_mod._parse_llm_patch(
+        {
+            "title": "AI 标题",
+            "summary": "AI 摘要",
+            "detail": "模型若输出 detail 也应被忽略",
+            "keywords": ["新增"],
+            "freshness": "new",
+            "effect_status": "not_erupted",
+            "scope": "other",
+            "magnitude": 3,
+            "actionability": 3,
+            "credibility": 3,
+            "time_sensitivity": 3,
+            "is_rumor": False,
+            "rationale": "常规",
+        },
+        raw=raw,
+        analyzed=edited,
+    )
+    assert "detail" not in patch
+    prompt = analyze_mod.build_user_prompt(raw, edited)
+    assert "人工改过的详情正文" in prompt
+    assert "原始入库正文" not in prompt.split("【正文】")[-1]
 
 
 def test_parse_llm_patch_legacy_impact_level(msg_db):
@@ -223,6 +267,63 @@ def test_analyze_one_mock(msg_db, monkeypatch):
     assert result.ai_impact_level in analyze_mod._IMPACT
     assert result.impact_rationale == "常规测试消息"
     assert result.impact_factors is not None
+
+
+def test_analyze_one_preserves_edited_detail(msg_db, monkeypatch):
+    drafts = [
+        RawMessageDraft(
+            draft_key="d2-edit-detail",
+            source_id="manual",
+            source_label="粘贴",
+            content="原始正文",
+            title="原标题",
+        )
+    ]
+    raw = store.insert_raw_batch(drafts, path=msg_db)[0]
+    analyzed = store.upsert_analyzed_from_raw(raw, path=msg_db)
+    store.update_analyzed(
+        analyzed.id,
+        {"detail": "已人工修订的详情", "analyzed_by": "human"},
+        path=msg_db,
+    )
+
+    fake_json = json.dumps(
+        {
+            "title": "AI 标题",
+            "summary": "AI 摘要",
+            "detail": "不应落盘的模型详情",
+            "keywords": [],
+            "targets": [],
+            "scope": "other",
+            "magnitude": 3,
+            "actionability": 3,
+            "credibility": 3,
+            "time_sensitivity": 3,
+            "is_rumor": False,
+            "rationale": "常规",
+            "freshness": "new",
+            "effect_status": "not_erupted",
+        },
+        ensure_ascii=False,
+    )
+    seen_prompt: list[str] = []
+
+    def _fake_llm(cfg, user, retry_hint="", system=None, skeleton=None):
+        seen_prompt.append(user)
+        return fake_json
+
+    monkeypatch.setattr(analyze_mod, "_llm_complete", _fake_llm)
+    monkeypatch.setattr(store, "DB_PATH", msg_db)
+    monkeypatch.setattr(store, "_INITED", False)
+
+    result = analyze_mod.analyze_one(
+        {"provider": "openai", "baseURL": "http://127.0.0.1:9999", "apiKey": "x", "model": "m"},
+        analyzed_id=analyzed.id,
+    )
+    assert result.detail == "已人工修订的详情"
+    assert result.summary == "AI 摘要"
+    assert seen_prompt and "已人工修订的详情" in seen_prompt[0]
+    assert "原始正文" not in seen_prompt[0].split("【正文】")[-1]
 
 
 def test_analyze_one_keeps_manual_working_updates_ai(msg_db, monkeypatch):

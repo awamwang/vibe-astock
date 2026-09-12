@@ -303,6 +303,8 @@ def _resolve_ai_impact(
 
 def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: AnalyzedMessage) -> dict[str, Any]:
     """将 AI 结构化字段融合进已有数据；detail/marks/生效时间等不由 AI 改写。"""
+    # 分析输入优先用已落盘的 analyzed 字段（含人工编辑），勿回落到 raw 覆盖
+    detail = (analyzed.detail or raw.content or "").strip()
     summary = str(obj.get("summary") or analyzed.summary or raw.title or raw.content[:120]).strip()
     if len(summary) > 120:
         summary = summary[:117] + "…"
@@ -318,13 +320,11 @@ def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: Analyzed
     targets = _merge_targets(existing_targets, ai_targets)
     ai_title = str(obj.get("title") or "").strip()
     title = ai_title or analyzed.title or raw.title or summary[:80]
-    detail = (raw.content or analyzed.detail or "").strip()
     keywords = _merge_keywords(
-        list(raw.keywords),
         list(analyzed.keywords),
         _norm_list(obj.get("keywords")),
     )
-    url = raw.url or analyzed.url or _extract_url(detail) or ""
+    url = analyzed.url or raw.url or _extract_url(detail) or ""
     # 工作档 = AI 客观档经关注升档；ai_impact_level 保持客观档
     working = initial_impact_with_follow(
         ai_level,
@@ -337,7 +337,6 @@ def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: Analyzed
     patch: dict[str, Any] = {
         "title": title,
         "summary": summary,
-        "detail": detail,
         "keywords": keywords,
         "url": url,
         "targets": targets,
@@ -387,12 +386,14 @@ def _parse_impact_only_patch(
 def build_user_prompt(raw: RawMessage, analyzed: AnalyzedMessage) -> str:
     parts = [
         "【来源】" + (raw.source_label or raw.source_id),
-        "【产生时间】" + raw.produced_at,
+        "【产生时间】" + (analyzed.produced_at or raw.produced_at),
     ]
-    if raw.title or analyzed.title:
-        parts.append("【标题】" + (raw.title or analyzed.title))
-    if raw.keywords:
-        parts.append("【已有标签】" + "、".join(raw.keywords))
+    title = analyzed.title or raw.title
+    if title:
+        parts.append("【标题】" + title)
+    tags = list(analyzed.keywords) or list(raw.keywords)
+    if tags:
+        parts.append("【已有标签】" + "、".join(tags))
     existing = _existing_targets(raw, analyzed)
     if existing:
         lines = []
@@ -401,7 +402,8 @@ def build_user_prompt(raw: RawMessage, analyzed: AnalyzedMessage) -> str:
             lines.append(f"- {t['kind']}:{t['name']}{code_part}")
         parts.append("【已有标的】\n" + "\n".join(lines))
         parts.append("（分析时请保留以上已有标的，可补充但勿清空）")
-    parts.append("【正文】\n" + (raw.content or analyzed.detail))
+    # 正文以已编辑的详情为准，避免人工改稿后仍按原始入库文分析
+    parts.append("【正文】\n" + (analyzed.detail or raw.content or ""))
     return "\n".join(parts)
 
 
