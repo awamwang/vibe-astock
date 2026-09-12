@@ -5,7 +5,7 @@ import {
 import { Link } from "react-router-dom";
 import {
   Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  ExternalLink, Loader2, Pencil, Sparkles, Star, Trash2,
+  ExternalLink, Gauge, Loader2, Pencil, Sparkles, Star, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -390,6 +390,7 @@ export function MessageDetailPanel({
   const [quickPatching, setQuickPatching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzingMode, setAnalyzingMode] = useState<"full" | "impact" | null>(null);
   const detailReqId = useRef(0);
 
   useEffect(() => {
@@ -521,25 +522,27 @@ export function MessageDetailPanel({
     }
   };
 
-  const runAnalyze = async () => {
+  const runAnalyze = async (mode: "full" | "impact" = "full") => {
     if (!selected) return;
     if (!hasLlm()) {
       notify.error("请先在「接入 AI」配置模型后再分析");
       return;
     }
     setAnalyzing(true);
+    setAnalyzingMode(mode);
     try {
       await messageAnalyzeRun([selected.id], [], {
         onItem: (item) => {
           applyUpdated(item);
           void loadDetail(item.id, item);
         },
-      });
-      notify.success("AI 分析完成");
+      }, undefined, mode);
+      notify.success(mode === "impact" ? "AI 影响等级已重算" : "AI 分析完成");
     } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "AI 分析失败");
+      notify.error(e instanceof ApiError ? e.message : mode === "impact" ? "重算影响等级失败" : "AI 分析失败");
     } finally {
       setAnalyzing(false);
+      setAnalyzingMode(null);
     }
   };
 
@@ -626,7 +629,7 @@ export function MessageDetailPanel({
           <div className="flex flex-wrap items-center gap-1.5">
             <select
               aria-label="级别"
-              title={selected.impact_manual ? "已手动指定；修改将同步初始档与工作档" : "修改将同步初始档与工作档"}
+              title={selected.impact_manual ? "已手动指定；修改将同步初始档与工作档（AI档独立）" : "修改将同步初始档与工作档（AI档独立）"}
               disabled={editing || quickPatching}
               className={cn(quickSelectCls, IMPACT_BADGE[selected.impact_level] || IMPACT_BADGE.medium)}
               value={selected.impact_level}
@@ -642,6 +645,14 @@ export function MessageDetailPanel({
             {selected.initial_impact_level && selected.initial_impact_level !== selected.impact_level ? (
               <span className="text-[11px] text-muted-foreground" title="进入系统时的初始优先级">
                 初:{IMPACT_LABEL[selected.initial_impact_level] || selected.initial_impact_level}
+              </span>
+            ) : null}
+            {selected.ai_impact_level ? (
+              <span
+                className="text-[11px] text-muted-foreground"
+                title={selected.impact_rationale ? `AI客观档：${selected.impact_rationale}` : "AI客观合成档（不含关注升档）"}
+              >
+                AI:{IMPACT_LABEL[selected.ai_impact_level] || selected.ai_impact_level}
               </span>
             ) : null}
             <select
@@ -701,10 +712,20 @@ export function MessageDetailPanel({
               type="button"
               disabled={analyzing || !hasLlm() || editing}
               className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
-              onClick={() => void runAnalyze()}
+              onClick={() => void runAnalyze("full")}
             >
-              {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {analyzing && analyzingMode === "full" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
               AI 分析
+            </button>
+            <button
+              type="button"
+              disabled={analyzing || !hasLlm() || editing}
+              title="仅重算 AI 影响等级，不改标题/摘要/标的等"
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground disabled:opacity-40"
+              onClick={() => void runAnalyze("impact")}
+            >
+              {analyzing && analyzingMode === "impact" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
+              重算 AI 级别
             </button>
             <AskAiButton
               context={messageAiContext}
@@ -860,6 +881,12 @@ export function MessageDetailPanel({
               <dt className="text-muted-foreground">初始级别</dt>
               <dd className="text-foreground">
                 {IMPACT_LABEL[selected.initial_impact_level || selected.impact_level]}
+              </dd>
+              <dt className="text-muted-foreground">AI级别</dt>
+              <dd className="text-foreground" title={selected.impact_rationale || undefined}>
+                {selected.ai_impact_level
+                  ? IMPACT_LABEL[selected.ai_impact_level]
+                  : "—"}
               </dd>
               <dt className="text-muted-foreground">新旧</dt>
               <dd className="text-foreground">{FRESHNESS_LABEL[selected.freshness]}</dd>

@@ -66,7 +66,12 @@ class AnalyzedMessage(BaseModel):
     impact_level: ImpactLevel = "medium"
     # 进入消息系统时的初始优先级；不受 AI / 关注词影响，仅手动改档时与 impact_level 同步
     initial_impact_level: ImpactLevel = "medium"
-    # 优先级是否被人工指定过
+    # AI 客观合成档（多维因子服务端合成）；不含关注升档；与初始档/工作档独立
+    ai_impact_level: ImpactLevel | None = None
+    # AI 合成所用因子与一句理由（校准用）；无 AI 时为空
+    impact_factors: dict[str, Any] | None = None
+    impact_rationale: str = ""
+    # 优先级是否被人工指定过（为真后 AI 不再覆写工作档 impact_level）
     impact_manual: bool = False
     freshness: Freshness = "new"
     effect_status: EffectStatus = "not_erupted"

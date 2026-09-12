@@ -298,6 +298,12 @@ export interface AnalyzedMessage {
   impact_level: ImpactLevel;
   /** 进入消息系统时的初始优先级（不受 AI/关注影响） */
   initial_impact_level?: ImpactLevel;
+  /** AI 客观合成档（不含关注升档）；与初始档、工作档独立 */
+  ai_impact_level?: ImpactLevel | null;
+  /** AI 合成因子（校准用） */
+  impact_factors?: Record<string, unknown> | null;
+  /** AI 一句理由 */
+  impact_rationale?: string;
   /** 优先级是否被人工指定过 */
   impact_manual?: boolean;
   freshness: Freshness;

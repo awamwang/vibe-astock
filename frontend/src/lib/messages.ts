@@ -265,6 +265,7 @@ export function buildMessageAiContext(
     end_at?: string | null;
     impact_level: string;
     initial_impact_level?: string;
+    ai_impact_level?: string | null;
     impact_manual?: boolean;
     freshness: string;
     effect_status: string;
@@ -293,6 +294,9 @@ export function buildMessageAiContext(
   lines.push(`级别：${IMPACT_LABEL[msg.impact_level] || msg.impact_level}${msg.impact_manual ? "（手动指定）" : ""}`);
   if (msg.initial_impact_level && msg.initial_impact_level !== msg.impact_level) {
     lines.push(`初始级别：${IMPACT_LABEL[msg.initial_impact_level] || msg.initial_impact_level}`);
+  }
+  if (msg.ai_impact_level) {
+    lines.push(`AI级别：${IMPACT_LABEL[msg.ai_impact_level] || msg.ai_impact_level}`);
   }
   lines.push(`新旧：${FRESHNESS_LABEL[msg.freshness] || msg.freshness}`);
   lines.push(`炒作阶段：${EFFECT_LABEL[msg.effect_status] || msg.effect_status}`);

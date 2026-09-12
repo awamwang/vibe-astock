@@ -135,6 +135,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             produced_at TEXT NOT NULL,
             impact_level TEXT NOT NULL DEFAULT 'medium',
             initial_impact_level TEXT NOT NULL DEFAULT 'medium',
+            ai_impact_level TEXT,
+            impact_factors_json TEXT NOT NULL DEFAULT '',
+            impact_rationale TEXT NOT NULL DEFAULT '',
             impact_manual INTEGER NOT NULL DEFAULT 0,
             freshness TEXT NOT NULL DEFAULT 'new',
             effect_status TEXT NOT NULL DEFAULT 'not_erupted',
@@ -235,6 +238,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE analyzed_message ADD COLUMN impact_manual INTEGER NOT NULL DEFAULT 0"
         )
+    if "ai_impact_level" not in cols:
+        conn.execute("ALTER TABLE analyzed_message ADD COLUMN ai_impact_level TEXT")
+    if "impact_factors_json" not in cols:
+        conn.execute(
+            "ALTER TABLE analyzed_message ADD COLUMN impact_factors_json TEXT NOT NULL DEFAULT ''"
+        )
+    if "impact_rationale" not in cols:
+        conn.execute(
+            "ALTER TABLE analyzed_message ADD COLUMN impact_rationale TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def init_db(path: Optional[str] = None) -> str:
@@ -291,6 +304,13 @@ def _row_analyzed(r: sqlite3.Row, targets: list[ImpactTarget], raw_ids: list[str
             if "initial_impact_level" in r.keys() and r["initial_impact_level"]
             else (r["impact_level"] or "medium")
         ),
+        ai_impact_level=_row_ai_impact_level(r),
+        impact_factors=_row_impact_factors(r),
+        impact_rationale=(
+            r["impact_rationale"]
+            if "impact_rationale" in r.keys() and r["impact_rationale"]
+            else ""
+        ),
         impact_manual=bool(
             r["impact_manual"]
             if "impact_manual" in r.keys() and r["impact_manual"] is not None
@@ -304,6 +324,23 @@ def _row_analyzed(r: sqlite3.Row, targets: list[ImpactTarget], raw_ids: list[str
         status=r["status"] or "draft",
         favorited=bool(r["favorited"] if r["favorited"] is not None else 0),
     )
+
+
+_AI_IMPACT_LEVELS = frozenset({"critical", "high", "medium", "low", "noise"})
+
+
+def _row_ai_impact_level(r: sqlite3.Row) -> str | None:
+    if "ai_impact_level" not in r.keys():
+        return None
+    val = r["ai_impact_level"]
+    return val if val in _AI_IMPACT_LEVELS else None
+
+
+def _row_impact_factors(r: sqlite3.Row) -> dict | None:
+    if "impact_factors_json" not in r.keys() or not r["impact_factors_json"]:
+        return None
+    loaded = _json_loads(r["impact_factors_json"], None)
+    return loaded if isinstance(loaded, dict) else None
 
 
 def _load_targets(conn: sqlite3.Connection, analyzed_id: str) -> list[ImpactTarget]:
@@ -1192,7 +1229,7 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                 "favorited": "favorited",
             }
             # 人工改档：工作档与初始档同步，并打上手动标记；AI 不得改初始档，
-            # 且若已手动指定则不再覆写工作档
+            # 且若已手动指定则不再覆写工作档。ai_impact_level 仅 AI 写入，与二者独立。
             if "impact_level" in patch:
                 level = str(patch["impact_level"] or "medium")
                 if is_human:
@@ -1205,6 +1242,17 @@ def update_analyzed(analyzed_id: str, patch: dict[str, Any], *, path: Optional[s
                 elif not already_manual:
                     fields.append("impact_level = ?")
                     args.append(level)
+            if "ai_impact_level" in patch and not is_human:
+                ai_lv = patch["ai_impact_level"]
+                fields.append("ai_impact_level = ?")
+                args.append(str(ai_lv) if ai_lv else None)
+            if "impact_factors" in patch and not is_human:
+                factors = patch["impact_factors"]
+                fields.append("impact_factors_json = ?")
+                args.append(_json_dumps(factors) if factors else "")
+            if "impact_rationale" in patch and not is_human:
+                fields.append("impact_rationale = ?")
+                args.append(str(patch.get("impact_rationale") or ""))
             for k, col in scalar_map.items():
                 if k in patch:
                     val = patch[k]

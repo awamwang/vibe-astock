@@ -7,14 +7,24 @@ import re
 from typing import Any
 
 from . import store
-from .schemas import AnalyzedMessage, ImpactTarget, RawMessage
+from .follow import initial_impact_with_follow
+from .schemas import AnalyzedMessage, ImpactLevel, ImpactTarget, RawMessage
 
 _IMPACT = frozenset({"critical", "high", "medium", "low", "noise"})
+_IMPACT_ORDER = ("noise", "low", "medium", "high", "critical")
 _FRESHNESS = frozenset({"new", "follow_up", "duplicate", "rumor"})
 _EFFECT = frozenset({
     "not_erupted", "pending_verify", "ongoing_hype", "already_hyped", "invalid",
 })
 _TARGET_KIND = frozenset({"market", "sector", "theme", "stock", "other"})
+_SCOPE = frozenset({"market", "sector", "theme", "stock", "other"})
+_SCOPE_WEIGHT = {
+    "market": 5.0,
+    "sector": 4.0,
+    "theme": 3.5,
+    "stock": 2.5,
+    "other": 1.5,
+}
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
 JSON_SKELETON = """{
@@ -22,7 +32,13 @@ JSON_SKELETON = """{
   "summary": "一句话摘要，不超过120字",
   "keywords": ["关键词1", "关键词2"],
   "targets": [{"kind": "stock|sector|theme|market|other", "code": "6位代码或null", "name": "显示名"}],
-  "impact_level": "critical|high|medium|low|noise",
+  "scope": "market|sector|theme|stock|other",
+  "magnitude": "1-5整数，信息力度",
+  "actionability": "1-5整数，可落到标的/题材的程度",
+  "credibility": "1-5整数，官宣高、传闻低",
+  "time_sensitivity": "1-5整数，盘中突发高、隔夜已知低",
+  "is_rumor": false,
+  "rationale": "一句判定理由，先写理由再填因子",
   "freshness": "new|follow_up|duplicate|rumor",
   "effect_status": "not_erupted|pending_verify|ongoing_hype|already_hyped|invalid"
 }"""
@@ -31,9 +47,47 @@ SYSTEM = """你是 A 股资讯整理助手。根据用户给出的单条消息�
 
 硬性规则：
 - 只做信息整理与客观标注；不推荐买卖、不预测涨跌、不给目标价。
+- 不要直接输出优先级档位；只输出因子字段与 rationale。服务端会按因子合成客观档。
+- 禁止用「可能影响股价」抬高 magnitude / actionability；只按信息增量与影响面。
 - freshness（消息新旧）仅根据本条正文判断，禁止引用或假设系统里还有其他消息。
 - duplicate=与常见公开信息高度重复；follow_up=同主题续报；rumor=未经证实的传闻；new=全新信息。
 - effect_status 默认 not_erupted，除非正文明确提到已在炒作/已兑现等。
+- 必须先写 rationale（一句），再填各 1–5 因子与 scope。
+
+五档锚点（供你校准因子力度，勿输出档位名）：
+- critical 级力度：央行/证监会重大政策、系统性风险、指数级事件。
+- high 级力度：核心板块监管、重大并购、龙头业绩变脸等。
+- medium 级力度：一般公司公告、常规宏观数据。
+- low 级力度：软性解读、行业动态。
+- noise 级力度：广告、重复转发、无增量信息；「吓人标题但无实质」应落在噪声侧。
+
+请严格只输出一个 JSON 对象，不要 markdown 代码块，不要解释。"""
+
+IMPACT_JSON_SKELETON = """{
+  "scope": "market|sector|theme|stock|other",
+  "magnitude": "1-5整数，信息力度",
+  "actionability": "1-5整数，可落到标的/题材的程度",
+  "credibility": "1-5整数，官宣高、传闻低",
+  "time_sensitivity": "1-5整数，盘中突发高、隔夜已知低",
+  "is_rumor": false,
+  "rationale": "一句判定理由，先写理由再填因子"
+}"""
+
+IMPACT_SYSTEM = """你是 A 股资讯整理助手。根据用户给出的单条消息，只判定影响力度相关因子。
+
+硬性规则：
+- 只做客观因子标注；不推荐买卖、不预测涨跌、不给目标价。
+- 不要输出优先级档位名；只输出因子与 rationale。服务端会合成客观档。
+- 禁止用「可能影响股价」抬高 magnitude / actionability；只按信息增量与影响面。
+- 必须先写 rationale（一句），再填各 1–5 因子与 scope。
+- 不要改写标题、摘要、标的或其它字段。
+
+五档锚点（供你校准因子力度，勿输出档位名）：
+- critical 级力度：央行/证监会重大政策、系统性风险、指数级事件。
+- high 级力度：核心板块监管、重大并购、龙头业绩变脸等。
+- medium 级力度：一般公司公告、常规宏观数据。
+- low 级力度：软性解读、行业动态。
+- noise 级力度：广告、重复转发、无增量信息；「吓人标题但无实质」应落在噪声侧。
 
 请严格只输出一个 JSON 对象，不要 markdown 代码块，不要解释。"""
 
@@ -56,19 +110,26 @@ def extract_first_json(text: str) -> dict[str, Any] | None:
             idx = start + 1
 
 
-def _llm_complete(cfg: dict, user: str, *, retry_hint: str = "") -> str:
+def _llm_complete(
+    cfg: dict,
+    user: str,
+    *,
+    retry_hint: str = "",
+    system: str = SYSTEM,
+    skeleton: str = JSON_SKELETON,
+) -> str:
     import chat as chat_layer
     import cli_runtime
 
     is_cli = str(cfg.get("provider", "")).startswith("cli-")
-    instr = f"\n\nJSON 骨架（键名必须一致）：\n{JSON_SKELETON}"
+    instr = f"\n\nJSON 骨架（键名必须一致）：\n{skeleton}"
     if retry_hint:
         instr += f"\n\n（上次输出不合规：{retry_hint}；请重新只输出合法 JSON。）"
     if is_cli:
         kind = str(cfg.get("provider", ""))[4:]
-        return cli_runtime.run_cli(kind, SYSTEM, user + instr)
+        return cli_runtime.run_cli(kind, system, user + instr)
     messages = [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user + instr},
     ]
     data = chat_layer._call_llm(cfg, messages, use_tools=False)
@@ -138,20 +199,120 @@ def _norm_targets(val: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _clamp_score_1_5(val: Any, default: float = 3.0) -> float:
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return default
+    return max(1.0, min(5.0, n))
+
+
+def _demote_level(level: str) -> str:
+    try:
+        idx = _IMPACT_ORDER.index(level)
+    except ValueError:
+        return "medium"
+    return _IMPACT_ORDER[max(0, idx - 1)]
+
+
+def _cap_level(level: str, cap: str) -> str:
+    try:
+        li = _IMPACT_ORDER.index(level)
+        ci = _IMPACT_ORDER.index(cap)
+    except ValueError:
+        return level
+    return _IMPACT_ORDER[min(li, ci)]
+
+
+def _score_to_level(score: float) -> ImpactLevel:
+    if score >= 4.5:
+        return "critical"
+    if score >= 3.7:
+        return "high"
+    if score >= 2.8:
+        return "medium"
+    if score >= 1.8:
+        return "low"
+    return "noise"
+
+
+def synthesize_ai_impact_level(
+    factors: dict[str, Any],
+    *,
+    freshness: str = "new",
+) -> ImpactLevel:
+    """按固定权重将 AI 因子合成客观档（不含关注升档）。"""
+    scope = str(factors.get("scope") or "other").strip()
+    if scope not in _SCOPE:
+        scope = "other"
+    magnitude = _clamp_score_1_5(factors.get("magnitude"), 3.0)
+    actionability = _clamp_score_1_5(factors.get("actionability"), 3.0)
+    credibility = _clamp_score_1_5(factors.get("credibility"), 3.0)
+    time_sensitivity = _clamp_score_1_5(factors.get("time_sensitivity"), 3.0)
+    scope_w = _SCOPE_WEIGHT.get(scope, 1.5)
+    score = (
+        0.30 * magnitude
+        + 0.25 * actionability
+        + 0.20 * time_sensitivity
+        + 0.15 * credibility
+        + 0.10 * scope_w
+    )
+    level: str = _score_to_level(score)
+    is_rumor = bool(factors.get("is_rumor")) or freshness == "rumor"
+    if is_rumor:
+        level = _demote_level(level)
+    if freshness == "duplicate":
+        level = _cap_level(level, "medium")
+    return level  # type: ignore[return-value]
+
+
+def _parse_impact_factors(obj: dict[str, Any]) -> dict[str, Any] | None:
+    """从模型输出抽取因子；缺关键分数字段则视为无因子（走旧字段回退）。"""
+    keys = ("magnitude", "actionability", "credibility", "time_sensitivity")
+    if not any(k in obj for k in keys):
+        return None
+    scope = str(obj.get("scope") or "other").strip()
+    if scope not in _SCOPE:
+        scope = "other"
+    return {
+        "scope": scope,
+        "magnitude": int(round(_clamp_score_1_5(obj.get("magnitude"), 3.0))),
+        "actionability": int(round(_clamp_score_1_5(obj.get("actionability"), 3.0))),
+        "credibility": int(round(_clamp_score_1_5(obj.get("credibility"), 3.0))),
+        "time_sensitivity": int(round(_clamp_score_1_5(obj.get("time_sensitivity"), 3.0))),
+        "is_rumor": bool(obj.get("is_rumor")),
+    }
+
+
+def _resolve_ai_impact(
+    obj: dict[str, Any],
+    *,
+    freshness: str,
+) -> tuple[ImpactLevel, dict[str, Any] | None, str]:
+    """返回 (ai 客观档, 因子 dict 或 None, rationale)。"""
+    rationale = str(obj.get("rationale") or "").strip()
+    factors = _parse_impact_factors(obj)
+    if factors is not None:
+        return synthesize_ai_impact_level(factors, freshness=freshness), factors, rationale
+    # 兼容旧模型输出：直接给 impact_level
+    legacy = str(obj.get("impact_level") or "medium")
+    if legacy not in _IMPACT:
+        legacy = "medium"
+    return legacy, None, rationale  # type: ignore[return-value]
+
+
 def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: AnalyzedMessage) -> dict[str, Any]:
     """将 AI 结构化字段融合进已有数据；detail/marks/生效时间等不由 AI 改写。"""
     summary = str(obj.get("summary") or analyzed.summary or raw.title or raw.content[:120]).strip()
     if len(summary) > 120:
         summary = summary[:117] + "…"
-    impact = str(obj.get("impact_level") or analyzed.impact_level or "medium")
-    if impact not in _IMPACT:
-        impact = analyzed.impact_level if analyzed.impact_level in _IMPACT else "medium"
     freshness = str(obj.get("freshness") or analyzed.freshness or "new")
     if freshness not in _FRESHNESS:
         freshness = analyzed.freshness if analyzed.freshness in _FRESHNESS else "new"
     effect = str(obj.get("effect_status") or analyzed.effect_status or "not_erupted")
     if effect not in _EFFECT:
         effect = analyzed.effect_status if analyzed.effect_status in _EFFECT else "not_erupted"
+    ai_level, factors, rationale = _resolve_ai_impact(obj, freshness=freshness)
     existing_targets = _existing_targets(raw, analyzed)
     ai_targets = _norm_targets(obj.get("targets"))
     targets = _merge_targets(existing_targets, ai_targets)
@@ -164,17 +325,61 @@ def _parse_llm_patch(obj: dict[str, Any], *, raw: RawMessage, analyzed: Analyzed
         _norm_list(obj.get("keywords")),
     )
     url = raw.url or analyzed.url or _extract_url(detail) or ""
-    return {
+    # 工作档 = AI 客观档经关注升档；ai_impact_level 保持客观档
+    working = initial_impact_with_follow(
+        ai_level,
+        title=title,
+        summary=summary,
+        detail=detail,
+        keywords=keywords,
+        targets=targets,
+    )
+    patch: dict[str, Any] = {
         "title": title,
         "summary": summary,
         "detail": detail,
         "keywords": keywords,
         "url": url,
         "targets": targets,
-        "impact_level": impact,
+        "ai_impact_level": ai_level,
+        "impact_level": working,
+        "impact_factors": factors,
+        "impact_rationale": rationale,
         "freshness": freshness,
         "effect_status": effect,
         "status": "draft",
+        "analyzed_by": "ai",
+    }
+    return patch
+
+
+def _parse_impact_only_patch(
+    obj: dict[str, Any],
+    *,
+    raw: RawMessage,
+    analyzed: AnalyzedMessage,
+) -> dict[str, Any]:
+    """仅重算 AI 影响档；不改标题/摘要/标的/新旧/炒作等。"""
+    freshness = analyzed.freshness if analyzed.freshness in _FRESHNESS else "new"
+    ai_level, factors, rationale = _resolve_ai_impact(obj, freshness=freshness)
+    title = analyzed.title or raw.title or ""
+    summary = analyzed.summary or ""
+    detail = analyzed.detail or raw.content or ""
+    keywords = list(analyzed.keywords) or list(raw.keywords)
+    targets = _existing_targets(raw, analyzed)
+    working = initial_impact_with_follow(
+        ai_level,
+        title=title,
+        summary=summary,
+        detail=detail,
+        keywords=keywords,
+        targets=targets,
+    )
+    return {
+        "ai_impact_level": ai_level,
+        "impact_level": working,
+        "impact_factors": factors,
+        "impact_rationale": rationale,
         "analyzed_by": "ai",
     }
 
@@ -200,7 +405,18 @@ def build_user_prompt(raw: RawMessage, analyzed: AnalyzedMessage) -> str:
     return "\n".join(parts)
 
 
-def analyze_one(cfg: dict, *, raw_id: str | None = None, analyzed_id: str | None = None) -> AnalyzedMessage:
+def analyze_one(
+    cfg: dict,
+    *,
+    raw_id: str | None = None,
+    analyzed_id: str | None = None,
+    mode: str = "full",
+) -> AnalyzedMessage:
+    """mode=full 全量结构化分析；mode=impact 仅重算 AI 影响档。"""
+    mode_s = str(mode or "full").strip().lower()
+    if mode_s not in ("full", "impact"):
+        raise ValueError("mode 仅支持 full 或 impact")
+
     raw: RawMessage | None = None
     analyzed: AnalyzedMessage | None = None
 
@@ -224,10 +440,18 @@ def analyze_one(cfg: dict, *, raw_id: str | None = None, analyzed_id: str | None
 
     assert raw is not None and analyzed is not None
     user = build_user_prompt(raw, analyzed)
+    system = IMPACT_SYSTEM if mode_s == "impact" else SYSTEM
+    skeleton = IMPACT_JSON_SKELETON if mode_s == "impact" else JSON_SKELETON
     last_err = ""
     obj: dict[str, Any] | None = None
     for attempt in range(2):
-        text = _llm_complete(cfg, user, retry_hint=last_err if attempt else "")
+        text = _llm_complete(
+            cfg,
+            user,
+            retry_hint=last_err if attempt else "",
+            system=system,
+            skeleton=skeleton,
+        )
         obj = extract_first_json(text)
         if obj:
             break
@@ -235,8 +459,11 @@ def analyze_one(cfg: dict, *, raw_id: str | None = None, analyzed_id: str | None
     if not obj:
         raise RuntimeError("模型未返回可解析的 JSON")
 
-    patch = _parse_llm_patch(obj, raw=raw, analyzed=analyzed)
-    # 已手动指定优先级时，AI 不再改写工作档（初始档本就不在 AI patch 中）
+    if mode_s == "impact":
+        patch = _parse_impact_only_patch(obj, raw=raw, analyzed=analyzed)
+    else:
+        patch = _parse_llm_patch(obj, raw=raw, analyzed=analyzed)
+    # 已手动指定优先级时，AI 仍写 ai_impact_level，但不再改写工作档
     if analyzed.impact_manual:
         patch.pop("impact_level", None)
     updated = store.update_analyzed(analyzed.id, patch)
@@ -245,7 +472,13 @@ def analyze_one(cfg: dict, *, raw_id: str | None = None, analyzed_id: str | None
     return updated
 
 
-def run_batch_stream(cfg: dict, *, raw_ids: list[str], analyzed_ids: list[str]):
+def run_batch_stream(
+    cfg: dict,
+    *,
+    raw_ids: list[str],
+    analyzed_ids: list[str],
+    mode: str = "full",
+):
     """逐条分析，yield NDJSON 事件。"""
     tasks: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -268,9 +501,9 @@ def run_batch_stream(cfg: dict, *, raw_ids: list[str], analyzed_ids: list[str]):
         yield {"type": "progress", "current": i, "total": total, "id": tid, "kind": kind}
         try:
             if kind == "raw":
-                result = analyze_one(cfg, raw_id=tid)
+                result = analyze_one(cfg, raw_id=tid, mode=mode)
             else:
-                result = analyze_one(cfg, analyzed_id=tid)
+                result = analyze_one(cfg, analyzed_id=tid, mode=mode)
             ok += 1
             yield {"type": "item", "data": result.model_dump()}
         except Exception as e:  # noqa: BLE001

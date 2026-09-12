@@ -830,6 +830,8 @@ class MessageAnalyzeRunReq(BaseModel):
     llm: LLMConfig
     raw_ids: list[str] = []
     analyzed_ids: list[str] = []
+    # full=全量结构化；impact=仅重算 AI 影响档
+    mode: str = "full"
 
 
 class AnalyzedPatchIn(BaseModel):
@@ -1134,12 +1136,16 @@ def messages_analyzed_delete(body: AnalyzedBatchIdsIn):
 def messages_analyze_run(req: MessageAnalyzeRunReq):
     """批量 AI 分析（NDJSON 流：progress / item / item_error / done）。"""
     cfg = _check_llm(req.llm)
+    mode = str(req.mode or "full").strip().lower()
+    if mode not in ("full", "impact"):
+        raise HTTPException(400, "mode 仅支持 full 或 impact")
 
     def events():
         yield from msg_analyze.run_batch_stream(
             cfg,
             raw_ids=req.raw_ids,
             analyzed_ids=req.analyzed_ids,
+            mode=mode,
         )
 
     return _ndjson(events)

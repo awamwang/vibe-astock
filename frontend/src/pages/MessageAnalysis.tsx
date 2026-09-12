@@ -9,7 +9,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   Search, RefreshCw, Loader2, ChevronDown,
   Plus, Trash2, Sparkles, Newspaper, Radio, X, Star,
-  RotateCcw, LayoutList, CalendarDays, Volume2, Square,
+  RotateCcw, LayoutList, CalendarDays, Volume2, Square, Gauge,
 } from "lucide-react";
 import { MessageCalendar, CALENDAR_PER_DAY } from "@/components/MessageCalendar";
 import { MessageDetailPanel } from "@/components/MessageDetailPanel";
@@ -337,9 +337,23 @@ function Badge({
   );
 }
 
-function ImpactBadge({ level, manual }: { level: string; manual?: boolean }) {
+function ImpactBadge({
+  level,
+  manual,
+  initialLevel,
+  aiLevel,
+}: {
+  level: string;
+  manual?: boolean;
+  initialLevel?: string | null;
+  aiLevel?: string | null;
+}) {
+  const tips: string[] = [];
+  if (manual) tips.push("已手动指定优先级");
+  if (initialLevel) tips.push(`初始:${IMPACT_LABEL[initialLevel] || initialLevel}`);
+  if (aiLevel) tips.push(`AI:${IMPACT_LABEL[aiLevel] || aiLevel}`);
   return (
-    <Badge className={IMPACT_BADGE[level] || IMPACT_BADGE.medium} title={manual ? "已手动指定优先级" : undefined}>
+    <Badge className={IMPACT_BADGE[level] || IMPACT_BADGE.medium} title={tips.length ? tips.join(" · ") : undefined}>
       {IMPACT_LABEL[level] || level}
       {manual ? <span className="ml-1 opacity-80">手</span> : null}
     </Badge>
@@ -707,6 +721,7 @@ export function MessageAnalysis() {
   const dragSelectRef = useRef<{ active: boolean; mode: "add" | "remove" } | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzingMode, setAnalyzingMode] = useState<"full" | "impact" | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [defaultEndDays, setDefaultEndDaysState] = useState(() => getDefaultEndDays());
@@ -1463,13 +1478,14 @@ export function MessageAnalysis() {
   const queueUnfavorite = () => runFavorite(Array.from(selectedIds), false);
   const queueDelete = () => runDelete(Array.from(selectedIds));
 
-  const runAnalyze = async (ids: string[]) => {
+  const runAnalyze = async (ids: string[], mode: "full" | "impact" = "full") => {
     if (!ids.length) return;
     if (!hasLlm()) {
       notify.error("请先在「接入 AI」配置模型后再分析");
       return;
     }
     setAnalyzing(true);
+    setAnalyzingMode(mode);
     setAnalyzeProgress(null);
     try {
       const result = await messageAnalyzeRun(ids, [], {
@@ -1479,22 +1495,25 @@ export function MessageAnalysis() {
           setCalendarItems((list) => list.map((x) => (x.id === item.id ? item : x)));
           setSelected((cur) => (cur?.id === item.id ? item : cur));
         },
-      });
-      notify.success(`AI 分析完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+      }, undefined, mode);
+      const label = mode === "impact" ? "重算 AI 级别" : "AI 分析";
+      notify.success(`${label}完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
       if (result.failed) {
         notify.error(result.errors.map((e) => `${e.id}: ${e.message}`).join("；"));
       }
       setSelectedIds(new Set());
       await refreshMessages();
     } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "AI 分析失败");
+      notify.error(e instanceof ApiError ? e.message : mode === "impact" ? "重算影响等级失败" : "AI 分析失败");
     } finally {
       setAnalyzing(false);
+      setAnalyzingMode(null);
       setAnalyzeProgress(null);
     }
   };
 
-  const queueAnalyze = () => runAnalyze(Array.from(selectedIds));
+  const queueAnalyze = () => runAnalyze(Array.from(selectedIds), "full");
+  const queueImpactAnalyze = () => runAnalyze(Array.from(selectedIds), "impact");
 
   const stockQueries = useMemo(() => {
     const out: { code?: string | null; name?: string | null }[] = [];
@@ -1792,8 +1811,18 @@ export function MessageAnalysis() {
                   className="flex items-center gap-1.5 rounded-lg bg-primary/90 px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                   onClick={queueAnalyze}
                 >
-                  {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  {analyzing && analyzingMode === "full" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                   AI 分析 ({selectedIds.size})
+                </button>
+                <button
+                  type="button"
+                  disabled={analyzing}
+                  title="仅重算 AI 影响等级，不改标题/摘要/标的等"
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:bg-muted/50 disabled:opacity-50"
+                  onClick={queueImpactAnalyze}
+                >
+                  {analyzing && analyzingMode === "impact" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+                  重算 AI 级别 ({selectedIds.size})
                 </button>
                 <button
                   type="button"
@@ -1835,7 +1864,9 @@ export function MessageAnalysis() {
               )}
             </span>
             {analyzeProgress && (
-              <span className="text-primary">AI 分析进度 {analyzeProgress}</span>
+              <span className="text-primary">
+                {analyzingMode === "impact" ? "重算 AI 级别进度" : "AI 分析进度"} {analyzeProgress}
+              </span>
             )}
             {!hasLlm() && (
               <Link to="/settings" className="text-primary hover:underline">
@@ -2033,7 +2064,12 @@ export function MessageAnalysis() {
                           {item.source_label}
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <ImpactBadge level={item.impact_level} manual={item.impact_manual} />
+                          <ImpactBadge
+                            level={item.impact_level}
+                            manual={item.impact_manual}
+                            initialLevel={item.initial_impact_level}
+                            aiLevel={item.ai_impact_level}
+                          />
                         </td>
                         <td className="px-3 py-3 align-top">
                           <EffectBadge status={item.effect_status} />

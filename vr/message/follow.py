@@ -53,7 +53,11 @@ def initial_impact_with_follow(
     follow_keywords: list[str] | None = None,
     follow_blocks: list[dict[str, str]] | None = None,
 ) -> str:
-    """导入/转换新建时：命中关注词或关注板块则影响等级 +1；后续读写不再改等级。"""
+    """对给定客观档做关注升档，得到工作档。
+
+    用于：入库时从来源先验升档；AI 合成后从 ai_impact_level 升档。
+    不改写 ai_impact_level / initial_impact_level。
+    """
     should, _, _ = follow_should_boost(
         title=title,
         summary=summary,

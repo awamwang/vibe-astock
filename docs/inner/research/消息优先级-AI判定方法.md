@@ -183,9 +183,9 @@
 
 | 优先级 | 动作 | 触及 |
 |--------|------|------|
-| P0 | 扩展 analyze JSON：因子 + rationale；服务端合成 `impact_level` | `vr/message/analyze.py`、测试 |
+| P0 | 扩展 analyze JSON：因子 + rationale；服务端合成 `ai_impact_level`；未手动时工作档=合成档+关注升档 | `vr/message/analyze.py`、测试 |
 | P0 | System prompt 写入五档锚点定义 + 负例说明 | 同上 |
-| P1 | 导入/分析后仍走关注词 boost；个人化与客观档分离文档化 | `follow.py` |
+| P1 | 导入/分析后仍走关注词 boost；个人化与客观档分离（见 [消息优先级-优化路径](./消息优先级-优化路径.md)） | `follow.py` |
 | P1 | 人工改档导出对照集；简单混淆矩阵脚本或手工表 | 运维/脚本 |
 | P2 | 可选：同批相对排序或 few-shot 锚点库 | 批量分析路径 |
 | P2 | 可选：小模型过筛 + 大模型精标 | 成本优化 |

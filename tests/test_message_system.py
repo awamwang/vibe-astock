@@ -1171,15 +1171,21 @@ def test_follow_impact_boost(msg_db, tmp_path, monkeypatch):
     assert again.impact_manual is True
     assert again.followed is True
 
-    # AI 改档不得动初始档，且手动标记后不得覆写工作档
+    # AI 改档不得动初始档，且手动标记后不得覆写工作档；但可独立写 ai 档
     ai_touch = store.update_analyzed(
         an.id,
-        {"impact_level": "critical", "analyzed_by": "ai", "summary": "ai"},
+        {
+            "impact_level": "critical",
+            "ai_impact_level": "critical",
+            "analyzed_by": "ai",
+            "summary": "ai",
+        },
         path=msg_db,
     )
     assert ai_touch is not None
     assert ai_touch.impact_level == "medium"
     assert ai_touch.initial_impact_level == "medium"
+    assert ai_touch.ai_impact_level == "critical"
     assert ai_touch.impact_manual is True
 
 
@@ -1272,13 +1278,28 @@ def test_initial_impact_preserved_from_ai_without_manual(msg_db):
 
     ai_upd = store.update_analyzed(
         an.id,
-        {"impact_level": "high", "analyzed_by": "ai"},
+        {"impact_level": "high", "ai_impact_level": "high", "analyzed_by": "ai"},
         path=msg_db,
     )
     assert ai_upd is not None
     assert ai_upd.impact_level == "high"
     assert ai_upd.initial_impact_level == "low"
+    assert ai_upd.ai_impact_level == "high"
     assert ai_upd.impact_manual is False
+
+    # 手动后：AI 只更新 ai 档，工作档与初始档不变
+    human = store.update_analyzed(an.id, {"impact_level": "medium"}, path=msg_db)
+    assert human is not None and human.impact_manual is True
+    ai_again = store.update_analyzed(
+        an.id,
+        {"impact_level": "critical", "ai_impact_level": "critical", "analyzed_by": "ai"},
+        path=msg_db,
+    )
+    assert ai_again is not None
+    assert ai_again.impact_level == "medium"
+    assert ai_again.initial_impact_level == "medium"
+    assert ai_again.ai_impact_level == "critical"
+    assert ai_again.impact_manual is True
 
 
 def test_cls_fetch_incremental(msg_db, monkeypatch):

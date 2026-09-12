@@ -30,6 +30,7 @@ export async function messageAnalyzeRun(
   rawIds: string[] = [],
   handlers: MessageAnalyzeHandlers = {},
   signal?: AbortSignal,
+  mode: "full" | "impact" = "full",
 ): Promise<MessageAnalyzeRunResult> {
   const llm = loadLlm();
   if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
@@ -39,7 +40,7 @@ export async function messageAnalyzeRun(
     resp = await fetch(apiUrl("/api/messages/analyze/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ llm, raw_ids: rawIds, analyzed_ids: analyzedIds }),
+      body: JSON.stringify({ llm, raw_ids: rawIds, analyzed_ids: analyzedIds, mode }),
       signal,
     });
   } catch (e) {
