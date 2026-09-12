@@ -18,11 +18,14 @@
 | `on_enable` | —（插件激活） | [附录 A.7](#a7-on_enable) |
 | `on_disable` | —（插件停用） | [附录 A.8](#a8-on_disable) |
 | `on_metrics_snapshot` | `metrics.snapshot` | [附录 A.2](#a2-on_metrics_snapshot) |
+| `on_live_snapshot` | `live.snapshot` | [附录 A.10](#a10-on_live_snapshot) |
 | `on_verification_snapshot` | `verification.snapshot` | [附录 A.3](#a3-on_verification_snapshot) |
 | `on_budget_snapshot` | `budget.snapshot` | [附录 A.4](#a4-on_budget_snapshot) |
 | `on_review_saved` | `review.saved` | [附录 A.5](#a5-on_review_saved) |
 | `enable_review_saved` | —（控制是否收聚合事件） | [附录 A.6](#a6-enable_review_saved) |
 | `on_watchlist_add` | `watchlist.add` | [附录 A.9](#a9-on_watchlist_add) |
+| `on_watchlist_change` | `watchlist.change` | [附录 A.11](#a11-on_watchlist_change) |
+| `on_message_analyzed` | `message.analyzed` | [附录 A.12](#a12-on_message_analyzed) |
 
 ### 写入接口（插件 → 引擎）
 
@@ -36,6 +39,8 @@
 | `report_current_stock` | [附录 B.6](#b6-report_current_stock) |
 | `register_message_source` | [附录 B.7](#b7-register_message_source) |
 | `push_messages` | [附录 B.8](#b8-push_messages) |
+| `import_experience` | [附录 B.9](#b9-import_experience) |
+| `push_article` | [附录 B.10](#b10-push_article) |
 
 ### 扩展指标
 
@@ -480,6 +485,92 @@ python -m duanxian.plugin_cli list
 
 ---
 
+### A.10 `on_live_snapshot` {#a10-on_live_snapshot}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 接收随盘快照：打板情绪、环境条、昨涨停效应、连板榜分块保留（ADR-0001，不揉成一块）。 |
+| **HookPack 字段** | `on_live_snapshot` |
+| **事件名** | `live.snapshot` |
+| **触发时机** | `GET /api/market/live-emotion`、`/live-zt-effect`、`/short-board` 被访问时，经 `RUNNER.emit_live_snapshot` **默认 15s 节流**；可用 `force=True` 强制。 |
+| **对应页面** | [盘面数据](/) 随盘区域 |
+| **回调签名** | `on_live_snapshot(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 结构**（`$schema` = `live-snapshot/1.0.0`）：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/live-snapshot/1.0.0",
+  "schema_version": "1.0.0",
+  "date": "2026-01-02",
+  "sources": {
+    "live_emotion": { "available": true, "as_of": "2026-01-02", "is_live": true, "data": {} },
+    "short_board": { "available": true, "as_of": "2026-01-02", "is_live": true, "data": {} },
+    "live_zt_effect": { "available": true, "as_of": "2026-01-02", "is_live": true, "data": {} },
+    "ladder": { "available": true, "as_of": "2026-01-02", "is_live": true, "data": {} }
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `sources.live_emotion` | 打板情绪（`duanxian.live_emotion`） |
+| `sources.short_board` | 环境条（`duanxian.short_board`） |
+| `sources.live_zt_effect` | 昨涨停效应 |
+| `sources.ladder` | 连板股客观榜（VR `get_short_term_emotion`），与上三者分立 |
+
+---
+
+### A.11 `on_watchlist_change` {#a11-on_watchlist_change}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 自选股增删改通知；覆盖 add / remove / replace。`on_watchlist_add` 仍保留兼容。 |
+| **HookPack 字段** | `on_watchlist_change` |
+| **事件名** | `watchlist.change` |
+| **触发时机** | `POST /api/watchlist/add`（op=add）、`POST /api/watchlist/remove`（op=remove）、`PUT /api/watchlist`（op=replace） |
+| **对应页面** | [自选股](/watchlist) |
+| **回调签名** | `on_watchlist_change(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 结构**（`$schema` = `watchlist-change/1.0.0`）：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/watchlist-change/1.0.0",
+  "schema_version": "1.0.0",
+  "op": "replace",
+  "codes": ["600000"],
+  "added": [],
+  "removed": ["000001"],
+  "source": "手动添加"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `op` | `add` / `remove` / `replace` |
+| `codes` | add/remove 为受影响代码；replace 为变更后全量 |
+| `added` / `removed` | 可选差分（replace 时常用） |
+
+插件经 `import_watchlist` 写入时 **不** 回放本事件，避免环路。
+
+---
+
+### A.12 `on_message_analyzed` {#a12-on_message_analyzed}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 消息结构化分析完成后出站（Telegram / webhook 等）。 |
+| **HookPack 字段** | `on_message_analyzed` |
+| **事件名** | `message.analyzed` |
+| **触发时机** | `analyze_one` 成功写回后；`push_messages(..., auto_analyze=true)` 生成 analyzed 后 |
+| **对应页面** | [消息分析](/messages) |
+| **回调签名** | `on_message_analyzed(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 精简字段**（`$schema` = `message-analyzed/1.0.0`）：`id`、`source_id`、`title`、`summary`、`impact_level`、`ai_impact_level`、`targets`、`analyzed_by`、`raw_ids` 等。
+
+---
+
 ## 附录 B：写入接口（插件 → 引擎）
 
 ---
@@ -762,6 +853,45 @@ _REG.push_messages({
 
 ---
 
+### B.9 `import_experience` {#b9-import_experience}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 写入交易经验主题 Markdown，并刷新 `index.md`（对齐 `POST /api/experience/commit`）。 |
+| **调用方式** | `reg.import_experience(payload) -> ImportResult` |
+| **对应页面** | [交易经验](/experience) |
+| **对应 API** | `POST /api/experience/commit` |
+
+**`payload` 结构**：
+
+```json
+{
+  "files": [
+    {
+      "title": "仓位纪律",
+      "filename": "仓位纪律.md",
+      "content": "# 仓位纪律\n\n…",
+      "summary": "不满仓追高"
+    }
+  ]
+}
+```
+
+---
+
+### B.10 `push_article` {#b10-push_article}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 写入研报文章（原文 + 摘要索引），个股/板块经处理器解析（对齐 `POST /api/articles/commit`）。 |
+| **调用方式** | `reg.push_article(payload) -> ImportResult` |
+| **对应页面** | [研报文章](/articles) |
+| **对应 API** | `POST /api/articles/commit` |
+
+可传 `files: [...]`，或顶层单篇字段（`title` / `original` 或 `content` / `summary` / `stocks` / `sectors` / `date`）。
+
+---
+
 ## 附录 C：扩展指标
 
 ### C.1 `MetricProvider` {#c1-metricprovider}
@@ -842,10 +972,13 @@ class HookPack:
     on_enable: Callable[[HookRegistry], None] | None = None
     on_disable: Callable[[], None] | None = None
     on_metrics_snapshot: Callable[[HookContext, dict], None] | None = None
+    on_live_snapshot: Callable[[HookContext, dict], None] | None = None
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None
     on_review_saved: Callable[[HookContext, dict], None] | None = None
     on_watchlist_add: Callable[[HookContext, dict], None] | None = None
+    on_watchlist_change: Callable[[HookContext, dict], None] | None = None
+    on_message_analyzed: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 ```
 
@@ -862,7 +995,7 @@ class HookPack:
 | `date` | 交易日 `YYYY-MM-DD` |
 | `event` | 如 `metrics.snapshot`、`review.saved` |
 | `emitted_at` | 发出时间（含时区） |
-| `engine_version` | `duanxian.hook_schemas.ENGINE_VERSION`（当前 `0.1.3`） |
+| `engine_version` | `duanxian.hook_schemas.ENGINE_VERSION`（当前 `0.1.4`） |
 | `plugin_id` | 注册表中的 8 位 id |
 | `plugin_name` / `plugin_version` | 来自 `PACK` |
 
@@ -879,7 +1012,7 @@ class HookPack:
   "event": "review.saved",
   "date": "2026-01-02",
   "emitted_at": "2026-01-02T22:15:00+08:00",
-  "engine_version": "0.1.3",
+  "engine_version": "0.1.4",
   "plugin": {
     "id": "a1b2c3d4",
     "name": "my-bridge",

@@ -14,6 +14,8 @@
 | `report_current_stock` | 当前看盘股 | `code` 必填 6 位；未变返回 `detail=unchanged` |
 | `register_message_source` | 登记消息源 | 见 `message-source.md` |
 | `push_messages` | 标准格式推送消息 | 见 `message-source.md` |
+| `import_experience` | 交易经验主题 | `files[]`：title / content / summary（对齐 experience/commit） |
+| `push_article` | 研报文章 | `files[]` 或单篇 title/original（对齐 articles/commit） |
 
 返回多为 `ImportResult(ok, kind, detail)`。
 

@@ -469,7 +469,21 @@ def analyze_one(
     updated = store.update_analyzed(analyzed.id, patch)
     if not updated:
         raise RuntimeError("写入分析结果失败")
+    _emit_message_analyzed_hook(updated)
     return updated
+
+
+def _emit_message_analyzed_hook(analyzed: AnalyzedMessage) -> None:
+    """分析结果落盘后通知插件（宿主未合并时静默跳过）。"""
+    try:
+        from duanxian import hooks
+    except ImportError:
+        return
+    try:
+        dump = analyzed.model_dump() if hasattr(analyzed, "model_dump") else dict(analyzed)
+        hooks.RUNNER.emit_message_analyzed(dump)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def run_batch_stream(

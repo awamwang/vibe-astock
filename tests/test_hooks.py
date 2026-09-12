@@ -229,6 +229,64 @@ class TestHookRegistryImport:
         with pytest.raises(ValueError, match="replace=true"):
             reg.import_watchlist({"replace": False, "codes": ["600000"]})
 
+    def test_remove_codes(self, tmp_path, monkeypatch):
+        vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import watchlist as wl
+
+        wl_file = tmp_path / "watchlist.json"
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(wl, "WL_FILE", str(wl_file))
+        monkeypatch.setattr(wl, "CACHE_DIR", str(tmp_path))
+
+        wl.replace_codes(["600000", "000001"])
+        out = wl.remove_codes(["000001", "300001"])
+        assert out["codes"] == ["600000"]
+        assert out["removed"] == ["000001"]
+        assert out["missing"] == ["300001"]
+
+    def test_import_experience(self, tmp_path, monkeypatch):
+        from duanxian import experience as exp
+        from duanxian.hooks import HookRegistry
+
+        root = tmp_path / "experience"
+        monkeypatch.setattr(exp, "DIR", str(root))
+
+        reg = HookRegistry()
+        res = reg.import_experience({
+            "files": [{
+                "title": "仓位纪律",
+                "filename": "仓位纪律.md",
+                "content": "# 仓位纪律\n\n不满仓追高。\n",
+                "summary": "不满仓追高",
+            }],
+        })
+        assert res.ok
+        assert res.kind == "experience"
+        assert (root / "仓位纪律.md").is_file()
+        assert (root / "index.md").is_file()
+
+    def test_push_article(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+        from duanxian.hooks import HookRegistry
+
+        root = tmp_path / "articles"
+        monkeypatch.setattr(arts, "DIR", str(root))
+
+        reg = HookRegistry()
+        res = reg.push_article({
+            "title": "白酒景气",
+            "date": "2026-01-02",
+            "original": "原文内容足够长。\n第二行。",
+            "summary": "景气回升",
+            "stocks": [],
+            "sectors": [],
+        })
+        assert res.ok
+        assert res.kind == "article"
+        assert any(root.glob("*.md"))
+
     def test_report_current_stock(self):
         from duanxian import current_stock as cs
         from duanxian.hooks import HookRegistry
@@ -394,6 +452,103 @@ class TestHookRunner:
         n = runner.emit_watchlist_add(["600519"], name="贵州茅台")
         assert n == 1
         assert seen == [("with", ["600519"])]
+
+    def test_emit_live_snapshot_throttle_and_force(self, monkeypatch):
+        from duanxian import hook_schemas as hs
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
+
+        calls: list[dict] = []
+
+        def _on_live(ctx, envelope):
+            calls.append(envelope["payload"])
+
+        lp = LoadedPlugin(
+            id="live",
+            path="/x",
+            pack=HookPack(
+                name="live",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_live_snapshot=_on_live,
+            ),
+        )
+        runner = HookRunner([lp], HookRegistry())
+        fake = {
+            "$schema": hs.LIVE_SNAPSHOT,
+            "schema_version": hs.SCHEMA_VERSION,
+            "date": "2026-01-02",
+            "sources": {"live_emotion": {"available": True}},
+        }
+        n1 = runner.emit_live_snapshot("2026-01-02", payload=fake, min_interval=60.0)
+        n2 = runner.emit_live_snapshot("2026-01-02", payload=fake, min_interval=60.0)
+        n3 = runner.emit_live_snapshot("2026-01-02", payload=fake, force=True, min_interval=60.0)
+        assert n1 == 1
+        assert n2 == 0
+        assert n3 == 1
+        assert len(calls) == 2
+        assert "live_emotion" in calls[0]["sources"] or calls[0]["sources"].get("live_emotion")
+
+    def test_emit_watchlist_change_ops(self):
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
+
+        seen: list[dict] = []
+
+        def _on_change(ctx, envelope):
+            seen.append(envelope["payload"])
+
+        lp = LoadedPlugin(
+            id="chg",
+            path="/x",
+            pack=HookPack(
+                name="chg",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_watchlist_change=_on_change,
+            ),
+        )
+        runner = HookRunner([lp], HookRegistry())
+        assert runner.emit_watchlist_change("add", ["600000"], added=["600000"]) == 1
+        assert runner.emit_watchlist_change("remove", ["000001"], removed=["000001"]) == 1
+        assert runner.emit_watchlist_change(
+            "replace",
+            ["600000"],
+            added=[],
+            removed=["000001"],
+        ) == 1
+        assert [p["op"] for p in seen] == ["add", "remove", "replace"]
+        assert seen[2]["removed"] == ["000001"]
+
+    def test_emit_message_analyzed(self):
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
+
+        seen: list[dict] = []
+
+        def _on_msg(ctx, envelope):
+            seen.append(envelope["payload"])
+
+        lp = LoadedPlugin(
+            id="msg",
+            path="/x",
+            pack=HookPack(
+                name="msg",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_message_analyzed=_on_msg,
+            ),
+        )
+        runner = HookRunner([lp], HookRegistry())
+        n = runner.emit_message_analyzed({
+            "id": "an_1",
+            "source_id": "cls_telegraph",
+            "title": "测试",
+            "summary": "摘要",
+            "impact_level": "high",
+            "targets": [{"kind": "stock", "code": "600000", "name": "浦发"}],
+        })
+        assert n == 1
+        assert seen[0]["id"] == "an_1"
+        assert seen[0]["impact_level"] == "high"
+        assert seen[0]["targets"][0]["code"] == "600000"
 
     def test_callback_error_does_not_raise(self):
         from duanxian import plugin_status as ps

@@ -392,6 +392,16 @@ def api_market_session():
             "phase": phase, "label": label}
 
 
+def _maybe_emit_live_snapshot() -> None:
+    """前端轮询随盘接口时，节流向插件推送 live.snapshot（默认 15s）。"""
+    try:
+        from duanxian import hooks
+
+        hooks.RUNNER.emit_live_snapshot()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.get("/api/market/live-emotion")
 def api_market_live_emotion():
     """今日**实时**打板情绪（盘面数据页用）。
@@ -399,7 +409,9 @@ def api_market_live_emotion():
     与 `vr/` 的 `/api/market/emotion` 并存：那条被锁在已收盘那一场（复盘口径），
     这条要的就是今天、随盘变化。两个块在界面上分别标清是哪一场。
     """
-    return live_emotion.snapshot()
+    out = live_emotion.snapshot()
+    _maybe_emit_live_snapshot()
+    return out
 
 
 @app.get("/api/market/live-zt-effect")
@@ -409,7 +421,9 @@ def api_market_live_zt_effect():
     与复盘派生指标口径一致，但允许盘中用实时涨跌幅；昨涨停名单与开盘溢价按日缓存，
     不随短线盘面轮询重复计算。不并入 live-emotion（ADR-0001）。
     """
-    return live_zt_effect.snapshot()
+    out = live_zt_effect.snapshot()
+    _maybe_emit_live_snapshot()
+    return out
 
 
 @app.get("/api/market/short-board")
@@ -419,7 +433,9 @@ def api_market_short_board():
     对齐 awam-stock Environment：选股宝 + 开盘啦 + 东财；含 5/20 日量比。
     上证 / A 股量能按开盘啦「今日累计÷昨日此时×昨日全天」外推。
     """
-    return short_board.snapshot()
+    out = short_board.snapshot()
+    _maybe_emit_live_snapshot()
+    return out
 
 
 @app.get("/api/market/mood-blocks")
@@ -893,11 +909,19 @@ def api_watchlist_put(request: Request, body: dict = Body(...)):
     _add_vr_to_path()
     import watchlist as wl  # noqa: PLC0415
     import watchtower as wt  # noqa: PLC0415
+    from duanxian import hooks  # noqa: PLC0415
 
     try:
         out = wl.sync_codes_from_ui(body.get("codes"))
         wt.set_watch(out["codes"])
         wt.poke()
+        hooks.RUNNER.emit_watchlist_change(
+            "replace",
+            out.get("codes") or [],
+            source=wl.SOURCE_MANUAL,
+            added=out.get("added") or [],
+            removed=out.get("removed") or [],
+        )
         return out
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -907,7 +931,7 @@ def api_watchlist_put(request: Request, body: dict = Body(...)):
 
 @app.post("/api/watchlist/add")
 def api_watchlist_add(request: Request, body: dict = Body(...)):
-    """增量添加自选股，并派发 watchlist.add 钩子给已实现该回调的插件。"""
+    """增量添加自选股，并派发 watchlist.add / watchlist.change 钩子。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源"}, status_code=403)
     _add_vr_to_path()
@@ -931,7 +955,49 @@ def api_watchlist_add(request: Request, body: dict = Body(...)):
             source=wl.SOURCE_MANUAL,
             name=name_s,
         )
+        change_n = hooks.RUNNER.emit_watchlist_change(
+            "add",
+            emit_codes,
+            source=wl.SOURCE_MANUAL,
+            name=name_s,
+            added=out.get("added") or emit_codes,
+        )
         out["hooks_dispatched"] = hooks_n
+        out["hooks_change_dispatched"] = change_n
+        return out
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+@app.post("/api/watchlist/remove")
+def api_watchlist_remove(request: Request, body: dict = Body(...)):
+    """按代码删除自选股，并派发 watchlist.change(op=remove)。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    _add_vr_to_path()
+    import watchlist as wl  # noqa: PLC0415
+    import watchtower as wt  # noqa: PLC0415
+    from duanxian import hooks  # noqa: PLC0415
+
+    try:
+        raw = body.get("codes")
+        if raw is None and body.get("code") is not None:
+            raw = [body.get("code")]
+        out = wl.remove_codes(raw)
+        wt.set_watch(out["codes"])
+        wt.poke()
+        removed = out.get("removed") or []
+        change_n = 0
+        if removed:
+            change_n = hooks.RUNNER.emit_watchlist_change(
+                "remove",
+                removed,
+                source=wl.SOURCE_MANUAL,
+                removed=removed,
+            )
+        out["hooks_change_dispatched"] = change_n
         return out
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)

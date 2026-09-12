@@ -76,10 +76,13 @@ class HookPack:
     on_enable: Callable[["HookRegistry"], None] | None = None
     on_disable: Callable[[], None] | None = None
     on_metrics_snapshot: Callable[[HookContext, dict], None] | None = None
+    on_live_snapshot: Callable[[HookContext, dict], None] | None = None
     on_budget_snapshot: Callable[[HookContext, dict], None] | None = None
     on_verification_snapshot: Callable[[HookContext, dict], None] | None = None
     on_review_saved: Callable[[HookContext, dict], None] | None = None
     on_watchlist_add: Callable[[HookContext, dict], None] | None = None
+    on_watchlist_change: Callable[[HookContext, dict], None] | None = None
+    on_message_analyzed: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 
 
@@ -265,6 +268,7 @@ class HookRegistry:
 
         inserted = msg_store.insert_raw_batch(drafts)
         analyzed_n = 0
+        analyzed_rows: list[dict] = []
         if auto_analyze and inserted:
             by_ext: dict[str, dict] = {}
             by_content: dict[str, dict] = {}
@@ -282,14 +286,62 @@ class HookRegistry:
                 else:
                     item = by_content.get(raw.content)
                 patch = _analyze_patch_from_push_item(item or {}, raw)
-                msg_store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by="rule")
+                analyzed = msg_store.upsert_analyzed_from_raw(raw, patch=patch, analyzed_by="rule")
                 analyzed_n += 1
+                if analyzed is not None:
+                    dump = analyzed.model_dump() if hasattr(analyzed, "model_dump") else dict(analyzed)
+                    analyzed_rows.append(dump)
+
+        if analyzed_rows:
+            try:
+                # 模块级 RUNNER 在 _init 后可用；测试里可直接构造 HookRunner
+                runner = globals().get("RUNNER")
+                if runner is not None:
+                    runner.emit_message_analyzed_batch(analyzed_rows)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
 
         return ImportResult(
             True,
             "message_push",
             f"inserted={len(inserted)} analyzed={analyzed_n}",
         )
+
+    def import_experience(self, payload: dict) -> ImportResult:
+        """写入交易经验主题（对齐 POST /api/experience/commit）。"""
+        from . import experience as exp
+
+        body = dict(payload or {})
+        schema = str(body.get("$schema") or "").strip()
+        if schema and schema != hs.EXPERIENCE_IMPORT and not schema.endswith("/experience-import/1.0.0"):
+            raise ValueError(f"不支持的经验写入 schema: {schema}")
+        files = body.get("files")
+        if not isinstance(files, list) or not files:
+            raise ValueError("files 须为非空列表")
+        result = exp.commit_files(files)
+        written = result.get("written") or []
+        return ImportResult(True, "experience", f"{len(written)} 篇")
+
+    def push_article(self, payload: dict) -> ImportResult:
+        """写入研报文章（对齐 POST /api/articles/commit）；可传 files[] 或单篇字段。"""
+        from . import articles as arts
+
+        body = dict(payload or {})
+        schema = str(body.get("$schema") or "").strip()
+        if schema and schema != hs.ARTICLE_PUSH and not schema.endswith("/article-push/1.0.0"):
+            raise ValueError(f"不支持的文章推送 schema: {schema}")
+        files = body.get("files")
+        if files is None:
+            # 单篇：顶层 title/original/content 等
+            if any(k in body for k in ("title", "original", "content", "filename")):
+                files = [body]
+            else:
+                files = []
+        if not isinstance(files, list) or not files:
+            raise ValueError("files 须为非空列表，或提供单篇 title/original")
+        result = arts.commit_files(files)
+        written = result.get("written") or []
+        return ImportResult(True, "article", f"{len(written)} 篇")
 
 
 def _parse_message_push_items(
@@ -599,6 +651,127 @@ def build_watchlist_add_payload(
     return body
 
 
+def build_watchlist_change_payload(
+    op: str,
+    codes: list[str],
+    *,
+    source: str = "手动添加",
+    name: str | None = None,
+    added: list[str] | None = None,
+    removed: list[str] | None = None,
+) -> dict:
+    """构造 watchlist.change 事件 payload（op=add|remove|replace）。"""
+    op_s = str(op or "").strip().lower()
+    if op_s not in ("add", "remove", "replace"):
+        raise ValueError("op 仅支持 add / remove / replace")
+    clean = [str(c).strip() for c in codes if str(c or "").strip()]
+    body: dict[str, Any] = {
+        "$schema": hs.WATCHLIST_CHANGE,
+        "schema_version": hs.SCHEMA_VERSION,
+        "op": op_s,
+        "codes": clean,
+        "source": str(source or "手动添加").strip() or "手动添加",
+    }
+    if name:
+        body["name"] = str(name).strip()
+    if added is not None:
+        body["added"] = [str(c).strip() for c in added if str(c or "").strip()]
+    if removed is not None:
+        body["removed"] = [str(c).strip() for c in removed if str(c or "").strip()]
+    return body
+
+
+def _safe_live_source(key: str, date: str, fetch) -> dict:
+    try:
+        snap = fetch()
+        if not isinstance(snap, dict):
+            raise TypeError(f"{key} 返回非 dict")
+        as_of = str(snap.get("as_of") or snap.get("date") or date)
+        is_live = bool(snap.get("is_live", True))
+        return _wrap_source(snap, as_of, is_live=is_live)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "as_of": date,
+            "is_live": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "data": None,
+        }
+
+
+def build_live_payload(date: str | None = None) -> dict:
+    """构造随盘快照：打板情绪 / 环境条 / 昨涨停效应 / 连板榜分块保留（ADR-0001）。"""
+    day = date or china_today()
+
+    def _emotion():
+        from . import live_emotion as le
+
+        return le.snapshot()
+
+    def _board():
+        from . import short_board as sb
+
+        return sb.snapshot()
+
+    def _zt_effect():
+        from . import live_zt_effect as lze
+
+        return lze.snapshot()
+
+    def _ladder():
+        _ensure_vr_path()
+        import market as mkt  # noqa: PLC0415
+
+        return mkt.get_short_term_emotion()
+
+    sources = {
+        "live_emotion": _safe_live_source("live_emotion", day, _emotion),
+        "short_board": _safe_live_source("short_board", day, _board),
+        "live_zt_effect": _safe_live_source("live_zt_effect", day, _zt_effect),
+        # 连板股客观榜（VR short_term_emotion）；与打板情绪 / 环境条分立
+        "ladder": _safe_live_source("ladder", day, _ladder),
+    }
+    return {
+        "$schema": hs.LIVE_SNAPSHOT,
+        "schema_version": hs.SCHEMA_VERSION,
+        "date": day,
+        "sources": sources,
+    }
+
+
+def build_message_analyzed_payload(analyzed: dict) -> dict:
+    """从分析消息 dict 抽出插件出站字段。"""
+    body = dict(analyzed or {})
+    targets_raw = body.get("targets") or []
+    targets: list[dict] = []
+    if isinstance(targets_raw, list):
+        for t in targets_raw:
+            if isinstance(t, dict) and str(t.get("name") or "").strip():
+                targets.append({
+                    "kind": str(t.get("kind") or "other"),
+                    "code": t.get("code"),
+                    "name": str(t.get("name") or ""),
+                })
+    return {
+        "$schema": hs.MESSAGE_ANALYZED,
+        "schema_version": hs.SCHEMA_VERSION,
+        "id": str(body.get("id") or ""),
+        "source_id": str(body.get("source_id") or ""),
+        "source_label": str(body.get("source_label") or ""),
+        "title": str(body.get("title") or ""),
+        "summary": str(body.get("summary") or ""),
+        "impact_level": str(body.get("impact_level") or "medium"),
+        "ai_impact_level": body.get("ai_impact_level"),
+        "initial_impact_level": body.get("initial_impact_level"),
+        "freshness": str(body.get("freshness") or ""),
+        "analyzed_by": body.get("analyzed_by"),
+        "raw_ids": list(body.get("raw_ids") or []),
+        "targets": targets,
+        "matched_follow_keywords": list(body.get("matched_follow_keywords") or []),
+        "matched_follow_blocks": list(body.get("matched_follow_blocks") or []),
+    }
+
+
 def _envelope(event: str, date: str, payload: dict, plugin: LoadedPlugin) -> dict:
     now = china_now().strftime("%Y-%m-%dT%H:%M:%S%z")
     if len(now) > 5 and now[-5] in "+-":
@@ -662,6 +835,9 @@ class HookRunner:
     def __init__(self, plugins: list[LoadedPlugin], registry: HookRegistry):
         self.plugins = list(plugins)
         self.registry = registry
+        self._live_lock = threading.Lock()
+        self._live_last_emit = 0.0
+        self._live_min_interval = 15.0
 
     def emit_metrics(self, date: str, review: dict | None, *, scope: str = "review") -> None:
         payload = build_metrics_payload(scope, date, review)
@@ -672,6 +848,42 @@ class HookRunner:
                 _ctx(date, "metrics.snapshot", lp),
                 _envelope("metrics.snapshot", date, payload, lp),
             )
+
+    def emit_live_snapshot(
+        self,
+        date: str | None = None,
+        *,
+        force: bool = False,
+        min_interval: float | None = None,
+        payload: dict | None = None,
+    ) -> int:
+        """向已实现 on_live_snapshot 的插件派发随盘快照；默认节流，返回收到回调的插件数。"""
+        import time
+
+        if not any(lp.pack.on_live_snapshot is not None for lp in self.plugins):
+            return 0
+
+        interval = self._live_min_interval if min_interval is None else float(min_interval)
+        now = time.monotonic()
+        with self._live_lock:
+            if not force and interval > 0 and (now - self._live_last_emit) < interval:
+                return 0
+            self._live_last_emit = now
+
+        day = date or china_today()
+        body = payload or build_live_payload(day)
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_live_snapshot is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_live_snapshot,
+                lp,
+                _ctx(day, "live.snapshot", lp),
+                _envelope("live.snapshot", day, body, lp),
+            )
+        return n
 
     def emit_budget(self, date: str, budget_env: dict) -> None:
         payload = build_budget_payload(budget_env)
@@ -769,6 +981,78 @@ class HookRunner:
                 _envelope("watchlist.add", day, payload, lp),
             )
         return n
+
+    def emit_watchlist_change(
+        self,
+        op: str,
+        codes: list[str],
+        *,
+        source: str = "手动添加",
+        name: str | None = None,
+        added: list[str] | None = None,
+        removed: list[str] | None = None,
+        date: str | None = None,
+    ) -> int:
+        """向已实现 on_watchlist_change 的插件派发自选变更；返回收到回调的插件数。"""
+        clean = [str(c).strip() for c in codes if str(c or "").strip()]
+        op_s = str(op or "").strip().lower()
+        if op_s not in ("add", "remove", "replace"):
+            return 0
+        if op_s != "replace" and not clean:
+            return 0
+        day = date or china_today()
+        payload = build_watchlist_change_payload(
+            op_s,
+            clean,
+            source=source,
+            name=name,
+            added=added,
+            removed=removed,
+        )
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_watchlist_change is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_watchlist_change,
+                lp,
+                _ctx(day, "watchlist.change", lp),
+                _envelope("watchlist.change", day, payload, lp),
+            )
+        return n
+
+    def emit_message_analyzed(self, analyzed: dict, *, date: str | None = None) -> int:
+        """向已实现 on_message_analyzed 的插件派发单条分析结果。"""
+        if not isinstance(analyzed, dict) or not analyzed.get("id"):
+            return 0
+        day = date or china_today()
+        payload = build_message_analyzed_payload(analyzed)
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_message_analyzed is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_message_analyzed,
+                lp,
+                _ctx(day, "message.analyzed", lp),
+                _envelope("message.analyzed", day, payload, lp),
+            )
+        return n
+
+    def emit_message_analyzed_batch(
+        self,
+        rows: list[dict],
+        *,
+        date: str | None = None,
+    ) -> int:
+        """批量派发分析结果；返回累计回调次数（插件数 × 条数口径为逐条求和）。"""
+        total = 0
+        for row in rows or []:
+            if isinstance(row, dict):
+                total += self.emit_message_analyzed(row, date=date)
+        return total
 
 
 def _validate_providers(providers: tuple[MetricProvider, ...]) -> tuple[MetricProvider, ...]:

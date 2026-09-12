@@ -5,10 +5,13 @@
 | 回调 | 事件 | 典型触发 |
 |------|------|----------|
 | `on_metrics_snapshot` | `metrics.snapshot` | 复盘保存后 |
+| `on_live_snapshot` | `live.snapshot` | 随盘 HTTP 轮询（默认 15s 节流） |
 | `on_verification_snapshot` | `verification.snapshot` | 复盘保存后；用户保存验证条件 |
 | `on_budget_snapshot` | `budget.snapshot` | `trade_store.refresh(emit_hooks=True)`；复盘保存后有预算时 |
 | `on_review_saved` | `review.saved` | 复盘保存后聚合包（可用 `enable_review_saved=False` 关闭） |
 | `on_watchlist_add` | `watchlist.add` | `POST /api/watchlist/add`（个股右键添加自选等） |
+| `on_watchlist_change` | `watchlist.change` | 自选 add / remove / `PUT` replace |
+| `on_message_analyzed` | `message.analyzed` | AI/规则分析落盘；`push_messages(auto_analyze=true)` |
 
 签名：`callback(ctx: HookContext, envelope: dict) -> None`。
 

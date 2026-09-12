@@ -87,9 +87,13 @@ sequenceDiagram
 | 事件名 | 回调字段 | 典型触发点 | `payload` 内 `$schema` |
 |---|---|---|---|
 | `metrics.snapshot` | `on_metrics_snapshot` | 复盘保存后；可单独调用 | `metrics-snapshot/1.0.0` |
+| `live.snapshot` | `on_live_snapshot` | 随盘 HTTP 轮询（默认 15s 节流） | `live-snapshot/1.0.0` |
 | `verification.snapshot` | `on_verification_snapshot` | 复盘保存后；用户保存明日验证条件后 | `verification-snapshot/1.0.0` |
 | `budget.snapshot` | `on_budget_snapshot` | `trade_store.refresh(emit_hooks=True)`；复盘保存后（有预算时） | `budget-snapshot/1.0.0` |
 | `review.saved` | `on_review_saved` | 复盘保存后（聚合事件） | `review-saved/1.0.0`（内层） |
+| `watchlist.add` | `on_watchlist_add` | `POST /api/watchlist/add` | `watchlist-add/1.0.0` |
+| `watchlist.change` | `on_watchlist_change` | 自选 add / remove / replace | `watchlist-change/1.0.0` |
+| `message.analyzed` | `on_message_analyzed` | AI/规则分析落盘后 | `message-analyzed/1.0.0` |
 
 信封层统一使用 `envelope/1.0.0`。
 
@@ -191,7 +195,7 @@ sequenceDiagram
 
 ## 版本字段
 
-- `hook_schemas.ENGINE_VERSION`：引擎侧钩子协议版本（当前 `0.1.3`）。
+- `hook_schemas.ENGINE_VERSION`：引擎侧钩子协议版本（当前 `0.1.4`）。
 - `hook_schemas.SCHEMA_VERSION`：JSON payload 的 `schema_version`（当前 `1.0.0`）。
 - 插件 `HookPack.version`：插件自述版本，出现在信封 `plugin.version` 中。
 

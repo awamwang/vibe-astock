@@ -174,14 +174,18 @@ def merge_plugin_codes(codes: Any, source: str) -> dict:
 
 
 def sync_codes_from_ui(codes: Any) -> dict:
-    """前端全量同步：新增标为手动添加；保留项维持来源与时间；仅删除时不写 updated_at。"""
+    """前端全量同步：新增标为手动添加；保留项维持来源与时间；仅删除时不写 updated_at。
+
+    返回导出形状，并附带 ``added`` / ``removed`` 差分（供钩子派发）。
+    """
     clean = normalize_codes(codes)
     with _LOCK:
         data = _load()
         old_items = {it["code"]: dict(it) for it in data.get("items") or []}
         old_codes = set(old_items)
         new_codes = set(clean)
-        added = new_codes - old_codes
+        added = sorted(new_codes - old_codes)
+        removed = sorted(old_codes - new_codes)
         items: list[dict[str, Any]] = []
         for code in clean:
             if code in old_items:
@@ -192,7 +196,10 @@ def sync_codes_from_ui(codes: Any) -> dict:
         if added:
             data["updated_at"] = _now()
         _save(data)
-    return get_watchlist()
+        out = _export(data)
+    out["added"] = added
+    out["removed"] = removed
+    return out
 
 
 def add_codes(codes: Any, *, source: str = SOURCE_MANUAL) -> dict:
@@ -224,6 +231,34 @@ def add_codes(codes: Any, *, source: str = SOURCE_MANUAL) -> dict:
         out = _export(data)
     out["added"] = added
     out["skipped"] = skipped
+    return out
+
+
+def remove_codes(codes: Any) -> dict:
+    """按代码删除自选股。
+
+    返回导出形状，并附带 ``removed``（实际删掉）与 ``missing``（本就不在列表中）。
+    """
+    clean = normalize_codes(codes)
+    stamp = _now()
+    with _LOCK:
+        data = _load()
+        by_code = {it["code"]: dict(it) for it in data.get("items") or []}
+        removed: list[str] = []
+        missing: list[str] = []
+        for code in clean:
+            if code in by_code:
+                del by_code[code]
+                removed.append(code)
+            else:
+                missing.append(code)
+        if removed:
+            data["items"] = [it for it in (data.get("items") or []) if it.get("code") in by_code]
+            data["updated_at"] = stamp
+            _save(data)
+        out = _export(data)
+    out["removed"] = removed
+    out["missing"] = missing
     return out
 
 
