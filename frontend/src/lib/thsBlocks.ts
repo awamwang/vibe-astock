@@ -52,6 +52,8 @@ export interface ThsTreeFilterOpts {
   nodeFilter?: "all" | "leaf" | "branch";
   /** 本地 id → 行情代码，用于树搜索匹配 code */
   codeById?: Map<string, string>;
+  /** 若提供，仅保留 id 在集合内的节点（及其祖先链） */
+  allowedIds?: Set<string>;
 }
 
 function nodeMatchesFilter(
@@ -78,6 +80,14 @@ function nodeMatchesQuery(
   );
 }
 
+function nodeMatchesAllowed(
+  node: { id: string },
+  allowedIds?: Set<string>,
+): boolean {
+  if (!allowedIds) return true;
+  return allowedIds.has(node.id);
+}
+
 /** 按搜索与节点类型裁剪板块树，保留匹配节点的祖先链 */
 export function filterThsTree(
   node: ThsTreeNode,
@@ -86,11 +96,15 @@ export function filterThsTree(
   const nodeFilter = opts.nodeFilter ?? "all";
   const query = opts.query ?? "";
   const codeById = opts.codeById;
+  const allowedIds = opts.allowedIds;
   const children = (node.children ?? [])
     .map((child) => filterThsTree(child, opts))
     .filter((c): c is ThsTreeNode => c != null);
 
-  const selfMatch = nodeMatchesQuery(node, query, codeById) && nodeMatchesFilter(node, nodeFilter);
+  const selfMatch =
+    nodeMatchesQuery(node, query, codeById)
+    && nodeMatchesFilter(node, nodeFilter)
+    && nodeMatchesAllowed(node, allowedIds);
   const childMatch = children.length > 0;
 
   if (nodeFilter === "leaf" && node.node_type === "branch") {

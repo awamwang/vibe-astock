@@ -346,16 +346,20 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     loadSession(),
     Promise.resolve(refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code))),
   ]);
-  const loadHeavy = () => Promise.all([
-    loadSentiment(),
-    loadTurnover(),
-    loadMoodBlocks(),
-  ]);
+  /** 仅拉取指定底部标签所需数据（自动刷新 / 切签各走这一条） */
+  const loadTabData = (key: TabKey) => {
+    if (key === "emotion") return loadEmotion();
+    if (key === "turnover") return loadTurnover();
+    if (key === "mood") return loadMoodBlocks();
+    // sectors / rotation 同源 marketOverview
+    return loadSectors();
+  };
 
   useEffect(() => {
     void loadLive();
-    void loadHeavy();
-    void loadEmotion();
+    // 首屏：顶部区 + 当前标签；其余标签切过去时再拉
+    void loadSentiment();
+    void loadTabData(popoutTab ?? tab);
   }, []);
 
   useEffect(() => {
@@ -364,6 +368,19 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
 
   const liveInFlight = useRef(false);
   const heavyInFlight = useRef(false);
+  const tabBootstrapped = useRef(false);
+  const activeTabRef = useRef<TabKey>(popoutTab ?? tab);
+  activeTabRef.current = popoutTab ?? tab;
+
+  // 切到某标签时拉一次（首屏已由上面的 mount effect 加载，跳过第一次）
+  useEffect(() => {
+    const key = popoutTab ?? tab;
+    if (!tabBootstrapped.current) {
+      tabBootstrapped.current = true;
+      return;
+    }
+    void loadTabData(key);
+  }, [popoutTab, tab]);
 
   useEffect(() => {
     const live = session?.phase === "盘中" || session?.phase === "集合竞价";
@@ -398,7 +415,13 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
         return;
       }
       heavyInFlight.current = true;
-      void Promise.resolve(loadHeavy()).finally(() => {
+      const key = activeTabRef.current;
+      // 顶部「市场整体」涨跌宽度仍按重载周期刷；底部标签只刷当前选中项
+      const tasks: Promise<unknown>[] = [loadSentiment()];
+      if (key !== "sectors" && key !== "rotation") {
+        tasks.push(loadTabData(key));
+      }
+      void Promise.all(tasks).finally(() => {
         heavyInFlight.current = false;
         if (!cancelled) scheduleHeavy();
       });
@@ -467,12 +490,12 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const tabs = SHORT_BOARD_TABS;
   const activeTab = popoutTab ?? tab;
 
-  const refreshTab = () => {
-    if (activeTab === "emotion") loadEmotion();
-    else if (activeTab === "turnover") loadTurnover();
-    else if (activeTab === "mood") loadMoodBlocks();
-    else loadSectors();
-  };
+  const refreshTab = () => { void loadTabData(activeTab); };
+  const tabBusy =
+    (activeTab === "emotion" && busy.emotion) ||
+    (activeTab === "turnover" && busy.turnover) ||
+    (activeTab === "mood" && busy.mood) ||
+    ((activeTab === "sectors" || activeTab === "rotation") && busy.sectors);
 
   const showMarket = !isPopout || popoutSection === "market";
   const showEmotion = !isPopout || popoutSection === "emotion";
@@ -507,7 +530,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             <button
               onClick={toggleAuto}
               title={autoRefresh
-                ? `已开：市场整体与短线情绪每 ${LIVE_MS / 1000} 秒、板块资金 / 成交额 / 板块人气每 ${HEAVY_MS / 1000} 秒。只在盘中生效`
+                ? `已开：市场整体与短线情绪每 ${LIVE_MS / 1000} 秒；底部当前标签每 ${HEAVY_MS / 1000} 秒（切换标签会立即刷一次）。只在盘中生效`
                 : "开启后在交易时段自动刷新"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -789,7 +812,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
           className="ml-auto mb-1 text-muted-foreground hover:text-primary"
           title="刷新当前标签"
         >
-          {(busy.emotion || busy.turnover || busy.sectors || busy.mood)
+          {tabBusy
             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
             : <RefreshCw className="h-3.5 w-3.5" />}
         </button>
@@ -802,7 +825,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             className="text-muted-foreground hover:text-primary"
             title="刷新"
           >
-            {(busy.emotion || busy.turnover || busy.sectors || busy.mood)
+            {tabBusy
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
               : <RefreshCw className="h-3.5 w-3.5" />}
           </button>

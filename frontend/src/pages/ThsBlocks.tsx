@@ -37,6 +37,8 @@ const inputCls =
 
 type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype";
 type ViewMode = "tree" | "list";
+/** 关注为虚拟类型：跨 kind 展示已关注板块，树视图按原层级裁剪 */
+const FOLLOWED_KIND = "followed";
 
 function DetailSection({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -90,6 +92,104 @@ function FollowBlockButton({
       <Star className={cn(iconCls, followed && "fill-current")} />
       {size === "md" && (followed ? "已关注" : "关注")}
     </button>
+  );
+}
+
+function FollowedOrKindTable({
+  filteredRows,
+  showSubtypeCol,
+  sort,
+  order,
+  onSort,
+  selected,
+  followedIds,
+  onOpen,
+  onToggleFollow,
+}: {
+  filteredRows: ThsBlockRow[];
+  showSubtypeCol: boolean;
+  sort: SortKey;
+  order: "asc" | "desc";
+  onSort: (key: SortKey) => void;
+  selected: ThsBlockRow | null;
+  followedIds: Set<string>;
+  onOpen: (row: ThsBlockRow) => void;
+  onToggleFollow: (row: ThsBlockRow) => void;
+}) {
+  return (
+    <table className="w-full min-w-[640px] text-sm">
+      <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
+        <tr className="border-b border-border/60 text-left">
+          <SortTh col="id" label="代码" sortCol={sort} order={order} onSort={onSort} />
+          <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={onSort} />
+          {showSubtypeCol && (
+            <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={onSort} />
+          )}
+          <SortTh col="node_type" label="节点" sortCol={sort} order={order} onSort={onSort} />
+          <SortTh col="tree_path" label="树路径" sortCol={sort} order={order} onSort={onSort} />
+          <th className="w-16 px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">关注</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredRows.map((row) => {
+          const active = selected?.kind === row.kind && selected?.id === row.id;
+          const subtype = thsCustomSubtypeLabel(row);
+          const depth = row.depth ?? 0;
+          const followed = followedIds.has(`${row.kind}|${row.id}`);
+          return (
+            <tr
+              key={`${row.kind}-${row.id}`}
+              className={cn(
+                "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/30",
+                active && "bg-primary/8",
+              )}
+              onClick={() => onOpen(row)}
+            >
+              <td className="px-4 py-2.5 font-mono text-xs">
+                {row.code ? (
+                  <span className="text-foreground">{row.code}</span>
+                ) : (
+                  <span className="text-muted-foreground">{row.id}</span>
+                )}
+              </td>
+              <td className="px-4 py-2.5 font-medium text-foreground">
+                <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
+                  {row.name || "—"}
+                </span>
+                {row.stock_count != null && (
+                  <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">
+                    ({row.stock_count})
+                  </span>
+                )}
+              </td>
+              {showSubtypeCol && (
+                <td className="px-4 py-2.5 text-muted-foreground">{subtype || "—"}</td>
+              )}
+              <td className="px-4 py-2.5 text-muted-foreground">
+                {THS_NODE_TYPE_LABEL[row.node_type] || row.node_type}
+              </td>
+              <td className="max-w-[280px] truncate px-4 py-2.5 text-muted-foreground" title={row.tree_path}>
+                {row.tree_path}
+              </td>
+              <td className="px-3 py-2.5 text-center">
+                <FollowBlockButton
+                  followed={followed}
+                  onToggle={() => onToggleFollow(row)}
+                  className="mx-auto"
+                />
+              </td>
+            </tr>
+          );
+        })}
+        {!filteredRows.length && (
+          <tr>
+            <td colSpan={showSubtypeCol ? 6 : 5} className="px-4 py-10 text-center text-muted-foreground">
+              无匹配板块
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 
@@ -319,10 +419,61 @@ export function ThsBlocks() {
     }
   };
 
-  const kindEntry = snapshot?.kinds?.[kindFilter];
-  const allRows = kindEntry?.rows || [];
+  const isFollowedView = kindFilter === FOLLOWED_KIND;
+
+  /** 关注视图：从各 kind 快照解析已关注行；普通视图：当前 kind 全部行 */
+  const allRows = useMemo(() => {
+    if (!isFollowedView) {
+      return snapshot?.kinds?.[kindFilter]?.rows || [];
+    }
+    const out: ThsBlockRow[] = [];
+    const seen = new Set<string>();
+    for (const fb of followBlocks) {
+      const key = `${fb.kind}|${fb.id}`;
+      if (seen.has(key)) continue;
+      const row = snapshot?.kinds?.[fb.kind]?.rows?.find((r) => r.id === fb.id);
+      if (row) {
+        seen.add(key);
+        out.push(row);
+      }
+    }
+    return out;
+  }, [isFollowedView, kindFilter, snapshot, followBlocks]);
+
+  const kindEntry = isFollowedView ? null : snapshot?.kinds?.[kindFilter];
   const showSubtypeCol = kindFilter === "custom";
-  const canShowTree = kindEntry?.tree_mode === "tree" && !!kindEntry.tree;
+
+  /** 关注视图：任一关注项所属 kind 有树即可树形浏览 */
+  const followedTreeSections = useMemo(() => {
+    if (!isFollowedView || !snapshot?.kinds) return [];
+    const sections: { kind: string; label: string; tree: ThsTreeNode; rowById: Map<string, ThsBlockRow> }[] = [];
+    for (const k of THS_BLOCK_KINDS) {
+      const entry = snapshot.kinds[k.value];
+      if (!entry?.tree || entry.tree_mode !== "tree") continue;
+      const followedInKind = followBlocks.filter((b) => b.kind === k.value);
+      if (!followedInKind.length) continue;
+      const allowedIds = new Set(followedInKind.map((b) => b.id));
+      const root = parseThsTree(entry.tree);
+      if (!root) continue;
+      const codeById = new Map<string, string>();
+      for (const row of entry.rows || []) {
+        if (row.code) codeById.set(row.id, row.code);
+      }
+      const pruned = filterThsTree(root, { query: q, nodeFilter, codeById, allowedIds });
+      if (!pruned) continue;
+      sections.push({
+        kind: k.value,
+        label: k.label,
+        tree: pruned,
+        rowById: new Map((entry.rows || []).map((row) => [row.id, row])),
+      });
+    }
+    return sections;
+  }, [isFollowedView, snapshot, followBlocks, q, nodeFilter]);
+
+  const canShowTree = isFollowedView
+    ? followedTreeSections.length > 0
+    : kindEntry?.tree_mode === "tree" && !!kindEntry.tree;
 
   useEffect(() => {
     if (canShowTree) {
@@ -333,7 +484,20 @@ export function ThsBlocks() {
   }, [kindFilter, canShowTree]);
 
   useEffect(() => {
-    if (!canShowTree || !kindEntry?.tree) {
+    if (!canShowTree) {
+      setExpanded(new Set());
+      return;
+    }
+    if (isFollowedView) {
+      // 关注树已裁剪，默认全部展开以便直接看到收藏节点
+      const ids = new Set<string>();
+      for (const section of followedTreeSections) {
+        for (const id of collectThsBranchIds(section.tree)) ids.add(id);
+      }
+      setExpanded(ids);
+      return;
+    }
+    if (!kindEntry?.tree) {
       setExpanded(new Set());
       return;
     }
@@ -348,7 +512,7 @@ export function ThsBlocks() {
     };
     walk(root, 0);
     setExpanded(ids);
-  }, [kindFilter, canShowTree, kindEntry?.tree]);
+  }, [kindFilter, canShowTree, kindEntry?.tree, isFollowedView, followedTreeSections]);
 
   const rowById = useMemo(
     () => new Map(allRows.map((row) => [row.id, row])),
@@ -356,7 +520,7 @@ export function ThsBlocks() {
   );
 
   const filteredTree = useMemo(() => {
-    if (!canShowTree || !kindEntry?.tree) return null;
+    if (isFollowedView || !canShowTree || !kindEntry?.tree) return null;
     const root = parseThsTree(kindEntry.tree);
     if (!root) return null;
     const codeById = new Map<string, string>();
@@ -364,7 +528,7 @@ export function ThsBlocks() {
       if (row.code) codeById.set(row.id, row.code);
     }
     return filterThsTree(root, { query: q, nodeFilter, codeById });
-  }, [canShowTree, kindEntry?.tree, q, nodeFilter, allRows]);
+  }, [isFollowedView, canShowTree, kindEntry?.tree, q, nodeFilter, allRows]);
 
   const filteredRows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -404,6 +568,20 @@ export function ThsBlocks() {
     return rows;
   }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree]);
 
+  /** 关注视图中无树结构的类型（自定义 / 每日动态等），树形模式下附在裁剪树之后 */
+  const followedFlatGroups = useMemo(() => {
+    if (!isFollowedView) return [];
+    const treeKinds = new Set(followedTreeSections.map((s) => s.kind));
+    const groups: { kind: string; label: string; rows: ThsBlockRow[] }[] = [];
+    for (const k of THS_BLOCK_KINDS) {
+      if (treeKinds.has(k.value)) continue;
+      const rows = filteredRows.filter((r) => r.kind === k.value);
+      if (!rows.length) continue;
+      groups.push({ kind: k.value, label: k.label, rows });
+    }
+    return groups;
+  }, [isFollowedView, followedTreeSections, filteredRows]);
+
   const toggleSort = (key: SortKey) => {
     if (sort === key) setOrder((o) => (o === "asc" ? "desc" : "asc"));
     else {
@@ -422,6 +600,14 @@ export function ThsBlocks() {
   };
 
   const expandAllBranches = () => {
+    if (isFollowedView) {
+      const ids = new Set<string>();
+      for (const section of followedTreeSections) {
+        for (const id of collectThsBranchIds(section.tree)) ids.add(id);
+      }
+      setExpanded(ids);
+      return;
+    }
     if (!kindEntry?.tree) return;
     const root = parseThsTree(kindEntry.tree);
     if (!root) return;
@@ -526,6 +712,24 @@ export function ThsBlocks() {
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => {
+              setKindFilter(FOLLOWED_KIND);
+              setSelected(null);
+              setStocksDetail(null);
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+              isFollowedView
+                ? "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                : "border-border bg-background text-muted-foreground hover:border-amber-500/35 hover:text-amber-700 dark:hover:text-amber-300",
+            )}
+          >
+            <Star className={cn("h-3.5 w-3.5", isFollowedView && "fill-current")} />
+            关注
+            <span className="tabular-nums opacity-70">{followBlocks.length}</span>
+          </button>
         </div>
 
         <div className="mt-2">
@@ -552,6 +756,12 @@ export function ThsBlocks() {
               )}
             </>
           )}
+          {isFollowedView && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-300">
+              <Star className="h-3 w-3 fill-current" />
+              已关注 {followBlocks.length} · 可解析 {allRows.length}
+            </span>
+          )}
           {kindEntry?.branch_count != null && (
             <span className="inline-flex items-center gap-1 rounded-md bg-muted/40 px-2 py-0.5">
               <Network className="h-3 w-3" />
@@ -561,7 +771,7 @@ export function ThsBlocks() {
           {kindEntry?.tree_mode === "flat_fallback" && (
             <span className="text-amber-700 dark:text-amber-300">树结构不可用，已展示 flat 列表</span>
           )}
-          {kindEntry && (
+          {kindEntry && !isFollowedView && (
             <button
               type="button"
               disabled={refreshing}
@@ -629,7 +839,7 @@ export function ThsBlocks() {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   共 <strong className="text-foreground">{visibleCount}</strong> 条
-                  {kindEntry ? ` · ${kindEntry.kind_label}` : ""}
+                  {isFollowedView ? " · 关注" : kindEntry ? ` · ${kindEntry.kind_label}` : ""}
                   {viewMode === "tree" && canShowTree ? " · 树形浏览" : ""}
                 </p>
                 {viewMode === "tree" && canShowTree && (
@@ -659,6 +869,99 @@ export function ThsBlocks() {
                 <div className="p-12 text-center text-sm text-muted-foreground">
                   点击右上角「刷新板块」加载同花顺板块数据
                 </div>
+              ) : isFollowedView ? (
+                !followBlocks.length ? (
+                  <p className="p-12 text-center text-sm text-muted-foreground">
+                    暂无关注板块，在概念 / 行业等类型中点击星标即可收藏
+                  </p>
+                ) : !allRows.length ? (
+                  <p className="p-12 text-center text-sm text-muted-foreground">
+                    已关注 {followBlocks.length} 个板块，但当前缓存中未找到对应数据，请先刷新板块
+                  </p>
+                ) : viewMode === "tree" && canShowTree ? (
+                  followedTreeSections.length || followedFlatGroups.length ? (
+                    <div className="space-y-4 py-1">
+                      {followedTreeSections.map((section) => (
+                        <div key={section.kind}>
+                          <p className="mb-1 px-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                            {section.label}
+                          </p>
+                          <ThsBlockTreeItem
+                            node={section.tree}
+                            depth={0}
+                            expanded={expanded}
+                            rowById={section.rowById}
+                            selectedId={selected?.id ?? null}
+                            followedIds={followedIds}
+                            onToggle={toggleExpanded}
+                            onSelect={(row) => void openDetail(row)}
+                            onToggleFollow={(row) => void toggleFollow(row)}
+                          />
+                        </div>
+                      ))}
+                      {followedFlatGroups.map((group) => (
+                        <div key={group.kind}>
+                          <p className="mb-1 px-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                            {group.label}
+                          </p>
+                          <div className="space-y-0.5">
+                            {group.rows.map((row) => {
+                              const active = selected?.kind === row.kind && selected?.id === row.id;
+                              const followed = followedIds.has(`${row.kind}|${row.id}`);
+                              return (
+                                <div
+                                  key={`${row.kind}-${row.id}`}
+                                  className={cn(
+                                    "group flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm transition-colors",
+                                    "hover:bg-muted/40",
+                                    active && "bg-primary/10 ring-1 ring-primary/20",
+                                  )}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => void openDetail(row)}
+                                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                                  >
+                                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                                      <Boxes className="h-3.5 w-3.5 text-primary/70" />
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                      {row.name || row.id}
+                                    </span>
+                                    {row.stock_count != null && (
+                                      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                                        {row.stock_count}
+                                      </span>
+                                    )}
+                                  </button>
+                                  <FollowBlockButton
+                                    followed={followed}
+                                    onToggle={() => void toggleFollow(row)}
+                                    className="opacity-70 group-hover:opacity-100"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="p-8 text-center text-sm text-muted-foreground">无匹配板块</p>
+                  )
+                ) : (
+                  <FollowedOrKindTable
+                    filteredRows={filteredRows}
+                    showSubtypeCol={false}
+                    sort={sort}
+                    order={order}
+                    onSort={toggleSort}
+                    selected={selected}
+                    followedIds={followedIds}
+                    onOpen={(row) => void openDetail(row)}
+                    onToggleFollow={(row) => void toggleFollow(row)}
+                  />
+                )
               ) : !kindEntry ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
                   该类型尚未加载
@@ -687,79 +990,17 @@ export function ThsBlocks() {
                   <p className="p-8 text-center text-sm text-muted-foreground">无匹配板块</p>
                 )
               ) : (
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
-                    <tr className="border-b border-border/60 text-left">
-                      <SortTh col="id" label="代码" sortCol={sort} order={order} onSort={toggleSort} />
-                      <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={toggleSort} />
-                      {showSubtypeCol && (
-                        <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={toggleSort} />
-                      )}
-                      <SortTh col="node_type" label="节点" sortCol={sort} order={order} onSort={toggleSort} />
-                      <SortTh col="tree_path" label="树路径" sortCol={sort} order={order} onSort={toggleSort} />
-                      <th className="w-16 px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">关注</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRows.map((row) => {
-                      const active = selected?.kind === row.kind && selected?.id === row.id;
-                      const subtype = thsCustomSubtypeLabel(row);
-                      const depth = row.depth ?? 0;
-                      const followed = followedIds.has(`${row.kind}|${row.id}`);
-                      return (
-                        <tr
-                          key={`${row.kind}-${row.id}`}
-                          className={cn(
-                            "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/30",
-                            active && "bg-primary/8",
-                          )}
-                          onClick={() => void openDetail(row)}
-                        >
-                          <td className="px-4 py-2.5 font-mono text-xs">
-                            {row.code ? (
-                              <span className="text-foreground">{row.code}</span>
-                            ) : (
-                              <span className="text-muted-foreground">{row.id}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 font-medium text-foreground">
-                            <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
-                              {row.name || "—"}
-                            </span>
-                            {row.stock_count != null && (
-                              <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">
-                                ({row.stock_count})
-                              </span>
-                            )}
-                          </td>
-                          {showSubtypeCol && (
-                            <td className="px-4 py-2.5 text-muted-foreground">{subtype || "—"}</td>
-                          )}
-                          <td className="px-4 py-2.5 text-muted-foreground">
-                            {THS_NODE_TYPE_LABEL[row.node_type] || row.node_type}
-                          </td>
-                          <td className="max-w-[280px] truncate px-4 py-2.5 text-muted-foreground" title={row.tree_path}>
-                            {row.tree_path}
-                          </td>
-                          <td className="px-3 py-2.5 text-center">
-                            <FollowBlockButton
-                              followed={followed}
-                              onToggle={() => void toggleFollow(row)}
-                              className="mx-auto"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!filteredRows.length && (
-                      <tr>
-                        <td colSpan={showSubtypeCol ? 6 : 5} className="px-4 py-10 text-center text-muted-foreground">
-                          无匹配板块
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                <FollowedOrKindTable
+                  filteredRows={filteredRows}
+                  showSubtypeCol={showSubtypeCol}
+                  sort={sort}
+                  order={order}
+                  onSort={toggleSort}
+                  selected={selected}
+                  followedIds={followedIds}
+                  onOpen={(row) => void openDetail(row)}
+                  onToggleFollow={(row) => void toggleFollow(row)}
+                />
               )}
             </div>
           </div>
