@@ -1,6 +1,6 @@
 /** 同花顺板块类型与展示文案 */
 
-import type { ThsBlockRow, ThsTreeNode, BlockResolveItem } from "@/lib/api";
+import type { ThsBlockRow, ThsTreeNode, BlockResolveItem, ThemeAliasEntry } from "@/lib/api";
 
 export const THS_BLOCK_KINDS = [
   { value: "conception", label: "概念" },
@@ -47,11 +47,64 @@ export function thsCustomSubtypeLabel(row: {
   return base;
 }
 
+/** 与题材别名配置一致：去空白后匹配 */
+export function normalizeThemeTag(raw: string): string {
+  return String(raw || "").replace(/\s+/g, "").replace(/\u3000/g, "").trim();
+}
+
+/** 按标准板块名聚合别名列表（canonical → aliases） */
+export function buildAliasesByCanonical(entries: ThemeAliasEntry[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const e of entries) {
+    const c = normalizeThemeTag(e.canonical);
+    const a = normalizeThemeTag(e.alias);
+    if (!c || !a || a === c) continue;
+    const list = map.get(c) || [];
+    if (!list.includes(a)) list.push(a);
+    map.set(c, list);
+  }
+  for (const [k, list] of map) {
+    list.sort((a, b) => a.localeCompare(b, "zh-CN"));
+    map.set(k, list);
+  }
+  return map;
+}
+
+export function aliasesForBlockName(
+  name: string,
+  byCanonical: Map<string, string[]>,
+): string[] {
+  if (!byCanonical.size) return [];
+  return byCanonical.get(normalizeThemeTag(name)) || [];
+}
+
+export function themeAliasEntriesFromConfig(cfg: {
+  entries?: ThemeAliasEntry[];
+  aliases?: Record<string, string>;
+  types?: Record<string, string>;
+}): ThemeAliasEntry[] {
+  if (cfg.entries?.length) {
+    return cfg.entries.map((e) => ({
+      alias: e.alias,
+      canonical: e.canonical,
+      type: (e.type ?? "").trim(),
+    }));
+  }
+  const types = cfg.types || {};
+  return Object.entries(cfg.aliases || {}).map(([alias, canonical]) => ({
+    alias,
+    canonical,
+    type: types[alias] ?? "",
+  }));
+}
+
 export interface ThsTreeFilterOpts {
   query?: string;
   nodeFilter?: "all" | "leaf" | "branch";
   /** 本地 id → 行情代码，用于树搜索匹配 code */
   codeById?: Map<string, string>;
+  /** 标准板块名 → 别名，用于树搜索匹配别名 */
+  aliasesByName?: Map<string, string[]>;
   /** 若提供，仅保留 id 在集合内的节点（及其祖先链） */
   allowedIds?: Set<string>;
 }
@@ -69,15 +122,22 @@ function nodeMatchesQuery(
   node: { id: string; name: string },
   query: string,
   codeById?: Map<string, string>,
+  aliasesByName?: Map<string, string[]>,
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   const code = (codeById?.get(node.id) || "").toLowerCase();
-  return (
+  if (
     node.id.toLowerCase().includes(q)
     || node.name.toLowerCase().includes(q)
     || (!!code && code.includes(q))
-  );
+  ) {
+    return true;
+  }
+  const aliases = aliasesByName?.size
+    ? aliasesForBlockName(node.name, aliasesByName)
+    : [];
+  return aliases.some((a) => a.toLowerCase().includes(q));
 }
 
 function nodeMatchesAllowed(
@@ -96,13 +156,14 @@ export function filterThsTree(
   const nodeFilter = opts.nodeFilter ?? "all";
   const query = opts.query ?? "";
   const codeById = opts.codeById;
+  const aliasesByName = opts.aliasesByName;
   const allowedIds = opts.allowedIds;
   const children = (node.children ?? [])
     .map((child) => filterThsTree(child, opts))
     .filter((c): c is ThsTreeNode => c != null);
 
   const selfMatch =
-    nodeMatchesQuery(node, query, codeById)
+    nodeMatchesQuery(node, query, codeById, aliasesByName)
     && nodeMatchesFilter(node, nodeFilter)
     && nodeMatchesAllowed(node, allowedIds);
   const childMatch = children.length > 0;

@@ -4560,6 +4560,12 @@ class TestThemeNormalize:
         assert "toggleFollow" in blocks_page
         assert "FollowBlockButton" in blocks_page
         assert "已关注" in blocks_page
+        assert "aliasesByCanonical" in blocks_page
+        assert "saveThemeAliases" in blocks_page
+        assert "板块别名" in blocks_page
+        ths_lib = Path("frontend/src/lib/thsBlocks.ts").read_text(encoding="utf-8")
+        assert "buildAliasesByCanonical" in ths_lib
+        assert "aliasesByName" in ths_lib
 
 
 @pytest.mark.unit
