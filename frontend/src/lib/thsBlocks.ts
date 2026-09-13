@@ -10,6 +10,23 @@ export const THS_BLOCK_KINDS = [
   { value: "daily", label: "每日动态" },
 ] as const;
 
+/** 板块管理：同花顺原始类型页签 */
+export const BLOCK_MANAGE_THS_KINDS = [
+  { value: "ths:conception", label: "概念", thsKind: "conception" },
+  { value: "ths:industry", label: "行业", thsKind: "industry" },
+  { value: "ths:region", label: "地域", thsKind: "region" },
+  { value: "ths:custom", label: "自定义", thsKind: "custom" },
+  { value: "ths:daily", label: "每日动态", thsKind: "daily" },
+] as const;
+
+/** 板块管理：开盘啦原始类型页签 */
+export const BLOCK_MANAGE_KPL_KINDS = [
+  { value: "kpl:concept", label: "概念", kplKind: "concept" },
+  { value: "kpl:industry", label: "行业", kplKind: "industry" },
+  { value: "kpl:region", label: "地域", kplKind: "region" },
+  { value: "kpl:hot", label: "人气", kplKind: "hot" },
+] as const;
+
 export type ThsBlockKind = (typeof THS_BLOCK_KINDS)[number]["value"];
 
 export const THS_NODE_TYPE_LABEL: Record<string, string> = {
@@ -19,7 +36,21 @@ export const THS_NODE_TYPE_LABEL: Record<string, string> = {
 };
 
 export function thsBlockKindLabel(kind: string): string {
+  const manage = [...BLOCK_MANAGE_THS_KINDS, ...BLOCK_MANAGE_KPL_KINDS].find((k) => k.value === kind);
+  if (manage) return manage.label;
   return THS_BLOCK_KINDS.find((k) => k.value === kind)?.label || kind;
+}
+
+/** 板块管理页签 → 同花顺树/成分股用的原生 kind */
+export function manageTabThsKind(tab: string): string | null {
+  const hit = BLOCK_MANAGE_THS_KINDS.find((k) => k.value === tab);
+  return hit?.thsKind ?? null;
+}
+
+export function manageTabOrigin(tab: string): "ths" | "kpl" | null {
+  if (tab.startsWith("ths:")) return "ths";
+  if (tab.startsWith("kpl:")) return "kpl";
+  return null;
 }
 
 export const THS_CUSTOM_TYPE_LABEL: Record<string, string> = {
@@ -221,6 +252,71 @@ export function sortRowsByTreeOrder<T extends ThsBlockRow>(rows: T[]): T[] {
     if (ao !== bo) return ao - bo;
     return a.name.localeCompare(b.name, "zh-CN");
   });
+}
+
+/** 树节点 / 行展示用 ID：同花顺 id 优先，否则开盘啦合成 */
+export function blockTreeNodeId(row: {
+  id?: string;
+  kpl_code?: string;
+  name?: string;
+}): string {
+  if (row.id) return row.id;
+  if (row.kpl_code) return `kpl:${row.kpl_code}`;
+  return `name:${row.name || ""}`;
+}
+
+/** 收集树中全部节点 id */
+export function collectThsNodeIds(node: ThsTreeNode | null | undefined): Set<string> {
+  const ids = new Set<string>();
+  const walk = (n: ThsTreeNode) => {
+    ids.add(n.id);
+    for (const c of n.children ?? []) walk(c);
+  };
+  if (node) walk(node);
+  return ids;
+}
+
+/** 无树结构时：把板块挂到类型根节点下，便于树形浏览 */
+export function buildSyntheticBlockTree(
+  rows: Array<{ id?: string; kpl_code?: string; name?: string; node_type?: string }>,
+  rootLabel: string,
+  rootId = "__synthetic_root__",
+): ThsTreeNode {
+  const children: ThsTreeNode[] = rows
+    .filter((r) => r.node_type !== "branch")
+    .map((r) => ({
+      id: blockTreeNodeId(r),
+      name: r.name || blockTreeNodeId(r),
+      node_type: "leaf" as const,
+    }));
+  return {
+    id: rootId,
+    name: rootLabel,
+    node_type: "branch",
+    children,
+  };
+}
+
+/** 把未入树的叶子挂到根节点下（开盘啦独有等） */
+export function attachOrphanLeavesToTree(
+  tree: ThsTreeNode,
+  orphans: Array<{ id?: string; kpl_code?: string; name?: string; node_type?: string }>,
+): ThsTreeNode {
+  if (!orphans.length) return tree;
+  const existing = collectThsNodeIds(tree);
+  const extra: ThsTreeNode[] = [];
+  for (const r of orphans) {
+    if (r.node_type === "branch") continue;
+    const id = blockTreeNodeId(r);
+    if (!id || existing.has(id)) continue;
+    existing.add(id);
+    extra.push({ id, name: r.name || id, node_type: "leaf" });
+  }
+  if (!extra.length) return tree;
+  return {
+    ...tree,
+    children: [...(tree.children ?? []), ...extra],
+  };
 }
 
 /** 板块映射成功时的标签样式 */

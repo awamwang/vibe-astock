@@ -1064,9 +1064,13 @@ export interface ThsBlockRow {
 
 /** 板块管理融合行：同花顺 + 开盘啦字段并集，缺失留空 */
 export interface ManagedBlockRow extends ThsBlockRow {
+  /** 行所属原始来源类型体系 */
+  origin?: "ths" | "kpl" | "";
   sources: Array<"ths" | "kpl">;
   has_ths: boolean;
   has_kpl: boolean;
+  /** 同花顺原始类型；开盘啦页签取成分股/关注用 */
+  ths_kind?: string;
   kpl_code?: string;
   kpl_kind?: string;
   kpl_kind_label?: string;

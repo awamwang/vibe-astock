@@ -1,6 +1,7 @@
-"""板块管理 —— 同花顺 + 开盘啦融合快照。
+"""板块管理 —— 同花顺 / 开盘啦分列目录。
 
-按名称（方言归一）合并；字段取并集，缺失留空。
+类型严格按各源原始分类，不做跨源并入页签。
+同名时仅补全对方字段（字段并集），不改变所属类型。
 开盘啦侧经 ``kpl_blocks.ensure`` 初始化，自动日更最多一次。
 """
 
@@ -11,8 +12,23 @@ from typing import Any
 from . import block_dialect as dialect
 from . import kpl_blocks
 
-# 同花顺 kind → 开盘啦结构 kind
-_KIND_PAIR = {
+# 页签 key：ths:* / kpl:*
+THS_KIND_KEYS = (
+    ("ths:conception", "conception", "概念"),
+    ("ths:industry", "industry", "行业"),
+    ("ths:region", "region", "地域"),
+    ("ths:custom", "custom", "自定义"),
+    ("ths:daily", "daily", "每日动态"),
+)
+KPL_KIND_KEYS = (
+    ("kpl:concept", "concept", "概念"),
+    ("kpl:industry", "industry", "行业"),
+    ("kpl:region", "region", "地域"),
+    ("kpl:hot", "hot", "人气"),
+)
+
+# 同花顺 kind → 开盘啦同名结构 kind（仅用于字段补全，不并入页签）
+_THS_TO_KPL_ENRICH = {
     "conception": "concept",
     "industry": "industry",
     "region": "region",
@@ -37,12 +53,13 @@ def _ths_snapshot() -> dict[str, Any]:
 def _blank_unified(*, name: str = "") -> dict[str, Any]:
     return {
         "name": name,
+        "origin": "",  # ths | kpl —— 行所属原始来源类型体系
         "sources": [],
         "has_ths": False,
         "has_kpl": False,
-        # 同花顺
         "kind": "",
         "kind_label": "",
+        "ths_kind": "",
         "id": "",
         "code": "",
         "node_type": "flat",
@@ -55,7 +72,6 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
         "query_key": None,
         "hex_id": None,
         "stock_count": None,
-        # 开盘啦
         "kpl_code": "",
         "kpl_kind": "",
         "kpl_kind_label": "",
@@ -67,22 +83,38 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
     }
 
 
-def _apply_ths(row: dict[str, Any], ths: dict[str, Any]) -> None:
+def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False) -> None:
+    """写入同花顺字段。native=True 表示该行归属同花顺类型页签。"""
     row["has_ths"] = True
     if "ths" not in row["sources"]:
         row["sources"].append("ths")
-    for key in (
-        "kind", "kind_label", "id", "code", "node_type", "tree_path",
-        "depth", "parent_id", "tree_order", "custom_type", "dynamic_kind",
-        "query_key", "hex_id", "stock_count",
-    ):
-        if key in ths and ths[key] is not None:
-            row[key] = ths[key]
+    ths_kind = str(ths.get("kind") or "").strip()
+    if ths_kind:
+        row["ths_kind"] = ths_kind
+    if native:
+        for key in (
+            "kind", "kind_label", "id", "code", "node_type", "tree_path",
+            "depth", "parent_id", "tree_order", "custom_type", "dynamic_kind",
+            "query_key", "hex_id", "stock_count",
+        ):
+            if key in ths and ths[key] is not None:
+                row[key] = ths[key]
+        if ths_kind:
+            row["kind"] = ths_kind
+    else:
+        # 开盘啦行补全：只填空字段，不改 kind / origin
+        for key in (
+            "id", "code", "custom_type", "dynamic_kind",
+            "query_key", "hex_id", "stock_count",
+        ):
+            if key in ths and ths[key] is not None and row.get(key) in (None, ""):
+                row[key] = ths[key]
     if not row.get("name"):
         row["name"] = str(ths.get("name") or ths.get("id") or "")
 
 
-def _apply_kpl(row: dict[str, Any], kpl: dict[str, Any]) -> None:
+def _apply_kpl(row: dict[str, Any], kpl: dict[str, Any], *, native: bool = False) -> None:
+    """写入开盘啦字段。native=True 表示该行归属开盘啦类型页签。"""
     row["has_kpl"] = True
     if "kpl" not in row["sources"]:
         row["sources"].append("kpl")
@@ -100,167 +132,162 @@ def _apply_kpl(row: dict[str, Any], kpl: dict[str, Any]) -> None:
             row[dst] = kpl[src]
     if not row.get("name"):
         row["name"] = str(kpl.get("name") or kpl.get("code") or "")
-    if not row.get("tree_path"):
-        row["tree_path"] = row["name"]
-    if not row.get("kind") and row.get("kpl_kind"):
-        # 仅开盘啦时用映射后的同花顺 kind 便于筛选
-        rev = {v: k for k, v in _KIND_PAIR.items()}
-        mapped = rev.get(row["kpl_kind"])
-        if mapped:
-            row["kind"] = mapped
-            row["kind_label"] = {
-                "conception": "概念",
-                "industry": "行业",
-                "region": "地域",
-            }.get(mapped, row["kpl_kind_label"])
-        elif row["kpl_kind"] == "hot":
-            row["kind"] = "conception"
-            row["kind_label"] = "概念"
+    if native:
+        row["kind"] = row["kpl_kind"]
+        row["kind_label"] = row["kpl_kind_label"] or row["kind"]
+        row["node_type"] = "flat"
+        if not row.get("tree_path"):
+            row["tree_path"] = row["name"]
 
 
-def _kpl_by_name(kpl_snap: dict[str, Any]) -> dict[str, list[dict]]:
-    """归一名称 → 开盘啦行列表（同名可能跨 kind）。"""
-    buckets: dict[str, list[dict]] = {}
-    for row in kpl_blocks.all_rows(kpl_snap):
-        key = dialect.canonicalize_name(str(row.get("name") or ""))
-        if not key:
+def _kpl_by_name_for_kind(kpl_snap: dict[str, Any], kpl_kind: str) -> dict[str, dict]:
+    """仅某一开盘啦原始类型的 名称→行。"""
+    out: dict[str, dict] = {}
+    entry = (kpl_snap.get("kinds") or {}).get(kpl_kind) or {}
+    for row in entry.get("rows") or []:
+        if not isinstance(row, dict):
             continue
-        buckets.setdefault(key, []).append(row)
-    return buckets
+        key = dialect.canonicalize_name(str(row.get("name") or ""))
+        if key and key not in out:
+            out[key] = row
+    return out
 
 
-def _pick_kpl_for_ths_kind(candidates: list[dict], ths_kind: str) -> dict | None:
-    """为同花顺行挑选开盘啦行：结构 kind 优先，否则人气。"""
-    if not candidates:
-        return None
-    want = _KIND_PAIR.get(ths_kind)
-    if want:
-        for c in candidates:
-            if c.get("kind") == want:
-                return c
-    for c in candidates:
-        if c.get("kind") == "hot":
-            return c
-    return candidates[0]
+def _ths_leaf_by_name(ths_snap: dict[str, Any], ths_kind: str | None = None) -> dict[str, dict]:
+    """同花顺叶子 名称→行；可限定类型。"""
+    out: dict[str, dict] = {}
+    kinds = (ths_kind,) if ths_kind else ("conception", "industry", "region", "custom", "daily")
+    for kind in kinds:
+        entry = (ths_snap.get("kinds") or {}).get(kind) or {}
+        for ths in entry.get("rows") or []:
+            if not isinstance(ths, dict):
+                continue
+            if str(ths.get("node_type") or "") == "branch":
+                continue
+            key = dialect.canonicalize_name(str(ths.get("name") or ""))
+            if key and key not in out:
+                out[key] = ths
+    return out
 
 
-def _merge_kind(
+def _build_ths_kind(
     *,
     ths_kind: str,
+    kind_label: str,
     ths_rows: list[dict],
-    kpl_buckets: dict[str, list[dict]],
-    used_kpl: set[str],
+    kpl_snap: dict[str, Any],
 ) -> list[dict]:
+    """同花顺原始类型页签：仅 THS 行；同名开盘啦仅补字段。"""
+    enrich_kind = _THS_TO_KPL_ENRICH.get(ths_kind)
+    kpl_map = _kpl_by_name_for_kind(kpl_snap, enrich_kind) if enrich_kind else {}
+    # 人气 PlateID 仅作点查码补全，不改变类型归属
+    hot_map = _kpl_by_name_for_kind(kpl_snap, "hot") if enrich_kind else {}
     out: list[dict] = []
     for ths in ths_rows:
         if not isinstance(ths, dict):
             continue
         name = str(ths.get("name") or ths.get("id") or "")
         row = _blank_unified(name=name)
-        _apply_ths(row, ths)
+        row["origin"] = "ths"
+        _apply_ths(row, ths, native=True)
+        row["kind"] = ths_kind
+        row["kind_label"] = str(ths.get("kind_label") or kind_label)
+        row["ths_kind"] = ths_kind
         key = dialect.canonicalize_name(name)
-        node_type = str(ths.get("node_type") or "")
-        if key and node_type != "branch":
-            hit = _pick_kpl_for_ths_kind(kpl_buckets.get(key) or [], ths_kind)
+        if key and str(ths.get("node_type") or "") != "branch":
+            hit = kpl_map.get(key)
             if hit:
-                _apply_kpl(row, hit)
-                used_kpl.add(str(hit.get("code") or ""))
-                # 同名另有人气 PlateID 时补上（结构代码已写入则保留结构，另存人气优先覆盖点查码）
-                for alt in kpl_buckets.get(key) or []:
-                    if alt.get("kind") == "hot" and str(alt.get("code") or "") != row["kpl_code"]:
-                        # 点查口径优先人气 PlateID
-                        row["kpl_code"] = str(alt.get("code") or row["kpl_code"])
-                        if alt.get("power") is not None:
-                            row["kpl_power"] = alt.get("power")
-                        used_kpl.add(str(alt.get("code") or ""))
-                        break
+                _apply_kpl(row, hit, native=False)
+            hot = hot_map.get(key)
+            if hot:
+                # 点查优先人气 PlateID，类型仍为同花顺
+                code = str(hot.get("code") or "")
+                if code:
+                    row["kpl_code"] = code
+                    row["has_kpl"] = True
+                    if "kpl" not in row["sources"]:
+                        row["sources"].append("kpl")
+                    if hot.get("power") is not None:
+                        row["kpl_power"] = hot.get("power")
         out.append(row)
-
-    # 开盘啦独有：结构 kind 对齐；人气未匹配的归入概念
-    kpl_kind = _KIND_PAIR.get(ths_kind)
-    extra_kinds = {kpl_kind} if kpl_kind else set()
-    if ths_kind == "conception":
-        extra_kinds.add("hot")
-    for key, cands in kpl_buckets.items():
-        for cand in cands:
-            if cand.get("kind") not in extra_kinds:
-                continue
-            code = str(cand.get("code") or "")
-            if not code or code in used_kpl:
-                continue
-            row = _blank_unified(name=str(cand.get("name") or code))
-            _apply_kpl(row, cand)
-            # 保证 kind 字段与当前页签一致
-            row["kind"] = ths_kind
-            row["kind_label"] = {
-                "conception": "概念",
-                "industry": "行业",
-                "region": "地域",
-            }.get(ths_kind, ths_kind)
-            used_kpl.add(code)
-            out.append(row)
     return out
 
 
-def _merge_ths_only(ths_rows: list[dict]) -> list[dict]:
+def _build_kpl_kind(
+    *,
+    kpl_kind: str,
+    kind_label: str,
+    kpl_rows: list[dict],
+    ths_snap: dict[str, Any],
+) -> list[dict]:
+    """开盘啦原始类型页签：仅 KPL 行；同名同花顺仅补字段。"""
+    # 结构类型与同花顺同名类型对齐；人气仅按名称补字段，不并入同花顺页签
+    ths_kind = {v: k for k, v in _THS_TO_KPL_ENRICH.items()}.get(kpl_kind)
+    ths_map = _ths_leaf_by_name(ths_snap, ths_kind) if ths_kind else (
+        _ths_leaf_by_name(ths_snap) if kpl_kind == "hot" else {}
+    )
     out: list[dict] = []
-    for ths in ths_rows:
-        if not isinstance(ths, dict):
+    for cand in kpl_rows:
+        if not isinstance(cand, dict):
             continue
-        row = _blank_unified(name=str(ths.get("name") or ths.get("id") or ""))
-        _apply_ths(row, ths)
+        code = str(cand.get("code") or "")
+        name = str(cand.get("name") or code)
+        row = _blank_unified(name=name)
+        row["origin"] = "kpl"
+        _apply_kpl(row, cand, native=True)
+        row["kind"] = kpl_kind
+        row["kind_label"] = kind_label
+        row["kpl_kind"] = kpl_kind
+        row["kpl_kind_label"] = kind_label
+        row["node_type"] = "flat"
+        row["tree_path"] = f"{kind_label} › {name}"
+        row["parent_id"] = f"__kpl_{kpl_kind}_root__"
+        row["depth"] = 1
+        key = dialect.canonicalize_name(name)
+        if key and ths_map.get(key):
+            _apply_ths(row, ths_map[key], native=False)
+            row["kind"] = kpl_kind
+            row["kind_label"] = kind_label
+            row["origin"] = "kpl"
+            row["node_type"] = "flat"
+            row["tree_path"] = f"{kind_label} › {name}"
+            row["parent_id"] = f"__kpl_{kpl_kind}_root__"
+            row["depth"] = 1
         out.append(row)
     return out
 
 
 def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[str, list[dict]]:
-    """按同花顺 kind 产出融合行。"""
-    kpl_buckets = _kpl_by_name(kpl_snap)
-    used_kpl: set[str] = set()
+    """分列产出：ths:* 与 kpl:*，互不并入对方类型页签。"""
     merged: dict[str, list[dict]] = {}
     ths_kinds = ths_snap.get("kinds") or {}
 
-    for ths_kind in ("conception", "industry", "region", "custom", "daily"):
+    for key, ths_kind, label in THS_KIND_KEYS:
         entry = ths_kinds.get(ths_kind) or {}
         ths_rows = list(entry.get("rows") or []) if isinstance(entry, dict) else []
-        if ths_kind in _KIND_PAIR:
-            merged[ths_kind] = _merge_kind(
-                ths_kind=ths_kind,
-                ths_rows=ths_rows,
-                kpl_buckets=kpl_buckets,
-                used_kpl=used_kpl,
-            )
-        else:
-            merged[ths_kind] = _merge_ths_only(ths_rows)
+        merged[key] = _build_ths_kind(
+            ths_kind=ths_kind,
+            kind_label=label,
+            ths_rows=ths_rows,
+            kpl_snap=kpl_snap,
+        )
 
-    # 同花顺尚未加载时，仍返回开盘啦侧
-    if not any(merged.get(k) for k in _KIND_PAIR):
-        for ths_kind, kpl_kind in _KIND_PAIR.items():
-            if merged.get(ths_kind):
-                continue
-            rows: list[dict] = []
-            for cand in kpl_blocks.all_rows(kpl_snap):
-                if cand.get("kind") == kpl_kind or (ths_kind == "conception" and cand.get("kind") == "hot"):
-                    code = str(cand.get("code") or "")
-                    if code in used_kpl:
-                        continue
-                    row = _blank_unified(name=str(cand.get("name") or code))
-                    _apply_kpl(row, cand)
-                    row["kind"] = ths_kind
-                    row["kind_label"] = {
-                        "conception": "概念",
-                        "industry": "行业",
-                        "region": "地域",
-                    }.get(ths_kind, ths_kind)
-                    used_kpl.add(code)
-                    rows.append(row)
-            merged[ths_kind] = rows
+    kpl_kinds = kpl_snap.get("kinds") or {}
+    for key, kpl_kind, label in KPL_KIND_KEYS:
+        entry = kpl_kinds.get(kpl_kind) or {}
+        kpl_rows = list(entry.get("rows") or []) if isinstance(entry, dict) else []
+        merged[key] = _build_kpl_kind(
+            kpl_kind=kpl_kind,
+            kind_label=label,
+            kpl_rows=kpl_rows,
+            ths_snap=ths_snap,
+        )
 
     return merged
 
 
 def snapshot(*, ensure_kpl: bool = True, force_kpl: bool = False) -> dict[str, Any]:
-    """板块管理快照：同花顺缓存 + 开盘啦目录（可自动日更）+ 融合行。"""
+    """板块管理快照。"""
     if ensure_kpl:
         kpl_snap = kpl_blocks.ensure(force=force_kpl)
     else:

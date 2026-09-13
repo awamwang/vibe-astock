@@ -112,7 +112,7 @@ def test_kpl_ensure_force_refetches(monkeypatch: pytest.MonkeyPatch):
     assert out["kinds"]["hot"]["rows"][0]["code"] == "801660"
 
 
-def test_merge_union_fields_by_name(monkeypatch: pytest.MonkeyPatch):
+def test_merge_keeps_original_type_tabs(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "duanxian.block_dialect.canonicalize_name",
         lambda raw: str(raw or "").replace(" ", "").strip(),
@@ -170,16 +170,30 @@ def test_merge_union_fields_by_name(monkeypatch: pytest.MonkeyPatch):
         },
     }
     merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap=kpl_snap)
-    rows = merged["conception"]
-    by_name = {r["name"]: r for r in rows}
-    hit = by_name["通信"]
-    assert hit["has_ths"] and hit["has_kpl"]
+
+    ths_conception = merged["ths:conception"]
+    assert len(ths_conception) == 1
+    hit = ths_conception[0]
+    assert hit["origin"] == "ths"
+    assert hit["kind"] == "conception"
     assert hit["id"] == "D574"
     assert hit["code"] == "885001"
+    # 同名仅补字段，不把开盘啦独有概念并入同花顺页签
     assert hit["kpl_code"] == "801660"
-    assert hit["kpl_power"] == 6609
-    assert hit["stock_count"] == 12
-    only_kpl = by_name["AI应用"]
-    assert only_kpl["has_kpl"] and not only_kpl["has_ths"]
-    assert only_kpl["id"] == ""
-    assert only_kpl["kpl_code"] == "886100"
+    assert hit["has_kpl"] is True
+    assert all(r["name"] != "AI应用" for r in ths_conception)
+
+    kpl_concept = merged["kpl:concept"]
+    assert len(kpl_concept) == 1
+    assert kpl_concept[0]["origin"] == "kpl"
+    assert kpl_concept[0]["kind"] == "concept"
+    assert kpl_concept[0]["kpl_code"] == "886100"
+
+    hot_rows = merged["kpl:hot"]
+    assert len(hot_rows) == 1
+    assert hot_rows[0]["origin"] == "kpl"
+    assert hot_rows[0]["kind"] == "hot"
+    assert hot_rows[0]["kpl_code"] == "801660"
+    # 人气页签可补同花顺字段，但不改变类型
+    assert hot_rows[0]["ths_kind"] == "conception"
+    assert hot_rows[0]["id"] == "D574"
