@@ -37,6 +37,7 @@ export function Articles() {
   const [organizing, setOrganizing] = useState(false);
   const [drafts, setDrafts] = useState<ArticleDraftFile[] | null>(null);
   const [draftTab, setDraftTab] = useState(0);
+  const [alsoToMessage, setAlsoToMessage] = useState(true);
   const [committing, setCommitting] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -208,6 +209,7 @@ export function Articles() {
       const files = parseArticleJson(result.content, text);
       setDrafts(files);
       setDraftTab(0);
+      setAlsoToMessage(true);
       toast.success(`已整理 ${files.length} 篇，请预览确认`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : "整理失败"));
@@ -218,6 +220,7 @@ export function Articles() {
 
   const commit = async () => {
     if (!drafts?.length) return;
+    const shouldToMessage = alsoToMessage;
     setCommitting(true);
     try {
       const payload: ArticleDraftPayload[] = drafts.map((d) => ({
@@ -234,8 +237,45 @@ export function Articles() {
       setRoot(res.root || root);
       setDrafts(null);
       setNote("");
-      const n = res.written?.length || 0;
-      toast.success(`已写入 ${n} 篇文章（已解析个股/板块）`);
+      const writtenNames = (res.written || []).map((w) => w.filename).filter(Boolean);
+      // 写入后选中刚添加的文章（多篇时选列表中最新的一篇）
+      const prefer = (res.articles || []).find((a) => writtenNames.includes(a.filename));
+      const pick = prefer?.filename || writtenNames[0] || null;
+      if (pick) setSelected(pick);
+      const n = writtenNames.length;
+
+      let converted = 0;
+      let convertErr: string | null = null;
+      if (shouldToMessage && writtenNames.length) {
+        for (const name of writtenNames) {
+          try {
+            await api.articlesToMessage(name);
+            converted += 1;
+          } catch (e) {
+            convertErr = e instanceof ApiError ? e.message : "转为消息失败";
+          }
+        }
+      }
+
+      if (shouldToMessage && converted > 0) {
+        toast.success(
+          `已写入 ${n} 篇并转入消息分析 ${converted} 条`,
+          {
+            action: {
+              label: "去消息分析",
+              onClick: () => { navigate("/messages"); },
+            },
+          },
+        );
+        if (convertErr && converted < writtenNames.length) {
+          toast.error(`部分转为消息失败：${convertErr}`);
+        }
+      } else if (shouldToMessage && convertErr) {
+        toast.success(`已写入 ${n} 篇文章（已解析个股/板块）`);
+        toast.error(convertErr);
+      } else {
+        toast.success(`已写入 ${n} 篇文章（已解析个股/板块）`);
+      }
       await refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "写入失败");
@@ -349,23 +389,34 @@ export function Articles() {
           <GlassCard className="mb-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">预览将写入的文章</h3>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDrafts(null)}
-                  className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void commit()}
-                  disabled={committing}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
-                >
-                  {committing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  确认写入
-                </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={alsoToMessage}
+                    onChange={(e) => setAlsoToMessage(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary"
+                  />
+                  转为消息
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDrafts(null)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void commit()}
+                    disabled={committing}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
+                  >
+                    {committing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    确认写入
+                  </button>
+                </div>
               </div>
             </div>
             {drafts.length > 1 && (
