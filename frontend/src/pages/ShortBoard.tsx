@@ -92,10 +92,10 @@ export const SHORT_BOARD_POPOUT_TITLES: Record<ShortBoardPopoutSection, string> 
 
 export const SHORT_BOARD_TABS: { key: TabKey; label: string }[] = [
   { key: "emotion", label: "昨日短线情绪" },
+  { key: "focus", label: "重点板块跟踪" },
+  { key: "mood", label: "板块人气" },
   { key: "turnover", label: "全市场成交额 TOP20" },
   { key: "sectors", label: "板块资金趋势榜" },
-  { key: "mood", label: "板块人气" },
-  { key: "focus", label: "重点板块跟踪" },
   { key: "rotation", label: "资金轮动" },
 ];
 
@@ -861,7 +861,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
       </GlassCard>
       </>)}
 
-      {/* 3. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 重点跟踪 / 资金轮动 */}
+      {/* 3. 标签页：昨日短线情绪 / 重点跟踪 / 板块人气 / 成交额 / 板块资金 / 资金轮动 */}
       {showTabs && (<>
       {!isPopout && (
       <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border/50 pb-0">
