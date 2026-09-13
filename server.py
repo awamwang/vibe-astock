@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    live_emotion, live_zt_effect, mood_block, overseas, preflight, reflection, review_store,
+    focus_blocks, live_emotion, live_zt_effect, mood_block, overseas, preflight, reflection, review_store,
     screenshot_parse, risk_stance, short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
@@ -447,6 +447,15 @@ def api_market_mood_blocks():
     data = mood_block.snapshot()
     _feed_mood_blocks(data)
     return data
+
+
+@app.get("/api/market/focus-blocks")
+def api_market_focus_blocks():
+    """重点板块跟踪（昨人气>5000 + 收藏），今昨对比。
+
+    指标以开盘啦 GetPlate_Info_QJ 点查为主；昨日人气榜定稿可落盘复用。
+    """
+    return focus_blocks.snapshot()
 
 
 @app.get("/api/market/overseas")

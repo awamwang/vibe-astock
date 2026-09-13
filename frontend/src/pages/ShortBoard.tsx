@@ -13,12 +13,14 @@ import { finite } from "@/lib/agent";
 import { fmtCountPct, fmtCountPermille, marketTotal } from "@/lib/marketRatio";
 import { api, type MarketOverview, type TurnoverTop, type Quote } from "@/lib/api";
 import {
+  fetchFocusBlocks,
   fetchLiveEmotion,
   fetchLiveZtEffect,
   fetchLianbanEmotion,
   fetchMarketSession,
   fetchMoodBlocks,
   fetchShortBoard,
+  type FocusBlocksSnapshot,
   type LiveEmotion,
   type LiveZtEffect,
   type LianbanStock,
@@ -47,7 +49,7 @@ const yiCompact = (v: number | null | undefined) => {
   return `${n.toLocaleString("zh-CN", { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 })}亿`;
 };
 
-export type TabKey = "emotion" | "turnover" | "sectors" | "mood" | "rotation";
+export type TabKey = "emotion" | "turnover" | "sectors" | "mood" | "focus" | "rotation";
 
 export type ShortBoardPopoutSection =
   | "market"
@@ -56,6 +58,7 @@ export type ShortBoardPopoutSection =
   | "tab-turnover"
   | "tab-sectors"
   | "tab-mood"
+  | "tab-focus"
   | "tab-rotation";
 
 export const SHORT_BOARD_POPOUT_TITLES: Record<ShortBoardPopoutSection, string> = {
@@ -65,6 +68,7 @@ export const SHORT_BOARD_POPOUT_TITLES: Record<ShortBoardPopoutSection, string> 
   "tab-turnover": "全市场成交额 TOP20",
   "tab-sectors": "板块资金趋势榜",
   "tab-mood": "板块人气",
+  "tab-focus": "重点板块跟踪",
   "tab-rotation": "资金轮动",
 };
 
@@ -73,6 +77,7 @@ export const SHORT_BOARD_TABS: { key: TabKey; label: string }[] = [
   { key: "turnover", label: "全市场成交额 TOP20" },
   { key: "sectors", label: "板块资金趋势榜" },
   { key: "mood", label: "板块人气" },
+  { key: "focus", label: "重点板块跟踪" },
   { key: "rotation", label: "资金轮动" },
 ];
 
@@ -130,6 +135,27 @@ function EnvCard({
   reversed?: boolean;
   className?: string;
 }) {
+  return (
+    <div className={cn("min-w-[5.5rem] rounded-lg border border-border/50 bg-card/60 px-2.5 py-2 shadow-sm", className)}>
+      <p className="truncate text-[11px] font-semibold text-foreground/80">{name}</p>
+      <div className="mt-1 border-t border-border/40 pt-1 font-mono text-sm">
+        <EnvCompare today={today} yesterday={yesterday} format={format} formatYesterday={formatYesterday} reversed={reversed} />
+      </div>
+    </div>
+  );
+}
+
+/** 今/昨斜杠对照（表格内联）；色规则同 EnvCard。 */
+function EnvCompare({
+  today, yesterday, format, formatYesterday, reversed, className,
+}: {
+  today: number | null | undefined;
+  yesterday?: number | null;
+  format: (v: number) => string;
+  formatYesterday?: (v: number) => string;
+  reversed?: boolean;
+  className?: string;
+}) {
   const fmtY = formatYesterday ?? format;
   const hasT = today != null && Number.isFinite(today);
   const hasY = yesterday != null && Number.isFinite(yesterday);
@@ -143,15 +169,12 @@ function EnvCard({
     color = "text-success";
   }
   return (
-    <div className={cn("min-w-[5.5rem] rounded-lg border border-border/50 bg-card/60 px-2.5 py-2 shadow-sm", className)}>
-      <p className="truncate text-[11px] font-semibold text-foreground/80">{name}</p>
-      <div className="mt-1 border-t border-border/40 pt-1 font-mono text-sm">
-        <span className={cn("font-bold", hasT ? color : "text-muted-foreground/40")}>
-          {hasT ? format(today as number) : "—"}
-        </span>
-        <span className="text-muted-foreground">/{hasY ? fmtY(yesterday as number) : "-"}</span>
-      </div>
-    </div>
+    <span className={cn("font-mono", className)}>
+      <span className={cn("font-bold", hasT ? color : "text-muted-foreground/40")}>
+        {hasT ? format(today as number) : "—"}
+      </span>
+      <span className="text-muted-foreground">/{hasY ? fmtY(yesterday as number) : "-"}</span>
+    </span>
   );
 }
 
@@ -275,6 +298,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
   const [turnover, setTurnover] = useState<TurnoverTop | null>(null);
   const [moodBlocks, setMoodBlocks] = useState<MoodBlocksSnapshot | null>(null);
+  const [focusBlocks, setFocusBlocks] = useState<FocusBlocksSnapshot | null>(null);
   const [session, setSession] = useState<MarketSession | null>(null);
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   const [ztEffect, setZtEffect] = useState<LiveZtEffect | null>(null);
@@ -288,6 +312,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [emoDone, setEmoDone] = useState(false);
   const [toDone, setToDone] = useState(false);
   const [moodDone, setMoodDone] = useState(false);
+  const [focusDone, setFocusDone] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
 
   const mark = (key: string, on: boolean) => setBusy((b) => ({ ...b, [key]: on }));
@@ -332,6 +357,11 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     return fetchMoodBlocks().then(setMoodBlocks).catch(() => {})
       .finally(() => { setMoodDone(true); mark("mood", false); });
   };
+  const loadFocusBlocks = () => {
+    mark("focus", true);
+    return fetchFocusBlocks().then(setFocusBlocks).catch(() => {})
+      .finally(() => { setFocusDone(true); mark("focus", false); });
+  };
   const loadSectors = () => {
     mark("sectors", true);
     return api.marketOverview().then(setOverview).catch(() => {})
@@ -351,6 +381,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     if (key === "emotion") return loadEmotion();
     if (key === "turnover") return loadTurnover();
     if (key === "mood") return loadMoodBlocks();
+    if (key === "focus") return loadFocusBlocks();
     // sectors / rotation 同源 marketOverview
     return loadSectors();
   };
@@ -495,6 +526,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     (activeTab === "emotion" && busy.emotion) ||
     (activeTab === "turnover" && busy.turnover) ||
     (activeTab === "mood" && busy.mood) ||
+    (activeTab === "focus" && busy.focus) ||
     ((activeTab === "sectors" || activeTab === "rotation") && busy.sectors);
 
   const showMarket = !isPopout || popoutSection === "market";
@@ -512,11 +544,14 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     for (const b of moodBlocks?.blocks ?? []) {
       if (b.name) names.push(b.name);
     }
+    for (const b of focusBlocks?.blocks ?? []) {
+      if (b.name) names.push(b.name);
+    }
     for (const s of turnover?.stocks ?? []) {
       if (s.industry) names.push(s.industry);
     }
     return names;
-  }, [emotion?.lianban_stocks, sectors, moodBlocks?.blocks, turnover?.stocks]);
+  }, [emotion?.lianban_stocks, sectors, moodBlocks?.blocks, focusBlocks?.blocks, turnover?.stocks]);
 
   return (
     <BlockResolveScope names={blockNames}>
@@ -777,7 +812,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
       </GlassCard>
       </>)}
 
-      {/* 3. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 资金轮动 */}
+      {/* 3. 标签页：昨日短线情绪 / 成交额 / 板块资金 / 板块人气 / 重点跟踪 / 资金轮动 */}
       {showTabs && (<>
       {!isPopout && (
       <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border/50 pb-0">
@@ -1060,6 +1095,108 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
                       <td className={cn("px-2 py-2 font-mono",
                         b.zt != null && b.zt >= 5 ? "font-bold text-danger" : "text-muted-foreground")}>
                         {b.zt == null ? "—" : b.zt}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {activeTab === "focus" && (
+        <GlassCard className="mb-6">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
+            <BarChart3 className="h-3.5 w-3.5" />
+            <Caliber text={
+              "跟踪昨日人气>5000 的板块，以及消息关注里收藏的板块。\n" +
+              "标签「人气」= 昨人气热点，「收藏」= 关注板块；可同时带两个标签。\n" +
+              "指标为开盘啦指定板块点查；昨日人气榜定稿复用（可落盘）。\n" +
+              "读数格式：今日/昨日（斜杠对照）；相对昨日变大/变强为红，变小为绿。\n" +
+              "今 / 昨按数据场次对照，非日历今天。客观公开数据，非推荐。"
+            } />
+            <span>
+              今 {focusBlocks?.as_of ?? "—"} · 昨 {focusBlocks?.prev ?? "—"}
+              {focusBlocks?.hot_power != null ? ` · 人气阈值 ${focusBlocks.hot_power}` : ""}
+            </span>
+            {focusBlocks?.updated && <span className="ml-auto">更新于 {focusBlocks.updated}</span>}
+          </div>
+          {!focusBlocks?.available || focusBlocks.blocks.length === 0 ? (
+            focusBlocks && !focusBlocks.available && focusDone
+              ? <p className="py-4 text-center text-sm text-muted-foreground/60">{focusBlocks.reason || "暂无数据"}</p>
+              : pending(focusDone)
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">板块</th>
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">标签</th>
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">人气</th>
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">涨幅</th>
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">主力净额</th>
+                    <th className="whitespace-nowrap px-2 py-2 font-medium">涨停</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {focusBlocks.blocks.map((b) => (
+                    <tr key={`${b.code || b.name}-${(b.tags || []).join(",")}`} className="border-b border-border/30">
+                      <td className="px-2 py-2">
+                        <BlockLabel name={b.name} variant="text" className="font-medium" />
+                        {b.code ? (
+                          <>
+                            {" "}
+                            <span className="text-xs text-muted-foreground/50">{b.code}</span>
+                          </>
+                        ) : (
+                          <span className="ml-1 text-xs text-muted-foreground/50">未映射</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {(b.tag_labels || []).map((lab) => (
+                            <span
+                              key={lab}
+                              className={cn(
+                                "rounded px-1.5 py-0.5 text-[10px]",
+                                lab === "人气"
+                                  ? "bg-danger/15 text-danger"
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                              )}
+                            >
+                              {lab}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <EnvCompare
+                          today={b.today.power}
+                          yesterday={b.yesterday.power}
+                          format={(v) => v.toLocaleString("zh-CN")}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <EnvCompare
+                          today={b.today.pct}
+                          yesterday={b.yesterday.pct}
+                          format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(2)}%`}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <EnvCompare
+                          today={b.today.m_net}
+                          yesterday={b.yesterday.m_net}
+                          format={(v) => `${v > 0 ? "+" : ""}${yiCompact(v)}`}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <EnvCompare
+                          today={b.today.zt}
+                          yesterday={b.yesterday.zt}
+                          format={(v) => String(Math.round(v))}
+                        />
                       </td>
                     </tr>
                   ))}

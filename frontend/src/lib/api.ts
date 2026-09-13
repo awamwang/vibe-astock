@@ -1,6 +1,7 @@
 import { apiUrl } from "./base";
 import type { WatchItem } from "./watchlist";
 import type {
+  FocusBlocksSnapshot,
   LiveEmotion,
   MarketSession,
   MoodBlocksSnapshot,
@@ -652,6 +653,7 @@ export const api = {
   liveEmotion: () => get<LiveEmotion>("/market/live-emotion"),
   shortBoard: () => get<ShortBoardSnapshot>("/market/short-board"),
   moodBlocks: () => get<MoodBlocksSnapshot>("/market/mood-blocks"),
+  focusBlocks: () => get<FocusBlocksSnapshot>("/market/focus-blocks"),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   monitorSnapshot: (watch: string) => get<MonitorSnapshot>(`/monitor/snapshot?watch=${encodeURIComponent(watch)}`),

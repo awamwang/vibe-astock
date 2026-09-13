@@ -2,29 +2,45 @@
 
 数据源：开盘啦 `RealRankingInfo`，`ZSType=7`（见 awam-stock 后端股票数据来源）。
 涨停家数来自同站 `PlateAnalysis`（BlockDay），按板块 code 合并。
+
+指定板块：`GetPlate_Info_QJ` + `PlateID`；历史日走 ``apphis`` 并带 `Date`。
+定稿榜单按日落盘到 ``cache/mood_block/{date}.json``，供昨今对比复用。
 """
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from typing import Any, Optional
 
+from . import paths as _paths
 from . import trade_calendar
 from .util import china_now
 
 _TTL = 20.0
 _OFFSESSION_TTL = 86400.0
 _LIMIT = 30
+_RANK_PAGES = 5  # 每页 st=30，用于名称索引与人气筛选
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
-_LONGTOU = "https://apphq.longhuvip.com/w1/api/index.php"
+_CACHE_DIR = ""
+_LONGTOU_HQ = "https://apphq.longhuvip.com/w1/api/index.php"
+_LONGTOU_HIS = "https://apphis.longhuvip.com/w1/api/index.php"
 # 开盘啦对浏览器 UA 会返回 errcode=0 但 list 空；须用 App UA（对齐 awam longTouPost）
 _UA = {
     "User-Agent": "lhb/5.13.7 (com.kaipanla.www; build:0; iOS 16.1.0) Alamofire/4.9.1",
     "Accept": "*/*",
+    "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
 }
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / "cache" / "mood_block")
 
 
 def _cached(key: str, ttl: float, build):
@@ -57,6 +73,14 @@ def _http_get_json(url: str) -> Any:
     return r.json()
 
 
+def _http_post_json(url: str, data: dict[str, Any]) -> Any:
+    import requests
+
+    r = requests.post(url, data=data, headers=_UA, timeout=12)
+    r.raise_for_status()
+    return r.json()
+
+
 def _parse_mood_row(item: Any, sort: int) -> Optional[dict]:
     """开盘啦 list 行 → MoodBlockItem 字段（下标对齐 moodBlockItemMap）。"""
     if not isinstance(item, (list, tuple)) or len(item) < 5:
@@ -81,10 +105,45 @@ def _parse_mood_row(item: Any, sort: int) -> Optional[dict]:
     }
 
 
+def _parse_plate_info_list(lst: Any, *, dated: bool) -> Optional[dict]:
+    """GetPlate_Info_QJ 的 List → 统一字段。
+
+    历史 ``apphis`` + Date：``[排名, 人气, 成交额, 主力净额, 涨幅, 涨停?, …]``。
+    盘中 ``apphq`` 无 Date 时下标 4 不一定是涨幅，故 ``dated=False`` 时不采 pct。
+    """
+    if not isinstance(lst, (list, tuple)) or len(lst) < 2:
+        return None
+    sort = _num(lst[0])
+    power = _num(lst[1])
+    amount = _num(lst[2]) if len(lst) > 2 else None
+    m_net = _num(lst[3]) if len(lst) > 3 else None
+    pct = None
+    if len(lst) > 4:
+        v4 = _num(lst[4])
+        if dated and v4 is not None:
+            pct = v4
+        elif v4 is not None and abs(v4) <= 30:
+            # 保守：数值像涨幅时才采用
+            pct = v4
+    zt = None
+    if len(lst) > 5:
+        z = _num(lst[5])
+        if z is not None and 0 <= z <= 500 and float(z).is_integer():
+            zt = int(z)
+    return {
+        "sort": int(sort) if sort is not None else None,
+        "power": int(power) if power is not None else None,
+        "amount": amount,
+        "m_net": m_net,
+        "pct": pct,
+        "zt": zt,
+    }
+
+
 def _fetch_ranking(limit: int = _LIMIT) -> tuple[list[dict], Optional[int]]:
-    """拉板块人气榜。返回 (rows, api_time)。"""
+    """拉板块人气榜（实时域）。返回 (rows, api_time)。"""
     url = (
-        f"{_LONGTOU}?Order=1&a=RealRankingInfo&st={limit}"
+        f"{_LONGTOU_HQ}?Order=1&a=RealRankingInfo&st={limit}"
         f"&apiv=w25&Type=1&c=ZhiShuRanking&PhoneOSNew=1&Index=0&ZSType=7&"
     )
     raw = _http_get_json(url)
@@ -101,10 +160,63 @@ def _fetch_ranking(limit: int = _LIMIT) -> tuple[list[dict], Optional[int]]:
     return rows, api_time
 
 
+def _fetch_ranking_pages(
+    *,
+    date: str | None = None,
+    pages: int = _RANK_PAGES,
+    page_size: int = _LIMIT,
+) -> tuple[list[dict], Optional[int]]:
+    """分页拉人气榜；``date`` 有值时走历史域并落盘复用。"""
+    rows: list[dict] = []
+    api_time: Optional[int] = None
+    seen: set[str] = set()
+    for page in range(max(1, pages)):
+        index = page * page_size
+        if date:
+            raw = _http_post_json(_LONGTOU_HIS, {
+                "a": "RealRankingInfo",
+                "c": "ZhiShuRanking",
+                "Order": "1",
+                "st": str(page_size),
+                "Type": "1",
+                "Index": str(index),
+                "ZSType": "7",
+                "Date": date,
+                "apiv": "w25",
+                "PhoneOSNew": "1",
+            })
+        else:
+            url = (
+                f"{_LONGTOU_HQ}?Order=1&a=RealRankingInfo&st={page_size}"
+                f"&apiv=w25&Type=1&c=ZhiShuRanking&PhoneOSNew=1"
+                f"&Index={index}&ZSType=7&"
+            )
+            raw = _http_get_json(url)
+        batch = raw.get("list") or []
+        if not batch:
+            break
+        t = raw.get("Time")
+        try:
+            api_time = int(t) if t is not None else api_time
+        except (TypeError, ValueError):
+            pass
+        for i, item in enumerate(batch):
+            parsed = _parse_mood_row(item, sort=index + i + 1)
+            if not parsed:
+                continue
+            if parsed["code"] in seen:
+                continue
+            seen.add(parsed["code"])
+            rows.append(parsed)
+        if len(batch) < page_size:
+            break
+    return rows, api_time
+
+
 def _fetch_zt_map() -> dict[str, int]:
     """板块涨停家数：PlateAnalysis Type=2，code→zt。"""
     url = (
-        f"{_LONGTOU}?Order=1&a=PlateAnalysis&st=300&c=HomeDingPan"
+        f"{_LONGTOU_HQ}?Order=1&a=PlateAnalysis&st=300&c=HomeDingPan"
         f"&PhoneOSNew=1&Index=0&PidType=0&apiv=w25&Type=2&"
     )
     try:
@@ -122,6 +234,173 @@ def _fetch_zt_map() -> dict[str, int]:
     return out
 
 
+def _archive_path(date: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date}.json")
+
+
+def _load_archive(date: str | None) -> dict:
+    if not date:
+        return {}
+    path = _archive_path(date)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _save_archive(date: str, payload: dict) -> None:
+    """定稿榜单落盘；失败静默。"""
+    if not date or not trade_calendar.should_write_daily_cache(date):
+        return
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        path = _archive_path(date)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        body = {k: v for k, v in payload.items() if v is not None}
+        body["date"] = date
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def ranking_for_date(date: str, *, force: bool = False) -> dict:
+    """指定交易日人气榜定稿：优先读盘，否则拉历史域并落盘。
+
+    返回 ``{date, available, blocks, from_archive, api_time, reason?}``。
+    """
+    date_s = str(date or "").strip()
+    if not date_s:
+        return {
+            "date": date_s,
+            "available": False,
+            "blocks": [],
+            "from_archive": False,
+            "reason": "缺少日期",
+        }
+
+    def build():
+        if not force:
+            archived = _load_archive(date_s)
+            blocks = archived.get("blocks")
+            if isinstance(blocks, list) and blocks:
+                return {
+                    "date": date_s,
+                    "available": True,
+                    "blocks": blocks,
+                    "from_archive": True,
+                    "api_time": archived.get("api_time"),
+                    "reason": None,
+                }
+        try:
+            rows, api_time = _fetch_ranking_pages(date=date_s)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "date": date_s,
+                "available": False,
+                "blocks": [],
+                "from_archive": False,
+                "reason": f"历史人气榜取数失败：{type(exc).__name__}",
+            }
+        if rows:
+            zt_map = _fetch_zt_map() if date_s == trade_calendar.latest_session() else {}
+            if zt_map:
+                for row in rows:
+                    zt = zt_map.get(row["code"])
+                    if zt is not None:
+                        row["zt"] = zt
+            out = {
+                "date": date_s,
+                "available": True,
+                "blocks": rows,
+                "from_archive": False,
+                "api_time": api_time,
+                "reason": None,
+            }
+            _save_archive(date_s, out)
+            return out
+        return {
+            "date": date_s,
+            "available": False,
+            "blocks": [],
+            "from_archive": False,
+            "reason": "历史人气榜暂无数据",
+        }
+
+    # 定稿日：长 TTL；强制刷新绕过内存缓存但仍可读盘
+    ttl = _OFFSESSION_TTL if trade_calendar.is_settled(date_s) else _TTL
+    key = f"mood_rank:{date_s}:{'f' if force else 'n'}"
+    return _cached(key, ttl, build) or {
+        "date": date_s,
+        "available": False,
+        "blocks": [],
+        "from_archive": False,
+        "reason": "历史人气榜取数失败",
+    }
+
+
+def plate_info(code: str, *, date: str | None = None) -> Optional[dict]:
+    """指定板块点查（GetPlate_Info_QJ）。
+
+    ``date`` 为空：实时域；有值：历史域 + Date。
+    返回 ``{code, date, power, pct, m_net, amount, zt, sort}``；失败 None。
+    """
+    code_s = str(code or "").strip()
+    if not code_s:
+        return None
+    date_s = str(date or "").strip() or None
+
+    def build():
+        try:
+            if date_s:
+                raw = _http_post_json(_LONGTOU_HIS, {
+                    "a": "GetPlate_Info_QJ",
+                    "c": "ZhiShuRanking",
+                    "PlateID": code_s,
+                    "Date": date_s,
+                    "apiv": "w25",
+                    "PhoneOSNew": "1",
+                })
+                dated = True
+            else:
+                raw = _http_get_json(
+                    f"{_LONGTOU_HQ}?a=GetPlate_Info_QJ&c=ZhiShuRanking"
+                    f"&PlateID={code_s}&apiv=w25&PhoneOSNew=1&"
+                )
+                dated = False
+        except Exception:  # noqa: BLE001
+            return None
+        parsed = _parse_plate_info_list(raw.get("List"), dated=dated)
+        if not parsed:
+            return None
+        resp_date = str(raw.get("Date") or date_s or "").strip() or None
+        return {
+            "code": code_s,
+            "date": resp_date,
+            **parsed,
+        }
+
+    ttl = _OFFSESSION_TTL if date_s and trade_calendar.is_settled(date_s) else _TTL
+    key = f"mood_plate:{code_s}:{date_s or 'live'}"
+    return _cached(key, ttl, build)
+
+
+def fetch_ranking_catalog(*, date: str | None = None, pages: int | None = None) -> list[dict]:
+    """分页拉人气榜作名称索引；失败返回空列表。"""
+    try:
+        rows, _ = _fetch_ranking_pages(date=date, pages=pages or _RANK_PAGES)
+        return rows
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def snapshot(limit: int = _LIMIT) -> dict:
     """板块人气排名快照。"""
 
@@ -135,6 +414,7 @@ def snapshot(limit: int = _LIMIT) -> dict:
                 "blocks": [],
                 "updated": china_now().strftime("%Y-%m-%d %H:%M"),
             }
+        zt_map: dict[str, int] = {}
         if rows:
             zt_map = _fetch_zt_map()
             if zt_map:
@@ -143,14 +423,37 @@ def snapshot(limit: int = _LIMIT) -> dict:
                     if zt is not None:
                         row["zt"] = zt
         available = bool(rows)
-        return {
+        as_of = trade_calendar.latest_session() or china_now().strftime("%Y-%m-%d")
+        out = {
             "available": available,
             "reason": None if available else "板块人气暂无数据（非交易时段或未返回）",
-            "date": china_now().strftime("%Y-%m-%d"),
+            "date": as_of,
             "api_time": api_time,
             "blocks": rows,
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
         }
+        if available and trade_calendar.should_write_daily_cache(as_of):
+            # 实时榜定稿窗内同步落盘，供次日昨对比复用
+            archive_blocks = rows
+            try:
+                wide = fetch_ranking_catalog(date=None)
+                if wide:
+                    archive_blocks = wide
+                    if zt_map:
+                        for row in archive_blocks:
+                            zt = zt_map.get(row["code"])
+                            if zt is not None:
+                                row["zt"] = zt
+            except Exception:  # noqa: BLE001
+                pass
+            _save_archive(as_of, {
+                "date": as_of,
+                "available": True,
+                "blocks": archive_blocks,
+                "api_time": api_time,
+                "from_archive": False,
+            })
+        return out
 
     live = trade_calendar.is_calendar_session_live()
     ttl = _TTL if live else _OFFSESSION_TTL

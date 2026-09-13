@@ -195,5 +195,42 @@ export const fetchShortBoard = () =>
 export const fetchMoodBlocks = () =>
   request<MoodBlocksSnapshot>("/market/mood-blocks");
 
+/** 重点板块跟踪一行（今昨对比） */
+export interface FocusBlockMetrics {
+  power: number | null;
+  pct: number | null;
+  m_net: number | null;
+  amount: number | null;
+  zt: number | null;
+  sort: number | null;
+  speed?: number | null;
+}
+
+export interface FocusBlockItem {
+  code: string | null;
+  name: string;
+  tags: string[];
+  tag_labels: string[];
+  map_status: string;
+  follow?: { kind: string; id: string; name: string } | null;
+  today: FocusBlockMetrics;
+  yesterday: FocusBlockMetrics;
+}
+
+export interface FocusBlocksSnapshot {
+  available: boolean;
+  reason?: string | null;
+  as_of?: string | null;
+  prev?: string | null;
+  is_live?: boolean;
+  hot_power?: number;
+  yesterday_from_archive?: boolean;
+  blocks: FocusBlockItem[];
+  updated?: string;
+}
+
+export const fetchFocusBlocks = () =>
+  request<FocusBlocksSnapshot>("/market/focus-blocks");
+
 export const fetchLianbanEmotion = () =>
   request<ShortTermEmotion>("/market/emotion");
