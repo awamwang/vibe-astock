@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
-  Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
-  LayoutList, Loader2, Network, RefreshCw, Search, Star,
+  Boxes, Check, ChevronDown, ChevronRight, Folder, FolderOpen,
+  LayoutList, Loader2, Network, Pencil, Plus, RefreshCw, Search, Star, Trash2, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { BlockStocksTable } from "@/components/block/BlockStocksTable";
@@ -11,20 +11,22 @@ import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type Quote, type ThsBlockRow, type ThsBlocksSnapshot, type ThsBlockStocksDetail,
-  type ThsTreeNode,
+  type Quote, type ThemeAliasEntry, type ThsBlockRow, type ThsBlocksSnapshot,
+  type ThsBlockStocksDetail, type ThsTreeNode,
 } from "@/lib/api";
 import {
   isBlockFollowed, setFollowBlocksCache, type FollowBlock,
 } from "@/lib/message-follow-blocks";
 import {
   THS_BLOCK_KINDS, THS_NODE_TYPE_LABEL,
-  collectThsBranchIds, filterThsTree, parseThsTree,
-  sortRowsByTreeOrder, thsBlockCodeSubtitle, thsBlockKindLabel,
+  aliasesForBlockName, buildAliasesByCanonical, collectThsBranchIds,
+  filterThsTree, normalizeThemeTag, parseThsTree, sortRowsByTreeOrder,
+  themeAliasEntriesFromConfig, thsBlockCodeSubtitle, thsBlockKindLabel,
   thsBlockPrimaryCode, thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 
+const ALIAS_MAX_LEN = 20;
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
   error: (msg: string) => toast.error(msg, { position: "top-center", duration: 5000 }),
@@ -95,6 +97,16 @@ function FollowBlockButton({
   );
 }
 
+function AliasInlineText({ aliases }: { aliases: string[] }) {
+  if (!aliases.length) return <span className="text-muted-foreground/50">—</span>;
+  const text = aliases.join("、");
+  return (
+    <span className="text-muted-foreground" title={text}>
+      {text}
+    </span>
+  );
+}
+
 function FollowedOrKindTable({
   filteredRows,
   showSubtypeCol,
@@ -103,6 +115,7 @@ function FollowedOrKindTable({
   onSort,
   selected,
   followedIds,
+  aliasesByCanonical,
   onOpen,
   onToggleFollow,
 }: {
@@ -113,15 +126,18 @@ function FollowedOrKindTable({
   onSort: (key: SortKey) => void;
   selected: ThsBlockRow | null;
   followedIds: Set<string>;
+  aliasesByCanonical: Map<string, string[]>;
   onOpen: (row: ThsBlockRow) => void;
   onToggleFollow: (row: ThsBlockRow) => void;
 }) {
+  const colCount = (showSubtypeCol ? 7 : 6);
   return (
-    <table className="w-full min-w-[640px] text-sm">
+    <table className="w-full min-w-[760px] text-sm">
       <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
         <tr className="border-b border-border/60 text-left">
           <SortTh col="id" label="代码" sortCol={sort} order={order} onSort={onSort} />
           <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={onSort} />
+          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">别名</th>
           {showSubtypeCol && (
             <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={onSort} />
           )}
@@ -136,6 +152,7 @@ function FollowedOrKindTable({
           const subtype = thsCustomSubtypeLabel(row);
           const depth = row.depth ?? 0;
           const followed = followedIds.has(`${row.kind}|${row.id}`);
+          const aliases = aliasesForBlockName(row.name, aliasesByCanonical);
           return (
             <tr
               key={`${row.kind}-${row.id}`}
@@ -162,6 +179,9 @@ function FollowedOrKindTable({
                   </span>
                 )}
               </td>
+              <td className="max-w-[180px] truncate px-3 py-2.5 text-xs">
+                <AliasInlineText aliases={aliases} />
+              </td>
               {showSubtypeCol && (
                 <td className="px-4 py-2.5 text-muted-foreground">{subtype || "—"}</td>
               )}
@@ -183,7 +203,7 @@ function FollowedOrKindTable({
         })}
         {!filteredRows.length && (
           <tr>
-            <td colSpan={showSubtypeCol ? 6 : 5} className="px-4 py-10 text-center text-muted-foreground">
+            <td colSpan={colCount} className="px-4 py-10 text-center text-muted-foreground">
               无匹配板块
             </td>
           </tr>
@@ -192,7 +212,6 @@ function FollowedOrKindTable({
     </table>
   );
 }
-
 function ThsBlockTreeItem({
   node,
   depth,
@@ -200,6 +219,7 @@ function ThsBlockTreeItem({
   rowById,
   selectedId,
   followedIds,
+  aliasesByCanonical,
   onToggle,
   onSelect,
   onToggleFollow,
@@ -210,6 +230,7 @@ function ThsBlockTreeItem({
   rowById: Map<string, ThsBlockRow>;
   selectedId: string | null;
   followedIds: Set<string>;
+  aliasesByCanonical: Map<string, string[]>;
   onToggle: (id: string) => void;
   onSelect: (row: ThsBlockRow) => void;
   onToggleFollow: (row: ThsBlockRow) => void;
@@ -220,6 +241,8 @@ function ThsBlockTreeItem({
   const active = selectedId === node.id;
   const stockCount = row?.stock_count;
   const followed = row ? followedIds.has(`${row.kind}|${row.id}`) : false;
+  const aliases = aliasesForBlockName(node.name, aliasesByCanonical);
+  const aliasText = aliases.length ? aliases.join("、") : "";
 
   const handleClick = () => {
     if (isBranch) {
@@ -264,6 +287,14 @@ function ThsBlockTreeItem({
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">
             {node.name || node.id}
           </span>
+          {aliasText && (
+            <span
+              className="hidden max-w-[140px] shrink truncate text-[11px] text-muted-foreground lg:inline"
+              title={`别名：${aliasText}`}
+            >
+              {aliasText}
+            </span>
+          )}
           {stockCount != null && (
             <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
               {stockCount}
@@ -290,6 +321,7 @@ function ThsBlockTreeItem({
           rowById={rowById}
           selectedId={selectedId}
           followedIds={followedIds}
+          aliasesByCanonical={aliasesByCanonical}
           onToggle={onToggle}
           onSelect={onSelect}
           onToggleFollow={onToggleFollow}
@@ -318,10 +350,20 @@ export function ThsBlocks() {
   const [stocksLoading, setStocksLoading] = useState(false);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
+  const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
+  const [aliasSaving, setAliasSaving] = useState(false);
+  const [aliasDraft, setAliasDraft] = useState("");
+  const [aliasEditingKey, setAliasEditingKey] = useState<string | null>(null);
+  const [aliasEditDraft, setAliasEditDraft] = useState("");
 
   const followedIds = useMemo(
     () => new Set(followBlocks.map((b) => `${b.kind}|${b.id}`)),
     [followBlocks],
+  );
+
+  const aliasesByCanonical = useMemo(
+    () => buildAliasesByCanonical(aliasEntries),
+    [aliasEntries],
   );
 
   const loadSnapshot = useCallback(async () => {
@@ -345,10 +387,116 @@ export function ThsBlocks() {
     }
   }, []);
 
+  const loadAliases = useCallback(async () => {
+    try {
+      const cfg = await api.themeAliases();
+      setAliasEntries(themeAliasEntriesFromConfig(cfg));
+    } catch {
+      /* 别名失败不阻断板块浏览 */
+    }
+  }, []);
+
   useEffect(() => {
     void loadSnapshot();
     void loadFollowBlocks();
-  }, [loadSnapshot, loadFollowBlocks]);
+    void loadAliases();
+  }, [loadSnapshot, loadFollowBlocks, loadAliases]);
+
+  useEffect(() => {
+    setAliasDraft("");
+    setAliasEditingKey(null);
+    setAliasEditDraft("");
+  }, [selected?.kind, selected?.id]);
+
+  const persistAliases = useCallback(async (next: ThemeAliasEntry[]) => {
+    setAliasSaving(true);
+    try {
+      const r = await api.saveThemeAliases(next);
+      setAliasEntries(themeAliasEntriesFromConfig(r));
+      notify.success("板块别名已保存");
+    } catch (e) {
+      notify.error(e instanceof ApiError ? e.message : "保存别名失败");
+    } finally {
+      setAliasSaving(false);
+    }
+  }, []);
+
+  const addAliasForSelected = useCallback(async () => {
+    if (!selected) return;
+    const alias = normalizeThemeTag(aliasDraft);
+    const canonical = normalizeThemeTag(selected.name || selected.id);
+    if (!alias || !canonical) {
+      notify.error("请填写别名");
+      return;
+    }
+    if (alias.length > ALIAS_MAX_LEN || canonical.length > ALIAS_MAX_LEN) {
+      notify.error(`板块名不超过 ${ALIAS_MAX_LEN} 个字`);
+      return;
+    }
+    if (alias === canonical) {
+      notify.error("别名与标准板块不能相同");
+      return;
+    }
+    if (aliasEntries.some((e) => normalizeThemeTag(e.alias) === alias)) {
+      notify.error("该别名已存在");
+      return;
+    }
+    const next = [
+      ...aliasEntries,
+      { alias, canonical, type: "" },
+    ].sort((a, b) => {
+      const byCanonical = a.canonical.localeCompare(b.canonical, "zh-CN");
+      if (byCanonical !== 0) return byCanonical;
+      return a.alias.localeCompare(b.alias, "zh-CN");
+    });
+    setAliasDraft("");
+    await persistAliases(next);
+  }, [selected, aliasDraft, aliasEntries, persistAliases]);
+
+  const removeAlias = useCallback(async (alias: string) => {
+    if (aliasEditingKey === alias) {
+      setAliasEditingKey(null);
+      setAliasEditDraft("");
+    }
+    const next = aliasEntries.filter((e) => e.alias !== alias);
+    await persistAliases(next);
+  }, [aliasEditingKey, aliasEntries, persistAliases]);
+
+  const saveEditAlias = useCallback(async () => {
+    if (!selected || !aliasEditingKey) return;
+    const alias = normalizeThemeTag(aliasEditDraft);
+    const canonical = normalizeThemeTag(selected.name || selected.id);
+    if (!alias || !canonical) {
+      notify.error("请填写别名");
+      return;
+    }
+    if (alias.length > ALIAS_MAX_LEN || canonical.length > ALIAS_MAX_LEN) {
+      notify.error(`板块名不超过 ${ALIAS_MAX_LEN} 个字`);
+      return;
+    }
+    if (alias === canonical) {
+      notify.error("别名与标准板块不能相同");
+      return;
+    }
+    if (aliasEntries.some((e) => e.alias === alias && e.alias !== aliasEditingKey)) {
+      notify.error("该别名已存在");
+      return;
+    }
+    const next = aliasEntries
+      .map((e) =>
+        e.alias === aliasEditingKey
+          ? { alias, canonical, type: e.type }
+          : e,
+      )
+      .sort((a, b) => {
+        const byCanonical = a.canonical.localeCompare(b.canonical, "zh-CN");
+        if (byCanonical !== 0) return byCanonical;
+        return a.alias.localeCompare(b.alias, "zh-CN");
+      });
+    setAliasEditingKey(null);
+    setAliasEditDraft("");
+    await persistAliases(next);
+  }, [selected, aliasEditingKey, aliasEditDraft, aliasEntries, persistAliases]);
 
   const toggleFollow = useCallback(async (row: ThsBlockRow) => {
     const nextFollow = !isBlockFollowed(row.kind, row.id, followBlocks);
@@ -459,7 +607,13 @@ export function ThsBlocks() {
       for (const row of entry.rows || []) {
         if (row.code) codeById.set(row.id, row.code);
       }
-      const pruned = filterThsTree(root, { query: q, nodeFilter, codeById, allowedIds });
+      const pruned = filterThsTree(root, {
+        query: q,
+        nodeFilter,
+        codeById,
+        aliasesByName: aliasesByCanonical,
+        allowedIds,
+      });
       if (!pruned) continue;
       sections.push({
         kind: k.value,
@@ -469,7 +623,7 @@ export function ThsBlocks() {
       });
     }
     return sections;
-  }, [isFollowedView, snapshot, followBlocks, q, nodeFilter]);
+  }, [isFollowedView, snapshot, followBlocks, q, nodeFilter, aliasesByCanonical]);
 
   const canShowTree = isFollowedView
     ? followedTreeSections.length > 0
@@ -527,8 +681,13 @@ export function ThsBlocks() {
     for (const row of allRows) {
       if (row.code) codeById.set(row.id, row.code);
     }
-    return filterThsTree(root, { query: q, nodeFilter, codeById });
-  }, [isFollowedView, canShowTree, kindEntry?.tree, q, nodeFilter, allRows]);
+    return filterThsTree(root, {
+      query: q,
+      nodeFilter,
+      codeById,
+      aliasesByName: aliasesByCanonical,
+    });
+  }, [isFollowedView, canShowTree, kindEntry?.tree, q, nodeFilter, allRows, aliasesByCanonical]);
 
   const filteredRows = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -537,6 +696,7 @@ export function ThsBlocks() {
       if (nodeFilter === "branch" && row.node_type !== "branch") return false;
       if (!query) return true;
       const subtype = thsCustomSubtypeLabel(row) || "";
+      const aliases = aliasesForBlockName(row.name, aliasesByCanonical);
       return (
         row.id.toLowerCase().includes(query)
         || (row.code || "").toLowerCase().includes(query)
@@ -544,6 +704,7 @@ export function ThsBlocks() {
         || row.tree_path.toLowerCase().includes(query)
         || subtype.toLowerCase().includes(query)
         || (row.query_key || "").toLowerCase().includes(query)
+        || aliases.some((a) => a.toLowerCase().includes(query))
       );
     });
     if (viewMode === "tree" && canShowTree && !query && nodeFilter === "all") {
@@ -566,7 +727,7 @@ export function ThsBlocks() {
       return order === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree]);
+  }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree, aliasesByCanonical]);
 
   /** 关注视图中无树结构的类型（自定义 / 每日动态等），树形模式下附在裁剪树之后 */
   const followedFlatGroups = useMemo(() => {
@@ -648,6 +809,9 @@ export function ThsBlocks() {
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
+  const selectedAliases = selected
+    ? aliasesForBlockName(selected.name, aliasesByCanonical)
+    : [];
   const visibleCount = filteredRows.length;
 
   return (
@@ -793,7 +957,7 @@ export function ThsBlocks() {
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
                     className={inputCls}
-                    placeholder="搜索 ID、名称、树路径…"
+                    placeholder="搜索 ID、名称、别名、树路径…"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                   />
@@ -893,6 +1057,7 @@ export function ThsBlocks() {
                             rowById={section.rowById}
                             selectedId={selected?.id ?? null}
                             followedIds={followedIds}
+                            aliasesByCanonical={aliasesByCanonical}
                             onToggle={toggleExpanded}
                             onSelect={(row) => void openDetail(row)}
                             onToggleFollow={(row) => void toggleFollow(row)}
@@ -908,6 +1073,8 @@ export function ThsBlocks() {
                             {group.rows.map((row) => {
                               const active = selected?.kind === row.kind && selected?.id === row.id;
                               const followed = followedIds.has(`${row.kind}|${row.id}`);
+                              const aliases = aliasesForBlockName(row.name, aliasesByCanonical);
+                              const aliasText = aliases.length ? aliases.join("、") : "";
                               return (
                                 <div
                                   key={`${row.kind}-${row.id}`}
@@ -928,6 +1095,14 @@ export function ThsBlocks() {
                                     <span className="min-w-0 flex-1 truncate font-medium text-foreground">
                                       {row.name || row.id}
                                     </span>
+                                    {aliasText && (
+                                      <span
+                                        className="hidden max-w-[140px] shrink truncate text-[11px] text-muted-foreground lg:inline"
+                                        title={`别名：${aliasText}`}
+                                      >
+                                        {aliasText}
+                                      </span>
+                                    )}
                                     {row.stock_count != null && (
                                       <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
                                         {row.stock_count}
@@ -958,6 +1133,7 @@ export function ThsBlocks() {
                     onSort={toggleSort}
                     selected={selected}
                     followedIds={followedIds}
+                    aliasesByCanonical={aliasesByCanonical}
                     onOpen={(row) => void openDetail(row)}
                     onToggleFollow={(row) => void toggleFollow(row)}
                   />
@@ -981,6 +1157,7 @@ export function ThsBlocks() {
                       rowById={rowById}
                       selectedId={selected?.id ?? null}
                       followedIds={followedIds}
+                      aliasesByCanonical={aliasesByCanonical}
                       onToggle={toggleExpanded}
                       onSelect={(row) => void openDetail(row)}
                       onToggleFollow={(row) => void toggleFollow(row)}
@@ -998,6 +1175,7 @@ export function ThsBlocks() {
                   onSort={toggleSort}
                   selected={selected}
                   followedIds={followedIds}
+                  aliasesByCanonical={aliasesByCanonical}
                   onOpen={(row) => void openDetail(row)}
                   onToggleFollow={(row) => void toggleFollow(row)}
                 />
@@ -1088,6 +1266,140 @@ export function ThsBlocks() {
                       )}
                     </dl>
                   </div>
+
+                  <DetailSection label="板块别名">
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      与配置中的板块别名同源；别名匹配到标准名「{selected.name || selected.id}」。
+                      {" "}
+                      <Link
+                        to={keywordsSettingsTo("theme-aliases")}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                      >
+                        打开配置 →
+                      </Link>
+                    </p>
+                    {selectedAliases.length === 0 ? (
+                      <p className="mb-2 text-xs text-muted-foreground">暂无别名，可在下方添加。</p>
+                    ) : (
+                      <ul className="mb-3 space-y-1.5">
+                        {selectedAliases.map((alias) => {
+                          const editing = aliasEditingKey === alias;
+                          return (
+                            <li
+                              key={alias}
+                              className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5"
+                            >
+                              {editing ? (
+                                <>
+                                  <input
+                                    className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm"
+                                    value={aliasEditDraft}
+                                    onChange={(e) => setAliasEditDraft(e.target.value)}
+                                    disabled={aliasSaving}
+                                    placeholder="别名"
+                                    maxLength={ALIAS_MAX_LEN}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void saveEditAlias();
+                                      } else if (e.key === "Escape") {
+                                        setAliasEditingKey(null);
+                                        setAliasEditDraft("");
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={aliasSaving}
+                                    onClick={() => void saveEditAlias()}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-primary hover:bg-primary/10 disabled:opacity-50"
+                                    title="保存"
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={aliasSaving}
+                                    onClick={() => {
+                                      setAliasEditingKey(null);
+                                      setAliasEditDraft("");
+                                    }}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
+                                    title="取消"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={aliasSaving || aliasEditingKey != null}
+                                    onClick={() => {
+                                      setAliasEditingKey(alias);
+                                      setAliasEditDraft(alias);
+                                    }}
+                                    className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-primary disabled:opacity-50"
+                                    title={`点击修改「${alias}」`}
+                                  >
+                                    {alias}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={aliasSaving || aliasEditingKey != null}
+                                    onClick={() => {
+                                      setAliasEditingKey(alias);
+                                      setAliasEditDraft(alias);
+                                    }}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
+                                    title={`编辑「${alias}」`}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={aliasSaving || aliasEditingKey != null}
+                                    onClick={() => void removeAlias(alias)}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                                    title={`删除「${alias}」`}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm"
+                        value={aliasDraft}
+                        onChange={(e) => setAliasDraft(e.target.value)}
+                        disabled={aliasSaving || aliasEditingKey != null}
+                        placeholder="新增别名（原始写法）"
+                        maxLength={ALIAS_MAX_LEN}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void addAliasForSelected();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={aliasSaving || aliasEditingKey != null || !aliasDraft.trim()}
+                        onClick={() => void addAliasForSelected()}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted/40 disabled:opacity-50"
+                      >
+                        {aliasSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        添加
+                      </button>
+                    </div>
+                  </DetailSection>
 
                   {selected.node_type === "branch" ? (
                     <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
