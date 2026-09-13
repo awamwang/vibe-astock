@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Boxes, Check, ChevronDown, ChevronRight, Folder, FolderOpen,
-  LayoutList, Loader2, Network, Pencil, Plus, RefreshCw, Search, Star, Trash2, X,
+  Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
+  LayoutList, Loader2, Network, RefreshCw, Search, Star,
 } from "lucide-react";
 import { toast } from "sonner";
-import { BlockStocksTable } from "@/components/block/BlockStocksTable";
+import {
+  BlockDetailPanel, FollowBlockButton, SourceBadges, thsStocksKind,
+} from "@/components/block/BlockDetailPanel";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type BlocksManageSnapshot, type ManagedBlockRow, type Quote, type ThemeAliasEntry,
-  type ThsBlockStocksDetail, type ThsTreeNode,
+  type BlocksManageSnapshot, type ManagedBlockRow, type ThemeAliasEntry,
+  type ThsTreeNode,
 } from "@/lib/api";
 import {
   isBlockFollowed, setFollowBlocksCache, type FollowBlock,
@@ -22,13 +24,12 @@ import {
   aliasesForBlockName, attachOrphanLeavesToTree, blockTreeNodeId,
   buildAliasesByCanonical, buildSyntheticBlockTree, collectThsBranchIds,
   collectThsNodeIds, filterThsTree, manageTabKplKind, manageTabThsKind,
-  normalizeThemeTag, parseThsTree, sortRowsByTreeOrder,
+  parseThsTree, sortRowsByTreeOrder,
   themeAliasEntriesFromConfig, thsBlockKindLabel, thsBlockPrimaryCode,
   thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 
-const ALIAS_MAX_LEN = 20;
 const notify = {
   success: (msg: string) => toast.success(msg, { position: "top-center", duration: 3500 }),
   error: (msg: string) => toast.error(msg, { position: "top-center", duration: 5000 }),
@@ -50,87 +51,8 @@ function managedRowKey(row: Pick<ManagedBlockRow, "kind" | "id" | "kpl_code" | "
   return `${row.kind}|kpl:${row.kpl_code || row.name}`;
 }
 
-/** 同花顺成分股 / 关注用的类型：人气页签回退 ths_kind */
-function thsStocksKind(row: ManagedBlockRow): string {
-  const k = (row.ths_kind || "").trim();
-  if (k && k !== "hot") return k;
-  if (row.kind && row.kind !== "hot") return row.kind;
-  return "";
-}
-
-function SourceBadges({ row }: { row: ManagedBlockRow }) {
-  return (
-    <span className="inline-flex flex-wrap gap-1">
-      {row.has_ths && (
-        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
-          同花顺
-        </span>
-      )}
-      {row.has_kpl && (
-        <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-          开盘啦
-        </span>
-      )}
-      {!row.has_ths && !row.has_kpl && (
-        <span className="text-muted-foreground/50">—</span>
-      )}
-    </span>
-  );
-}
-
-function DetailSection({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-      {children}
-    </div>
-  );
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 function kindHasError(errors: string[] | undefined, kind: string): boolean {
   return (errors || []).some((e) => e.startsWith(`${kind}:`));
-}
-
-function FollowBlockButton({
-  followed,
-  onToggle,
-  size = "sm",
-  className,
-}: {
-  followed: boolean;
-  onToggle: () => void;
-  size?: "sm" | "md";
-  className?: string;
-}) {
-  const iconCls = size === "md" ? "h-4 w-4" : "h-3.5 w-3.5";
-  return (
-    <button
-      type="button"
-      title={followed ? "取消关注" : "关注板块"}
-      aria-label={followed ? "取消关注" : "关注板块"}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border transition-colors",
-        size === "md" ? "h-8 gap-1.5 px-2.5 text-xs font-semibold" : "h-7 w-7",
-        followed
-          ? "border-amber-500/40 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:text-amber-300"
-          : "border-border bg-background text-muted-foreground hover:border-amber-500/35 hover:text-amber-700 dark:hover:text-amber-300",
-        className,
-      )}
-    >
-      <Star className={cn(iconCls, followed && "fill-current")} />
-      {size === "md" && (followed ? "已关注" : "关注")}
-    </button>
-  );
 }
 
 function AliasInlineText({ aliases }: { aliases: string[] }) {
@@ -400,15 +322,8 @@ export function ThsBlocks() {
   const [order, setOrder] = useState<"asc" | "desc">("asc");
 
   const [selected, setSelected] = useState<ManagedBlockRow | null>(null);
-  const [stocksDetail, setStocksDetail] = useState<ThsBlockStocksDetail | null>(null);
-  const [stocksLoading, setStocksLoading] = useState(false);
-  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
-  const [aliasSaving, setAliasSaving] = useState(false);
-  const [aliasDraft, setAliasDraft] = useState("");
-  const [aliasEditingKey, setAliasEditingKey] = useState<string | null>(null);
-  const [aliasEditDraft, setAliasEditDraft] = useState("");
 
   const thsSnap = snapshot?.ths ?? null;
 
@@ -458,102 +373,6 @@ export function ThsBlocks() {
     void loadAliases();
   }, [loadSnapshot, loadFollowBlocks, loadAliases]);
 
-  useEffect(() => {
-    setAliasDraft("");
-    setAliasEditingKey(null);
-    setAliasEditDraft("");
-  }, [selected?.kind, selected?.id]);
-
-  const persistAliases = useCallback(async (next: ThemeAliasEntry[]) => {
-    setAliasSaving(true);
-    try {
-      const r = await api.saveThemeAliases(next);
-      setAliasEntries(themeAliasEntriesFromConfig(r));
-      notify.success("板块别名已保存");
-    } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "保存别名失败");
-    } finally {
-      setAliasSaving(false);
-    }
-  }, []);
-
-  const addAliasForSelected = useCallback(async () => {
-    if (!selected) return;
-    const alias = normalizeThemeTag(aliasDraft);
-    const canonical = normalizeThemeTag(selected.name || selected.id);
-    if (!alias || !canonical) {
-      notify.error("请填写别名");
-      return;
-    }
-    if (alias.length > ALIAS_MAX_LEN || canonical.length > ALIAS_MAX_LEN) {
-      notify.error(`板块名不超过 ${ALIAS_MAX_LEN} 个字`);
-      return;
-    }
-    if (alias === canonical) {
-      notify.error("别名与标准板块不能相同");
-      return;
-    }
-    if (aliasEntries.some((e) => normalizeThemeTag(e.alias) === alias)) {
-      notify.error("该别名已存在");
-      return;
-    }
-    const next = [
-      ...aliasEntries,
-      { alias, canonical, type: "" },
-    ].sort((a, b) => {
-      const byCanonical = a.canonical.localeCompare(b.canonical, "zh-CN");
-      if (byCanonical !== 0) return byCanonical;
-      return a.alias.localeCompare(b.alias, "zh-CN");
-    });
-    setAliasDraft("");
-    await persistAliases(next);
-  }, [selected, aliasDraft, aliasEntries, persistAliases]);
-
-  const removeAlias = useCallback(async (alias: string) => {
-    if (aliasEditingKey === alias) {
-      setAliasEditingKey(null);
-      setAliasEditDraft("");
-    }
-    const next = aliasEntries.filter((e) => e.alias !== alias);
-    await persistAliases(next);
-  }, [aliasEditingKey, aliasEntries, persistAliases]);
-
-  const saveEditAlias = useCallback(async () => {
-    if (!selected || !aliasEditingKey) return;
-    const alias = normalizeThemeTag(aliasEditDraft);
-    const canonical = normalizeThemeTag(selected.name || selected.id);
-    if (!alias || !canonical) {
-      notify.error("请填写别名");
-      return;
-    }
-    if (alias.length > ALIAS_MAX_LEN || canonical.length > ALIAS_MAX_LEN) {
-      notify.error(`板块名不超过 ${ALIAS_MAX_LEN} 个字`);
-      return;
-    }
-    if (alias === canonical) {
-      notify.error("别名与标准板块不能相同");
-      return;
-    }
-    if (aliasEntries.some((e) => e.alias === alias && e.alias !== aliasEditingKey)) {
-      notify.error("该别名已存在");
-      return;
-    }
-    const next = aliasEntries
-      .map((e) =>
-        e.alias === aliasEditingKey
-          ? { alias, canonical, type: e.type }
-          : e,
-      )
-      .sort((a, b) => {
-        const byCanonical = a.canonical.localeCompare(b.canonical, "zh-CN");
-        if (byCanonical !== 0) return byCanonical;
-        return a.alias.localeCompare(b.alias, "zh-CN");
-      });
-    setAliasEditingKey(null);
-    setAliasEditDraft("");
-    await persistAliases(next);
-  }, [selected, aliasEditingKey, aliasEditDraft, aliasEntries, persistAliases]);
-
   const toggleFollow = useCallback(async (row: ManagedBlockRow) => {
     const followKind = thsStocksKind(row);
     if (!row.has_ths || !row.id || !followKind) {
@@ -575,12 +394,14 @@ export function ThsBlocks() {
     }
   }, [followBlocks]);
 
-  const refreshAll = async () => {
+  const refreshThs = async () => {
     setRefreshing(true);
+    setRefreshingKind("ths");
+    // 先清详情，避免刷新后大列表 reconcile 时详情区条件节点与表格同时撕裂 DOM
+    setSelected(null);
     const failed: string[] = [];
 
     for (const k of THS_BLOCK_KINDS) {
-      setRefreshingKind(k.value);
       try {
         await api.thsBlocksRefreshKind(k.value);
       } catch (e) {
@@ -589,41 +410,72 @@ export function ThsBlocks() {
       }
     }
 
-    setRefreshingKind("kpl");
     let latest: BlocksManageSnapshot | null = null;
     try {
-      latest = await api.blocksManageRefreshKpl();
+      latest = await api.blocksManage();
       setSnapshot(latest);
+    } catch {
+      /* ignore */
+    }
+
+    const loaded = latest?.ths?.kinds ? Object.keys(latest.ths.kinds).length : 0;
+    const toastMsg = latest?.linker_unavailable
+      ? { type: "error" as const, text: latest.linker_message || "依赖于第三方工具，目前无法请求" }
+      : failed.length
+        ? {
+            type: "error" as const,
+            text: `同花顺部分刷新失败（${loaded}/${THS_BLOCK_KINDS.length}）：${failed.join("；")}`,
+          }
+        : { type: "success" as const, text: `同花顺已刷新 · ${latest?.ths?.updated_at || "—"}` };
+
+    setRefreshingKind(null);
+    setRefreshing(false);
+    // toast 延后到本次 commit 之后，避免与列表/详情卸载抢 DOM
+    window.setTimeout(() => {
+      if (toastMsg.type === "error") notify.error(toastMsg.text);
+      else notify.success(toastMsg.text);
+    }, 0);
+  };
+
+  const refreshKpl = async () => {
+    setRefreshing(true);
+    setRefreshingKind("kpl");
+    setSelected(null);
+    let toastMsg: { type: "success" | "error"; text: string } | null = null;
+    try {
+      const latest = await api.blocksManageRefreshKpl();
+      setSnapshot(latest);
+      if (latest.linker_unavailable) {
+        toastMsg = { type: "error", text: latest.linker_message || "依赖于第三方工具，目前无法请求" };
+      } else {
+        toastMsg = { type: "success", text: `开盘啦已刷新 · ${latest.kpl?.fetched_date || "—"}` };
+      }
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "开盘啦刷新失败";
-      failed.push(`开盘啦: ${msg}`);
+      toastMsg = { type: "error", text: e instanceof ApiError ? e.message : "开盘啦刷新失败" };
       try {
-        latest = await api.blocksManage();
+        const latest = await api.blocksManage();
         setSnapshot(latest);
       } catch {
         /* ignore */
       }
+    } finally {
+      setRefreshingKind(null);
+      setRefreshing(false);
+      if (toastMsg) {
+        const msg = toastMsg;
+        window.setTimeout(() => {
+          if (msg.type === "error") notify.error(msg.text);
+          else notify.success(msg.text);
+        }, 0);
+      }
     }
-
-    setRefreshingKind(null);
-    setSelected(null);
-    setStocksDetail(null);
-    setQuotes({});
-
-    const loaded = latest?.ths?.kinds ? Object.keys(latest.ths.kinds).length : 0;
-    if (latest?.linker_unavailable) {
-      notify.error(latest.linker_message || "依赖于第三方工具，目前无法请求");
-    } else if (failed.length) {
-      notify.error(`部分刷新失败（同花顺 ${loaded}/${THS_BLOCK_KINDS.length}）：${failed.join("；")}`);
-    } else {
-      notify.success(`板块已刷新 · 同花顺 ${latest?.ths?.updated_at || "—"} · 开盘啦 ${latest?.kpl?.fetched_date || "—"}`);
-    }
-    setRefreshing(false);
   };
 
   const refreshOneKind = async (kind: string) => {
     setRefreshing(true);
-    setRefreshingKind(kind);
+    setRefreshingKind("ths");
+    setSelected(null);
+    let toastMsg: { type: "success" | "error"; text: string } | null = null;
     try {
       await api.thsBlocksRefreshKind(kind);
       const data = await api.blocksManage();
@@ -631,15 +483,22 @@ export function ThsBlocks() {
       const label = thsBlockKindLabel(kind);
       const err = (data.ths?.errors || data.errors || []).find((e) => e.startsWith(`${kind}:`));
       if (err) {
-        notify.error(`${label}：${err.slice(kind.length + 2)}`);
+        toastMsg = { type: "error", text: `${label}：${err.slice(kind.length + 2)}` };
       } else {
-        notify.success(`${label} 已刷新`);
+        toastMsg = { type: "success", text: `${label} 已刷新` };
       }
     } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "刷新失败");
+      toastMsg = { type: "error", text: e instanceof ApiError ? e.message : "刷新失败" };
     } finally {
       setRefreshingKind(null);
       setRefreshing(false);
+      if (toastMsg) {
+        const msg = toastMsg;
+        window.setTimeout(() => {
+          if (msg.type === "error") notify.error(msg.text);
+          else notify.success(msg.text);
+        }, 0);
+      }
     }
   };
 
@@ -663,7 +522,6 @@ export function ThsBlocks() {
     if (!visibleTypeTabs.some((t) => t.value === kindFilter)) {
       setKindFilter(visibleTypeTabs[0]?.value || "conception");
       setSelected(null);
-      setStocksDetail(null);
     }
   }, [sourceFilter, visibleTypeTabs, kindFilter, isFollowedView]);
 
@@ -939,37 +797,8 @@ export function ThsBlocks() {
 
   const collapseAllBranches = () => setExpanded(new Set());
 
-  const openDetail = async (row: ManagedBlockRow) => {
+  const openDetail = (row: ManagedBlockRow) => {
     setSelected(row);
-    setStocksDetail(null);
-    setQuotes({});
-    if (row.node_type === "branch") return;
-    const stocksKind = thsStocksKind(row);
-    if (!row.has_ths || !row.id || !stocksKind) {
-      setStocksLoading(false);
-      return;
-    }
-    setStocksLoading(true);
-    try {
-      const detail = await api.thsBlockStocks(stocksKind, row.id);
-      setStocksDetail(detail);
-      const codes = detail.stocks.map((s) => s.code);
-      const quoteMap: Record<string, Quote> = {};
-      for (const batch of chunk(codes, 40)) {
-        if (!batch.length) continue;
-        try {
-          const part = await api.quote(batch.join(","));
-          Object.assign(quoteMap, part);
-        } catch {
-          /* 行情失败不影响列表 */
-        }
-      }
-      setQuotes(quoteMap);
-    } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "加载成分股失败");
-    } finally {
-      setStocksLoading(false);
-    }
   };
 
   const emptyThs = !thsSnap?.updated_at;
@@ -977,13 +806,6 @@ export function ThsBlocks() {
   const emptyCache = emptyThs && emptyKpl;
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
-  const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
-  const detailTitle = selected
-    ? (selected.name || selected.id || selected.kpl_code || "")
-    : "";
-  const selectedAliases = selected
-    ? aliasesForBlockName(selected.name, aliasesByCanonical)
-    : [];
   const visibleCount = filteredRows.length;
 
   return (
@@ -996,25 +818,52 @@ export function ThsBlocks() {
               <h1 className="text-xl font-bold text-foreground">板块管理</h1>
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              概念 / 行业 / 地域按名称跨来源融合；开盘啦目录每日自动最多拉取一次，手动「刷新板块」可强制更新。
+              概念 / 行业 / 地域按名称跨来源融合；开盘啦目录每日自动最多拉取一次，可分别强制刷新同花顺或开盘啦。
             </p>
           </div>
-          <button
-            type="button"
-            disabled={refreshing}
-            onClick={() => void refreshAll()}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {refreshingKind
-              ? `刷新 ${refreshingKind === "kpl" ? "开盘啦" : thsBlockKindLabel(refreshingKind)}…`
-              : "刷新板块"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={() => void refreshThs()}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                {refreshing && refreshingKind === "ths" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </span>
+              <span>{refreshing && refreshingKind === "ths" ? "刷新同花顺…" : "刷新同花顺"}</span>
+            </button>
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={() => void refreshKpl()}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted/50 disabled:opacity-50"
+            >
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center">
+                {refreshing && refreshingKind === "kpl" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </span>
+              <span>{refreshing && refreshingKind === "kpl" ? "刷新开盘啦…" : "刷新开盘啦"}</span>
+            </button>
+          </div>
         </div>
 
         {linkerDown && (
           <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
             {linkerMessage}
+          </div>
+        )}
+
+        {!linkerDown && emptyThs && !emptyKpl && (
+          <div className="mt-4 rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-900 dark:text-sky-200">
+            同花顺板块缓存未加载（重启后需重新拉取）。请点击右上角「刷新同花顺」；来源请选「全部」或「同花顺」查看。
           </div>
         )}
 
@@ -1032,7 +881,6 @@ export function ThsBlocks() {
                 onClick={() => {
                   setSourceFilter(opt.value);
                   setSelected(null);
-                  setStocksDetail(null);
                 }}
                 className={cn(
                   "rounded-md px-2.5 py-1 text-xs font-semibold transition-colors",
@@ -1046,12 +894,16 @@ export function ThsBlocks() {
             ))}
           </div>
 
-          {/* key=sourceFilter：来源切换时整行重挂载，避免页签增删原地 reconcile 触发 removeChild */}
-          <div key={sourceFilter} className="flex flex-wrap items-center gap-2">
+          {/* 类型页签始终挂载：用 hidden 切换可见性，避免来源切换时增删节点触发 insertBefore/removeChild */}
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">类型</span>
-            {visibleTypeTabs.map((k) => {
+            {BLOCK_MANAGE_KINDS.map((k) => {
               const hasThs = "thsKind" in k;
               const hasKpl = "kplKind" in k;
+              const tabVisible =
+                sourceFilter === "all"
+                || (sourceFilter === "ths" && hasThs)
+                || (sourceFilter === "kpl" && hasKpl);
               const fused = Boolean(k.fused);
               const rows = snapshot?.merged?.[k.value] || [];
               const count = (() => {
@@ -1078,10 +930,10 @@ export function ThsBlocks() {
                 <button
                   key={k.value}
                   type="button"
+                  hidden={!tabVisible}
                   onClick={() => {
                     setKindFilter(k.value);
                     setSelected(null);
-                    setStocksDetail(null);
                   }}
                   className={cn(
                     "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
@@ -1111,7 +963,6 @@ export function ThsBlocks() {
               onClick={() => {
                 setKindFilter(FOLLOWED_KIND);
                 setSelected(null);
-                setStocksDetail(null);
               }}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
@@ -1142,7 +993,7 @@ export function ThsBlocks() {
           {linkerDown ? (
             <span className="text-amber-700 dark:text-amber-300">{linkerMessage}</span>
           ) : emptyCache ? (
-            <span className="text-amber-700 dark:text-amber-300">尚未加载 — 请点击「刷新板块」</span>
+            <span className="text-amber-700 dark:text-amber-300">尚未加载 — 请点击「刷新同花顺」或「刷新开盘啦」</span>
           ) : (
             <>
               <span>
@@ -1276,7 +1127,7 @@ export function ThsBlocks() {
                 </div>
               ) : emptyCache ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
-                  点击右上角「刷新板块」加载同花顺与开盘啦目录
+                  点击右上角「刷新同花顺」或「刷新开盘啦」加载目录
                 </div>
               ) : isFollowedView ? (
                 !followBlocks.length ? (
@@ -1285,7 +1136,7 @@ export function ThsBlocks() {
                   </p>
                 ) : !allRows.length ? (
                   <p className="p-12 text-center text-sm text-muted-foreground">
-                    已关注 {followBlocks.length} 个板块，但当前缓存中未找到对应数据，请先刷新板块
+                    已关注 {followBlocks.length} 个板块，但当前缓存中未找到对应数据，请先刷新同花顺
                   </p>
                 ) : viewMode === "tree" && canShowTree ? (
                   followedTreeSections.length || followedFlatGroups.length ? (
@@ -1443,274 +1294,18 @@ export function ThsBlocks() {
                   <p className="text-sm text-muted-foreground">选择左侧板块查看详情与成分股</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-semibold text-foreground">{selected.name || selected.id || selected.kpl_code}</h2>
-                      <SourceBadges row={selected} />
-                      {selected.node_type && (
-                        <span className={cn(
-                          "rounded-md px-2 py-0.5 text-[11px] font-bold",
-                          selected.node_type === "branch"
-                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                            : "bg-primary/15 text-primary",
-                        )}>
-                          {THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}
-                        </span>
-                      )}
-                      {selected.has_ths && selected.id && thsStocksKind(selected) && (
-                        <FollowBlockButton
-                          followed={followedIds.has(`${thsStocksKind(selected)}|${selected.id}`)}
-                          onToggle={() => void toggleFollow(selected)}
-                          size="md"
-                        />
-                      )}
-                    </div>
-                    {selected.tree_path && (
-                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selected.tree_path}</p>
-                    )}
-                  </div>
-
-                  <div className="rounded-xl border border-border/60 bg-muted/15 p-4 text-sm">
-                    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-                      <dt className="text-muted-foreground">类型</dt>
-                      <dd className="text-foreground">{thsBlockKindLabel(selected.kind) || selected.kpl_kind_label || "—"}</dd>
-                      {selected.code && selected.code !== detailTitle && (
-                        <>
-                          <dt className="text-muted-foreground">同花顺行情码</dt>
-                          <dd className="font-mono text-foreground">{selected.code}</dd>
-                        </>
-                      )}
-                      {selected.id && selected.id !== detailTitle && selected.id !== selected.code && (
-                        <>
-                          <dt className="text-muted-foreground">同花顺本地 ID</dt>
-                          <dd className="font-mono text-muted-foreground">{selected.id}</dd>
-                        </>
-                      )}
-                      {selected.kpl_code && selected.kpl_code !== detailTitle && (
-                        <>
-                          <dt className="text-muted-foreground">开盘啦 PlateID</dt>
-                          <dd className="font-mono text-foreground">{selected.kpl_code}</dd>
-                        </>
-                      )}
-                      {selected.kpl_kind_label
-                        && selected.kpl_kind_label !== (thsBlockKindLabel(selected.kind) || "") && (
-                        <>
-                          <dt className="text-muted-foreground">开盘啦类型</dt>
-                          <dd className="text-foreground">{selected.kpl_kind_label}</dd>
-                        </>
-                      )}
-                      {selected.kpl_power != null && (
-                        <>
-                          <dt className="text-muted-foreground">开盘啦人气</dt>
-                          <dd className="text-foreground">{selected.kpl_power}</dd>
-                        </>
-                      )}
-                      {selected.kpl_pct != null && (
-                        <>
-                          <dt className="text-muted-foreground">开盘啦涨幅</dt>
-                          <dd className="text-foreground">{selected.kpl_pct}%</dd>
-                        </>
-                      )}
-                      {selectedSubtype && (
-                        <>
-                          <dt className="text-muted-foreground">子类型</dt>
-                          <dd className="text-foreground">{selectedSubtype}</dd>
-                        </>
-                      )}
-                      {selected.hex_id && (
-                        <>
-                          <dt className="text-muted-foreground">Hex ID</dt>
-                          <dd className="font-mono text-foreground">{selected.hex_id}</dd>
-                        </>
-                      )}
-                      {selected.query_key && (
-                        <>
-                          <dt className="text-muted-foreground">问财 Key</dt>
-                          <dd className="break-all text-foreground">{selected.query_key}</dd>
-                        </>
-                      )}
-                      {selected.stock_count != null && (
-                        <>
-                          <dt className="text-muted-foreground">成分数</dt>
-                          <dd className="text-foreground">{selected.stock_count}</dd>
-                        </>
-                      )}
-                    </dl>
-                  </div>
-
-                  <DetailSection label="板块别名">
-                    <p className="mb-2 text-xs text-muted-foreground">
-                      与配置中的板块别名同源；别名匹配到标准名「{selected.name || selected.id}」。
-                      {" "}
-                      <Link
-                        to={keywordsSettingsTo("theme-aliases")}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium text-primary underline-offset-2 hover:underline"
-                      >
-                        打开配置 →
-                      </Link>
-                    </p>
-                    {selectedAliases.length === 0 ? (
-                      <p className="mb-2 text-xs text-muted-foreground">暂无别名，可在下方添加。</p>
-                    ) : (
-                      <ul className="mb-3 space-y-1.5">
-                        {selectedAliases.map((alias) => {
-                          const editing = aliasEditingKey === alias;
-                          return (
-                            <li
-                              key={alias}
-                              className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-1.5"
-                            >
-                              {editing ? (
-                                <>
-                                  <input
-                                    className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm"
-                                    value={aliasEditDraft}
-                                    onChange={(e) => setAliasEditDraft(e.target.value)}
-                                    disabled={aliasSaving}
-                                    placeholder="别名"
-                                    maxLength={ALIAS_MAX_LEN}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        void saveEditAlias();
-                                      } else if (e.key === "Escape") {
-                                        setAliasEditingKey(null);
-                                        setAliasEditDraft("");
-                                      }
-                                    }}
-                                  />
-                                  <button
-                                    type="button"
-                                    disabled={aliasSaving}
-                                    onClick={() => void saveEditAlias()}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-primary hover:bg-primary/10 disabled:opacity-50"
-                                    title="保存"
-                                  >
-                                    <Check className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={aliasSaving}
-                                    onClick={() => {
-                                      setAliasEditingKey(null);
-                                      setAliasEditDraft("");
-                                    }}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
-                                    title="取消"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={aliasSaving || aliasEditingKey != null}
-                                    onClick={() => {
-                                      setAliasEditingKey(alias);
-                                      setAliasEditDraft(alias);
-                                    }}
-                                    className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-primary disabled:opacity-50"
-                                    title={`点击修改「${alias}」`}
-                                  >
-                                    {alias}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={aliasSaving || aliasEditingKey != null}
-                                    onClick={() => {
-                                      setAliasEditingKey(alias);
-                                      setAliasEditDraft(alias);
-                                    }}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
-                                    title={`编辑「${alias}」`}
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={aliasSaving || aliasEditingKey != null}
-                                    onClick={() => void removeAlias(alias)}
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                                    title={`删除「${alias}」`}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm"
-                        value={aliasDraft}
-                        onChange={(e) => setAliasDraft(e.target.value)}
-                        disabled={aliasSaving || aliasEditingKey != null}
-                        placeholder="新增别名（原始写法）"
-                        maxLength={ALIAS_MAX_LEN}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void addAliasForSelected();
-                          }
-                        }}
-                      />
-                      <button
-                        type="button"
-                        disabled={aliasSaving || aliasEditingKey != null || !aliasDraft.trim()}
-                        onClick={() => void addAliasForSelected()}
-                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted/40 disabled:opacity-50"
-                      >
-                        {aliasSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                        添加
-                      </button>
-                    </div>
-                  </DetailSection>
-
-                  {selected.node_type === "branch" ? (
-                    <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
-                      分组节点不含成分股，请展开并选择叶子板块。
-                    </p>
-                  ) : !selected.has_ths || !selected.id || !thsStocksKind(selected) ? (
-                    <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
-                      仅开盘啦类型的板块暂无同花顺成分股；可在短线盘面用人气/点查查看。
-                    </p>
-                  ) : (
-                    <DetailSection label="成分股">
-                      <p className="mb-2 text-xs text-muted-foreground">
-                        口径：按同花顺板块成分股（本地 INI），不以开盘啦成分为准。
-                      </p>
-                      {stocksLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" /> 加载成分股…
-                        </div>
-                      ) : stocksDetail ? (
-                        <>
-                          <p className="mb-2 text-xs text-muted-foreground">
-                            共 <strong className="text-foreground">{stocksDetail.count}</strong> 只
-                          </p>
-                          {stocksDetail.count === 0 ? (
-                            <p className="text-sm text-muted-foreground">暂无成分股数据</p>
-                          ) : (
-                            <BlockStocksTable
-                              key={`${selected.kind}-${selected.id}`}
-                              stocks={stocksDetail.stocks}
-                              quotes={quotes}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">—</p>
-                      )}
-                    </DetailSection>
-                  )}
-                </div>
+                <BlockDetailPanel
+                  key={managedRowKey(selected)}
+                  kind={thsStocksKind(selected) || selected.kind}
+                  blockId={selected.id || selected.kpl_code || selected.name}
+                  name={selected.name || selected.id || selected.kpl_code}
+                  code={selected.code}
+                  row={selected}
+                  aliasEntries={aliasEntries}
+                  onAliasEntriesChange={setAliasEntries}
+                  followBlocks={followBlocks}
+                  onFollowBlocksChange={setFollowBlocks}
+                />
               )}
             </div>
           </div>
