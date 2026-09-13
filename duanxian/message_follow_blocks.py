@@ -112,6 +112,12 @@ def save_blocks(blocks: list) -> list[dict[str, str]]:
     global _BLOCKS
     with _LOCK:
         _BLOCKS = [dict(x) for x in cleaned]
+    try:
+        from . import focus_blocks as _fb  # noqa: PLC0415
+
+        _fb.invalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass
     return [dict(x) for x in cleaned]
 
 

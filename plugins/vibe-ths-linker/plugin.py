@@ -746,7 +746,10 @@ class ThsLinkerBridge:
         result = self._reg.import_portfolio(payload)
         if result.ok:
             self._last_portfolio_sig = sig
-            print(f"[vibe-ths-linker] 持仓已更新 {len(norm_holdings)} 笔（trade push）")
+            extra = ""
+            if equity is not None or fields:
+                extra = "，已同步账户与日快照"
+            print(f"[vibe-ths-linker] 持仓已更新 {len(norm_holdings)} 笔（trade push）{extra}")
 
     def _build_vibe_risk(self) -> dict[str, Any] | None:
         from duanxian import trade_calendar, trade_store as ts  # noqa: PLC0415

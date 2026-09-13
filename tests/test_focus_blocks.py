@@ -265,6 +265,39 @@ class TestFocusBlocks:
         assert items[0]["code"] == "801999"
         assert items[0]["tags"] == ["follow"]
 
+    def test_build_tracked_prefers_follow_display_name(self):
+        """收藏展示名用同花顺关注名，不被开盘啦映射名覆盖。"""
+        from duanxian import block_dialect as bd
+        from duanxian import focus_blocks as fb
+
+        index = bd.build_kpl_index()
+        follows = [
+            {"kind": "conception", "id": "D31C", "name": "股权转让(并购重组)"},
+        ]
+
+        def resolve(fb):
+            return {
+                "status": "matched",
+                "lang": "kpl",
+                "code": "801787",
+                "name": "实控人变更",
+                "mapped": "股权转让(并购重组)",
+                "source_kind": "conception",
+                "source_id": "D31C",
+                "via": "block_manage:name",
+            }
+
+        items = fb._build_tracked(
+            y_blocks=[],
+            follows=follows,
+            index=index,
+            resolve_follow=resolve,
+        )
+        assert len(items) == 1
+        assert items[0]["code"] == "801787"
+        assert items[0]["name"] == "股权转让(并购重组)"
+        assert items[0]["follow"]["name"] == "股权转让(并购重组)"
+
     def test_snapshot_uses_archive_and_plate(self, tmp_path, monkeypatch):
         from duanxian import focus_blocks as fb
         from duanxian import mood_block as mb

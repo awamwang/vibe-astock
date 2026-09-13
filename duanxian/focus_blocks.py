@@ -34,6 +34,12 @@ _TAG_FOLLOW = "follow"
 _TAG_LABELS = {_TAG_HOT: "人气", _TAG_FOLLOW: "收藏"}
 
 
+def invalidate_cache() -> None:
+    """收藏变更后清内存缓存，避免非盘中长 TTL 挡住新关注。"""
+    with _lock:
+        _cache.clear()
+
+
 def _cached(key: str, ttl: float, build):
     now = time.monotonic()
     with _lock:
@@ -158,6 +164,10 @@ def _build_tracked(
             })
             continue
         code = str(hit["code"])
+        follow_name = str(fb.get("name") or "").strip()
+        kpl_name = str(hit.get("name") or "").strip()
+        # 展示优先收藏名（用户认的同花顺名）；开盘啦名仅作映射补充
+        display = follow_name or kpl_name or code
         entry = by_code.get(code)
         if entry:
             if _TAG_FOLLOW not in entry["tags"]:
@@ -165,20 +175,22 @@ def _build_tracked(
             entry["follow"] = {
                 "kind": str(fb.get("kind") or ""),
                 "id": str(fb.get("id") or ""),
-                "name": str(fb.get("name") or ""),
+                "name": follow_name or str(fb.get("name") or ""),
             }
-            if hit.get("name") and not entry.get("name"):
+            if follow_name:
+                entry["name"] = follow_name
+            elif hit.get("name") and not entry.get("name"):
                 entry["name"] = hit["name"]
         else:
             by_code[code] = {
                 "code": code,
-                "name": str(hit.get("name") or fb.get("name") or code),
+                "name": display,
                 "tags": [_TAG_FOLLOW],
                 "map_status": "matched",
                 "follow": {
                     "kind": str(fb.get("kind") or ""),
                     "id": str(fb.get("id") or ""),
-                    "name": str(fb.get("name") or ""),
+                    "name": follow_name,
                 },
                 "y_rank": index.get(code),
             }

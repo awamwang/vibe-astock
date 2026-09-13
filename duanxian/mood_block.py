@@ -209,9 +209,14 @@ def _fetch_ranking_pages(
     return rows, api_time
 
 
-def _fetch_zt_map_pid(pid_type: int, *, page_size: int = 100, max_pages: int = 8) -> dict[str, int]:
-    """PlateAnalysis Type=2 单 PidType 分页 → code→zt。"""
+def _fetch_zt_map_pid(pid_type: int, *, page_size: int = 50, max_pages: int = 12) -> dict[str, int]:
+    """PlateAnalysis Type=2 单 PidType 分页 → code→zt。
+
+    开盘啦 ``st`` 过大（实测 ≥80）会返回空 list，故默认 50、上限 70。
+    list 行：``[code, name, 涨停家数, …]``。
+    """
     out: dict[str, int] = {}
+    page_size = max(1, min(int(page_size), 70))
     for page in range(max(1, max_pages)):
         index = page * page_size
         url = (

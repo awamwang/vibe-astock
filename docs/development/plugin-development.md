@@ -579,7 +579,7 @@ python -m duanxian.plugin_cli list
 
 | 项 | 说明 |
 |---|---|
-| **中文作用** | **全量覆盖** 本地持仓列表（VR `portfolio.json`），与截图导入确认写入同一校验规则。 |
+| **中文作用** | **全量覆盖** 本地持仓列表（VR `portfolio.json`），与截图导入确认写入同一校验规则；若带 `equity` / `account_fields` 则同步账户并按最近交易日覆盖写入日快照。 |
 | **调用方式** | `reg.import_portfolio(payload) -> ImportResult` |
 | **对应页面** | [持仓与预算](/trade) — 持仓表、截图解析确认导入。 |
 | **对应 API** | `POST /api/trade/screenshot/apply` |
@@ -604,7 +604,7 @@ python -m duanxian.plugin_cli list
 | `holdings[]` | `code`（6 位 A 股）、`shares>0`、`cost>0`；代码不可重复。 |
 | `equity` / `note` / `account_fields` | 可选，与截图导入体相同。 |
 
-落盘：`~/.vibe-research/portfolio.json`（受 `VR_DATA_DIR` 影响）。
+落盘：`~/.vibe-research/portfolio.json`；若含权益/账户栏位则同步 `trade_account.json` 并写入当日快照（受 `VR_DATA_DIR` 影响）。
 
 ---
 

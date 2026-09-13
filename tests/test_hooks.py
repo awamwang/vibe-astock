@@ -102,6 +102,28 @@ class TestHookPackLoader:
 
 @pytest.mark.unit
 class TestHookRegistryImport:
+    @pytest.fixture(autouse=True)
+    def _isolate_hook_imports(self, tmp_path, monkeypatch):
+        """隔离持仓/账户路径，并停用后台已加载的真实插件，避免 trade push 抢写。"""
+        from duanxian import hooks, plugin_store as ps, trade_store as ts
+
+        reg_dir = tmp_path / "vibe-astock-hooks-import"
+        reg_dir.mkdir()
+        monkeypatch.setattr(ps, "_USER_DIR", str(reg_dir))
+        monkeypatch.setattr(ps, "_REGISTRY_FILE", str(reg_dir / "plugins.json"))
+        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("VIBE_PLUGIN_SUPERVISOR", "0")
+        monkeypatch.setattr(ts, "_ACCOUNT_DIR", str(tmp_path))
+        monkeypatch.setattr(ts, "_ACCOUNT_FILE", str(tmp_path / "trade_account.json"))
+
+        hooks._plugins_init_done.wait(timeout=10)
+        for lp in list(hooks.PLUGINS):
+            try:
+                hooks.apply_plugin_disable(lp.id)
+            except Exception:  # noqa: BLE001
+                pass
+        hooks.PLUGINS.clear()
+
     def test_import_portfolio_replace(self, tmp_path, monkeypatch):
         vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
         if vr_dir not in sys.path:
@@ -111,7 +133,6 @@ class TestHookRegistryImport:
         from duanxian.hooks import HookRegistry
 
         pf_file = tmp_path / "portfolio.json"
-        monkeypatch.setenv("VR_DATA_DIR", str(tmp_path))
         pf_file.write_text(json.dumps({"holdings": [], "last_refresh": None}), encoding="utf-8")
         monkeypatch.setattr(pf, "PF_FILE", str(pf_file))
         monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path))
@@ -124,6 +145,46 @@ class TestHookRegistryImport:
         assert res.ok
         data = json.loads(pf_file.read_text(encoding="utf-8"))
         assert len(data["holdings"]) == 1
+
+    def test_import_portfolio_writes_account_and_daily_snapshot(self, tmp_path, monkeypatch):
+        vr_dir = str(Path(__file__).resolve().parents[1] / "vr")
+        if vr_dir not in sys.path:
+            sys.path.insert(0, vr_dir)
+        import portfolio as pf
+
+        from duanxian import trade_store as ts
+        from duanxian.hooks import HookRegistry
+
+        pf_file = tmp_path / "portfolio.json"
+        pf_file.write_text(json.dumps({"holdings": [], "last_refresh": None}), encoding="utf-8")
+        monkeypatch.setattr(pf, "PF_FILE", str(pf_file))
+        monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.latest_session",
+            lambda: "2026-09-11",
+        )
+
+        reg = HookRegistry()
+        res = reg.import_portfolio({
+            "replace": True,
+            "equity": 120000.5,
+            "account_fields": {
+                "account_name": "中金财富-王*",
+                "available": 5000,
+                "stock_market_value": 90000,
+                "daily_pnl": 120.5,
+            },
+            "holdings": [{"code": "600000", "shares": 100, "cost": 10.5}],
+        })
+        assert res.ok
+        account = ts.load_account()
+        assert account["equity"] == 120000.5
+        assert account["account_fields"]["available"] == 5000
+        assert "2026-09-11" in account["snapshots"]
+        snap = account["snapshots"]["2026-09-11"]
+        assert snap["equity"] == 120000.5
+        assert snap["available"] == 5000
+        assert snap["stock_market_value"] == 90000
 
     def test_import_watchlist_replace(self, tmp_path, monkeypatch):
         vr_dir = str(Path(__file__).resolve().parents[1] / "vr")

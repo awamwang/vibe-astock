@@ -459,7 +459,7 @@ def api_market_mood_blocks():
 def api_market_focus_blocks():
     """重点板块跟踪（昨人气>5000 + 收藏），今昨对比。
 
-    指标以开盘啦 GetPlate_Info_QJ 点查为主；昨日人气榜定稿可落盘复用。
+    人气/涨幅等以 GetPlate_Info_QJ 点查为主；涨停统一 PlateAnalysis；昨日人气榜可落盘复用。
     """
     return focus_blocks.snapshot()
 

@@ -136,18 +136,42 @@ class HookRegistry:
 
     def import_portfolio(self, payload: dict) -> ImportResult:
         from . import screenshot_parse as sp
+        from . import trade_calendar, trade_store as ts
+        from .util import validate_trade_date
 
         body = dict(payload or {})
         body.setdefault("replace", True)
         try:
-            _, _, holdings, replace, _fields = sp.validate_apply_payload(body)
+            equity, note, holdings, replace, fields = sp.validate_apply_payload(body)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from exc
         if not replace:
             raise ValueError("钩子导入持仓仅支持全量覆盖（replace=true）")
+
+        if not note.strip() and fields:
+            note = ts.format_account_summary(fields)
+        if equity is not None:
+            ts.set_equity(float(equity), note, fields=fields or None)
+        elif fields or note:
+            cur = ts.load_account()
+            eq = cur.get("equity")
+            if eq is not None:
+                ts.set_equity(float(eq), note, fields=fields or None)
+            elif fields:
+                ts.set_account_fields(fields, note=note or None)
+
         import portfolio as pf
 
-        pf.replace_holdings(holdings)
+        portfolio = pf.replace_holdings(holdings)
+        try:
+            snap_date = trade_calendar.latest_session() or china_today()
+            snap_date = validate_trade_date(snap_date)
+            mv = float((portfolio or {}).get("totals", {}).get("market_value") or 0)
+            if mv == 0 and fields.get("stock_market_value") is not None:
+                mv = float(fields["stock_market_value"])
+            ts.snapshot_equity(snap_date, mv, fields or None, note=note or None)
+        except (TypeError, ValueError):
+            pass
         return ImportResult(True, "portfolio", f"{len(holdings)} 笔")
 
     def import_account(self, payload: dict) -> ImportResult:
