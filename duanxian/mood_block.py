@@ -108,8 +108,9 @@ def _parse_mood_row(item: Any, sort: int) -> Optional[dict]:
 def _parse_plate_info_list(lst: Any, *, dated: bool) -> Optional[dict]:
     """GetPlate_Info_QJ 的 List → 统一字段。
 
-    历史 ``apphis`` + Date：``[排名, 人气, 成交额, 主力净额, 涨幅, 涨停?, …]``。
+    历史 ``apphis`` + Date：``[排名, 人气, 成交额, 主力净额, 涨幅, …]``。
     盘中 ``apphq`` 无 Date 时下标 4 不一定是涨幅，故 ``dated=False`` 时不采 pct。
+    涨停家数不从此接口取（List[5] 对概念码常为 0），统一走 PlateAnalysis。
     """
     if not isinstance(lst, (list, tuple)) or len(lst) < 2:
         return None
@@ -125,18 +126,13 @@ def _parse_plate_info_list(lst: Any, *, dated: bool) -> Optional[dict]:
         elif v4 is not None and abs(v4) <= 30:
             # 保守：数值像涨幅时才采用
             pct = v4
-    zt = None
-    if len(lst) > 5:
-        z = _num(lst[5])
-        if z is not None and 0 <= z <= 500 and float(z).is_integer():
-            zt = int(z)
     return {
         "sort": int(sort) if sort is not None else None,
         "power": int(power) if power is not None else None,
         "amount": amount,
         "m_net": m_net,
         "pct": pct,
-        "zt": zt,
+        "zt": None,
     }
 
 
@@ -213,25 +209,120 @@ def _fetch_ranking_pages(
     return rows, api_time
 
 
+def _fetch_zt_map_pid(pid_type: int, *, page_size: int = 100, max_pages: int = 8) -> dict[str, int]:
+    """PlateAnalysis Type=2 单 PidType 分页 → code→zt。"""
+    out: dict[str, int] = {}
+    for page in range(max(1, max_pages)):
+        index = page * page_size
+        url = (
+            f"{_LONGTOU_HQ}?Order=1&a=PlateAnalysis&st={page_size}&c=HomeDingPan"
+            f"&PhoneOSNew=1&Index={index}&PidType={pid_type}&apiv=w25&Type=2&"
+        )
+        try:
+            raw = _http_get_json(url)
+        except Exception:  # noqa: BLE001
+            break
+        batch = raw.get("list") or []
+        if not batch:
+            break
+        for item in batch:
+            if not isinstance(item, (list, tuple)) or len(item) < 3:
+                continue
+            code = str(item[0]).strip()
+            zt = _num(item[2])
+            if not code or zt is None:
+                continue
+            zti = int(zt)
+            prev = out.get(code)
+            out[code] = zti if prev is None else max(prev, zti)
+        if len(batch) < page_size:
+            break
+    return out
+
+
+def fetch_zt_map() -> dict[str, int]:
+    """板块涨停家数（开盘啦 PlateAnalysis Type=2）。
+
+    合并 PidType=0/1/2：覆盖 80xxxx 结构码与 885xxx 概念码（如 PCB概念）。
+    结果带短 TTL 缓存。
+    """
+
+    def build():
+        out: dict[str, int] = {}
+        for pid in (0, 1, 2):
+            part = _fetch_zt_map_pid(pid)
+            for code, zt in part.items():
+                prev = out.get(code)
+                out[code] = zt if prev is None else max(prev, zt)
+        return out
+
+    return _cached("mood_zt_map:live", _TTL if trade_calendar.is_calendar_session_live() else _OFFSESSION_TTL, build) or {}
+
+
 def _fetch_zt_map() -> dict[str, int]:
-    """板块涨停家数：PlateAnalysis Type=2，code→zt。"""
-    url = (
-        f"{_LONGTOU_HQ}?Order=1&a=PlateAnalysis&st=300&c=HomeDingPan"
-        f"&PhoneOSNew=1&Index=0&PidType=0&apiv=w25&Type=2&"
-    )
+    """兼容旧名。"""
+    return fetch_zt_map()
+
+
+def _zt_archive_path(date: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date}_zt.json")
+
+
+def _load_zt_archive(date: str | None) -> dict[str, int]:
+    if not date:
+        return {}
+    path = _zt_archive_path(date)
+    if not os.path.isfile(path):
+        return {}
     try:
-        raw = _http_get_json(url)
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        raw = data.get("zt") if isinstance(data, dict) else None
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
     except Exception:  # noqa: BLE001
         return {}
-    out: dict[str, int] = {}
-    for item in raw.get("list") or []:
-        if not isinstance(item, (list, tuple)) or len(item) < 3:
-            continue
-        code = str(item[0]).strip()
-        zt = _num(item[2])
-        if code and zt is not None:
-            out[code] = int(zt)
-    return out
+
+
+def _save_zt_archive(date: str, zt_map: dict[str, int]) -> None:
+    if not date or not zt_map or not trade_calendar.should_write_daily_cache(date):
+        return
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        path = _zt_archive_path(date)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"date": date, "zt": zt_map}, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def zt_map_for_date(date: str | None) -> dict[str, int]:
+    """指定场次涨停家数：定稿日优先读盘；当日/最近场次拉 PlateAnalysis 并可落盘。"""
+    date_s = str(date or "").strip()
+    if not date_s:
+        return {}
+    archived = _load_zt_archive(date_s)
+    if archived:
+        return archived
+    latest = trade_calendar.latest_session()
+    # 历史接口不稳定；仅对最近场次拉 live PlateAnalysis
+    if date_s != latest and date_s != china_now().strftime("%Y-%m-%d"):
+        return {}
+    live = fetch_zt_map()
+    if live and date_s == latest:
+        _save_zt_archive(date_s, live)
+    return live
 
 
 def _archive_path(date: str) -> str:
@@ -310,7 +401,7 @@ def ranking_for_date(date: str, *, force: bool = False) -> dict:
                 "reason": f"历史人气榜取数失败：{type(exc).__name__}",
             }
         if rows:
-            zt_map = _fetch_zt_map() if date_s == trade_calendar.latest_session() else {}
+            zt_map = zt_map_for_date(date_s)
             if zt_map:
                 for row in rows:
                     zt = zt_map.get(row["code"])
@@ -350,7 +441,7 @@ def plate_info(code: str, *, date: str | None = None) -> Optional[dict]:
     """指定板块点查（GetPlate_Info_QJ）。
 
     ``date`` 为空：实时域；有值：历史域 + Date。
-    返回 ``{code, date, power, pct, m_net, amount, zt, sort}``；失败 None。
+    返回 ``{code, date, power, pct, m_net, amount, sort}``（不含涨停；涨停见 ``zt_map_for_date``）。
     """
     code_s = str(code or "").strip()
     if not code_s:
@@ -416,7 +507,7 @@ def snapshot(limit: int = _LIMIT) -> dict:
             }
         zt_map: dict[str, int] = {}
         if rows:
-            zt_map = _fetch_zt_map()
+            zt_map = fetch_zt_map()
             if zt_map:
                 for row in rows:
                     zt = zt_map.get(row["code"])
@@ -453,6 +544,8 @@ def snapshot(limit: int = _LIMIT) -> dict:
                 "api_time": api_time,
                 "from_archive": False,
             })
+            if zt_map:
+                _save_zt_archive(as_of, zt_map)
         return out
 
     live = trade_calendar.is_calendar_session_live()

@@ -4,7 +4,8 @@
   · 昨日人气定稿榜中人气 > 5000 的板块（标签「人气」）
   · 消息关注板块配置（标签「收藏」）；经板块管理融合 / 开盘啦目录映射到 PlateID
 
-指标：优先 ``GetPlate_Info_QJ`` 指定板块点查；昨日榜内已有字段则复用，避免重复请求。
+指标：人气/涨幅等优先 ``GetPlate_Info_QJ`` 点查，昨日榜内已有字段则复用；
+涨停家数统一 ``PlateAnalysis``（``mood_block.zt_map_for_date``），不采点查假字段。
 昨日人气榜只拉一次定稿（``mood_block.ranking_for_date``，可落盘）。
 """
 
@@ -71,7 +72,7 @@ def _merge_plate(base: dict[str, Any], plate: dict | None) -> dict[str, Any]:
     if not plate:
         return base
     out = dict(base)
-    for key in ("power", "pct", "m_net", "amount", "zt", "sort"):
+    for key in ("power", "pct", "m_net", "amount", "sort"):
         if out.get(key) is None and plate.get(key) is not None:
             out[key] = plate[key]
     return out
@@ -196,6 +197,17 @@ def _build_tracked(
     return items
 
 
+def _apply_zt(metrics: dict[str, Any], code: str, zt_map: dict[str, int]) -> dict[str, Any]:
+    """用 PlateAnalysis 涨停家数覆盖；未命中时保留榜内已有 zt（定稿合并写入）。"""
+    out = dict(metrics)
+    if not code:
+        out["zt"] = None
+        return out
+    if code in zt_map:
+        out["zt"] = zt_map[code]
+    return out
+
+
 def snapshot() -> dict:
     """重点板块跟踪快照（今 vs 昨）。"""
 
@@ -282,11 +294,15 @@ def snapshot() -> dict:
         t_rank_map = {str(r.get("code") or ""): r for r in t_rows}
         t_plate = _fetch_plate_map(codes, date=None if is_live else as_of)
 
+        # 涨停统一 PlateAnalysis（按 code）；昨侧优先定稿落盘
+        zt_today = mb.zt_map_for_date(as_of)
+        zt_yesterday = mb.zt_map_for_date(prev) if prev else {}
+
         blocks_out: list[dict[str, Any]] = []
         for it in tracked:
             code = str(it.get("code") or "")
             y_base = _metrics_from_rank_row(y_rank_map.get(code) or it.get("y_rank"))
-            y_m = _merge_plate(y_base, y_plate.get(code))
+            y_m = _apply_zt(_merge_plate(y_base, y_plate.get(code)), code, zt_yesterday)
             if is_live:
                 t_m = _merge_plate(_metrics_from_rank_row(None), t_plate.get(code))
                 # 盘中点查涨幅不可靠时，用实时榜补 pct
@@ -298,6 +314,7 @@ def snapshot() -> dict:
                 # 非盘中：as_of 定稿点查；榜内复用涨幅/人气
                 t_base = _metrics_from_rank_row(t_rank_map.get(code))
                 t_m = _merge_plate(t_base, t_plate.get(code))
+            t_m = _apply_zt(t_m, code, zt_today)
 
             tags = list(it.get("tags") or [])
             blocks_out.append({

@@ -127,7 +127,38 @@ class TestMoodBlockPlateParse:
         assert row["power"] == 6609
         assert row["pct"] == -0.802
         assert row["m_net"] == 2546553941
-        assert row["zt"] == 12
+        # 涨停不采 List[5]，统一走 PlateAnalysis
+        assert row["zt"] is None
+
+    def test_fetch_zt_map_merges_pid_types(self, monkeypatch):
+        from duanxian import mood_block as mb
+
+        mb._cache.clear()
+
+        def fake_pid(pid_type, **_k):
+            if pid_type == 0:
+                return {"801216": 3}
+            if pid_type == 1:
+                return {"885959": 8, "801216": 5}
+            return {"885959": 2}
+
+        monkeypatch.setattr(mb, "_fetch_zt_map_pid", fake_pid)
+        out = mb.fetch_zt_map()
+        assert out["885959"] == 8
+        assert out["801216"] == 5
+
+    def test_zt_archive_reuse(self, tmp_path, monkeypatch):
+        from duanxian import mood_block as mb
+
+        monkeypatch.setattr(mb, "_CACHE_DIR", str(tmp_path))
+        mb._cache.clear()
+        date = "2026-09-11"
+        path = os.path.join(str(tmp_path), f"{date}_zt.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"date": date, "zt": {"885959": 8}}, fh)
+
+        monkeypatch.setattr(mb, "fetch_zt_map", lambda: (_ for _ in ()).throw(AssertionError("no live")))
+        assert mb.zt_map_for_date(date) == {"885959": 8}
 
     def test_ranking_archive_reuse(self, tmp_path, monkeypatch):
         from duanxian import mood_block as mb
@@ -312,14 +343,19 @@ class TestFocusBlocks:
             if date == "2026-09-12" or date is None:
                 return {
                     "code": code, "date": "2026-09-12",
-                    "power": 500, "pct": 1.2, "m_net": 50, "amount": 1, "zt": 1, "sort": 3,
+                    "power": 500, "pct": 1.2, "m_net": 50, "amount": 1, "zt": None, "sort": 3,
                 }
             return {
                 "code": code, "date": date,
-                "power": 6609, "pct": -0.8, "m_net": 100, "amount": 1, "zt": 2, "sort": 1,
+                "power": 6609, "pct": -0.8, "m_net": 100, "amount": 1, "zt": None, "sort": 1,
             }
 
         monkeypatch.setattr(mb, "plate_info", fake_plate)
+        monkeypatch.setattr(
+            mb,
+            "zt_map_for_date",
+            lambda d: {"801660": 8} if d == "2026-09-12" else {"801660": 5},
+        )
 
         out = fb.snapshot()
         assert out["available"] is True
@@ -333,3 +369,6 @@ class TestFocusBlocks:
         assert b["yesterday"]["power"] == 6609
         assert b["today"]["pct"] == 1.2
         assert b["yesterday"]["pct"] == -0.8
+        # 涨停覆盖榜内旧值，来自 PlateAnalysis 映射
+        assert b["today"]["zt"] == 8
+        assert b["yesterday"]["zt"] == 5
