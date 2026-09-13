@@ -1072,6 +1072,8 @@ export interface ManagedBlockRow extends ThsBlockRow {
   /** 同花顺原始类型；开盘啦页签取成分股/关注用 */
   ths_kind?: string;
   kpl_code?: string;
+  /** 开盘啦原始名称（与展示名不同时用于详情） */
+  kpl_name?: string;
   kpl_kind?: string;
   kpl_kind_label?: string;
   kpl_power?: number | null;

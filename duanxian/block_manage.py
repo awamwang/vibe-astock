@@ -1,7 +1,8 @@
 """板块管理 —— 同花顺 / 开盘啦按类型融合。
 
-概念 / 行业 / 地域：跨来源按名称并入同一页签（字段并集）；
+概念 / 行业 / 地域：跨来源按「完全同名 + 板块别名族」并入同一页签（字段并集）；
 自定义 / 每日动态仅同花顺；人气仅开盘啦。
+合并后保留 ``kpl_name``（开盘啦原始名称）。
 开盘啦侧经 ``kpl_blocks.ensure`` 初始化，自动日更最多一次。
 """
 
@@ -66,6 +67,7 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
         "hex_id": None,
         "stock_count": None,
         "kpl_code": "",
+        "kpl_name": "",  # 开盘啦原始名称（合并后展示名可能已是同花顺/标准名）
         "kpl_kind": "",
         "kpl_kind_label": "",
         "kpl_power": None,
@@ -78,6 +80,39 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
 
 def _name_key(name: str, *, region: bool = False) -> str:
     return dialect.canonicalize_name(name, region=region)
+
+
+def _equivalence_keys(name: str, *, region: bool = False) -> set[str]:
+    """同名 + 板块别名族的全部匹配键。
+
+    含：去空白原名、canonicalize 标准名、归一到同一标准名的其它别名；
+    地域再含去行政后缀键。
+    """
+    raw = dialect.norm_name(name)
+    if not raw:
+        return set()
+    canon = dialect.canonicalize_name(raw, region=region)
+    keys = {raw, canon}
+    if region:
+        stripped = dialect.strip_region_suffix(raw)
+        if stripped:
+            keys.add(stripped)
+            keys.add(dialect.canonicalize_name(stripped, region=True))
+    try:
+        from .theme_normalize import load_aliases  # noqa: PLC0415
+
+        aliases = load_aliases()
+    except Exception:  # noqa: BLE001
+        aliases = {}
+    for alias in aliases:
+        a = dialect.norm_name(alias)
+        if not a:
+            continue
+        if dialect.canonicalize_name(a, region=region) == canon:
+            keys.add(a)
+    if canon:
+        keys.add(canon)
+    return {k for k in keys if k}
 
 
 def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False) -> None:
@@ -117,6 +152,9 @@ def _apply_kpl(row: dict[str, Any], kpl: dict[str, Any], *, native: bool = False
     row["kpl_code"] = str(kpl.get("code") or row.get("kpl_code") or "")
     row["kpl_kind"] = str(kpl.get("kind") or row.get("kpl_kind") or "")
     row["kpl_kind_label"] = str(kpl.get("kind_label") or row.get("kpl_kind_label") or "")
+    kpl_name = str(kpl.get("name") or "").strip()
+    if kpl_name:
+        row["kpl_name"] = kpl_name
     for src, dst in (
         ("power", "kpl_power"),
         ("pct", "kpl_pct"),
@@ -127,7 +165,7 @@ def _apply_kpl(row: dict[str, Any], kpl: dict[str, Any], *, native: bool = False
         if row.get(dst) is None and kpl.get(src) is not None:
             row[dst] = kpl[src]
     if not row.get("name"):
-        row["name"] = str(kpl.get("name") or kpl.get("code") or "")
+        row["name"] = kpl_name or str(kpl.get("code") or "")
     if native:
         row["node_type"] = "flat"
         if not row.get("tree_path"):
@@ -140,16 +178,25 @@ def _kpl_by_name_for_kind(
     *,
     region: bool = False,
 ) -> dict[str, dict]:
-    """仅某一开盘啦原始类型的 名称→行。"""
+    """仅某一开盘啦原始类型的 名称键→行（含别名族键）。"""
     out: dict[str, dict] = {}
     entry = (kpl_snap.get("kinds") or {}).get(kpl_kind) or {}
     for row in entry.get("rows") or []:
         if not isinstance(row, dict):
             continue
-        key = _name_key(str(row.get("name") or ""), region=region)
-        if key and key not in out:
-            out[key] = row
+        for key in _equivalence_keys(str(row.get("name") or ""), region=region):
+            if key not in out:
+                out[key] = row
     return out
+
+
+def _lookup_kpl(kpl_map: dict[str, dict], name: str, *, region: bool = False) -> dict | None:
+    """按同名 / 别名族查找开盘啦行。"""
+    for key in _equivalence_keys(name, region=region):
+        hit = kpl_map.get(key)
+        if hit:
+            return hit
+    return None
 
 
 def _ths_leaf_by_name(
@@ -158,7 +205,7 @@ def _ths_leaf_by_name(
     *,
     region: bool = False,
 ) -> dict[str, dict]:
-    """同花顺叶子 名称→行；可限定类型。"""
+    """同花顺叶子 名称键→行（含别名族）；可限定类型。"""
     out: dict[str, dict] = {}
     kinds = (ths_kind,) if ths_kind else ("conception", "industry", "region", "custom", "daily")
     for kind in kinds:
@@ -168,15 +215,17 @@ def _ths_leaf_by_name(
                 continue
             if str(ths.get("node_type") or "") == "branch":
                 continue
-            key = _name_key(str(ths.get("name") or ""), region=region or kind == "region")
-            if key and key not in out:
-                out[key] = ths
+            for key in _equivalence_keys(
+                str(ths.get("name") or ""),
+                region=region or kind == "region",
+            ):
+                if key not in out:
+                    out[key] = ths
     return out
 
 
-def _enrich_hot(row: dict[str, Any], hot_map: dict[str, dict], key: str) -> None:
+def _enrich_hot(row: dict[str, Any], hot: dict[str, Any] | None) -> None:
     """人气 PlateID 作点查码补全。"""
-    hot = hot_map.get(key) if key else None
     if not hot:
         return
     code = str(hot.get("code") or "")
@@ -186,11 +235,43 @@ def _enrich_hot(row: dict[str, Any], hot_map: dict[str, dict], key: str) -> None
     row["has_kpl"] = True
     if "kpl" not in row["sources"]:
         row["sources"].append("kpl")
+    hot_name = str(hot.get("name") or "").strip()
+    if hot_name and not row.get("kpl_name"):
+        row["kpl_name"] = hot_name
     if hot.get("power") is not None and row.get("kpl_power") is None:
         row["kpl_power"] = hot.get("power")
     if not row.get("kpl_kind"):
         row["kpl_kind"] = "hot"
         row["kpl_kind_label"] = str(hot.get("kind_label") or "人气")
+
+
+def _attach_kpl_to_ths(
+    row: dict[str, Any],
+    *,
+    name: str,
+    kpl_map: dict[str, dict],
+    hot_map: dict[str, dict],
+    region: bool,
+    matched_codes: set[str],
+) -> None:
+    """把开盘啦结构榜 / 人气榜并入同花顺行，按 code 去重。"""
+    hit = _lookup_kpl(kpl_map, name, region=region)
+    if hit:
+        code = str(hit.get("code") or "").strip()
+        if code and code in matched_codes:
+            pass
+        else:
+            _apply_kpl(row, hit, native=False)
+            if code:
+                matched_codes.add(code)
+    if not row.get("kpl_code"):
+        hot = _lookup_kpl(hot_map, name, region=region)
+        if hot:
+            code = str(hot.get("code") or "").strip()
+            if not (code and code in matched_codes):
+                _enrich_hot(row, hot)
+                if code:
+                    matched_codes.add(code)
 
 
 def _build_fused_kind(
@@ -201,13 +282,14 @@ def _build_fused_kind(
     ths_rows: list[dict],
     kpl_snap: dict[str, Any],
 ) -> list[dict]:
-    """概念/行业/地域：同花顺 + 开盘啦按名称融合到同一页签。"""
+    """概念/行业/地域：同花顺 + 开盘啦按同名/别名融合到同一页签。"""
     is_region = ths_kind == "region"
     kpl_map = _kpl_by_name_for_kind(kpl_snap, kpl_kind, region=is_region)
     hot_map = _kpl_by_name_for_kind(kpl_snap, "hot", region=is_region)
-    out: list[dict] = []
-    matched_keys: set[str] = set()
+    matched_codes: set[str] = set()
 
+    # 先收集同花顺行（保持原始顺序），匹配阶段叶子优先占用开盘啦 code
+    ths_built: list[tuple[dict, dict]] = []  # (src, row)
     for ths in ths_rows:
         if not isinstance(ths, dict):
             continue
@@ -218,28 +300,57 @@ def _build_fused_kind(
         row["kind"] = ths_kind
         row["kind_label"] = str(ths.get("kind_label") or kind_label)
         row["ths_kind"] = ths_kind
-        key = _name_key(name, region=is_region)
-        if key and str(ths.get("node_type") or "") != "branch":
-            hit = kpl_map.get(key)
-            if hit:
-                _apply_kpl(row, hit, native=False)
-                matched_keys.add(key)
-            # 结构类型未命中时再用热度榜补 PlateID
-            if not row.get("kpl_code"):
-                _enrich_hot(row, hot_map, key)
-                if row.get("kpl_code"):
-                    matched_keys.add(key)
-        out.append(row)
+        ths_built.append((ths, row))
+
+    def _is_branch(src: dict) -> bool:
+        return str(src.get("node_type") or "") == "branch"
+
+    for ths, row in ths_built:
+        if _is_branch(ths):
+            continue
+        _attach_kpl_to_ths(
+            row,
+            name=str(row.get("name") or ""),
+            kpl_map=kpl_map,
+            hot_map=hot_map,
+            region=is_region,
+            matched_codes=matched_codes,
+        )
+    for ths, row in ths_built:
+        if not _is_branch(ths) or row.get("kpl_code"):
+            continue
+        _attach_kpl_to_ths(
+            row,
+            name=str(row.get("name") or ""),
+            kpl_map=kpl_map,
+            hot_map=hot_map,
+            region=is_region,
+            matched_codes=matched_codes,
+        )
+
+    out: list[dict] = [row for _, row in ths_built]
 
     entry = (kpl_snap.get("kinds") or {}).get(kpl_kind) or {}
     for cand in entry.get("rows") or []:
         if not isinstance(cand, dict):
             continue
-        code = str(cand.get("code") or "")
+        code = str(cand.get("code") or "").strip()
         name = str(cand.get("name") or code)
-        key = _name_key(name, region=is_region)
-        if key and key in matched_keys:
+        if code and code in matched_codes:
             continue
+        # 同名/别名已并入同花顺行时不再追加（无 code 时用键兜底）
+        if not code:
+            hit_ths = False
+            for _, row in ths_built:
+                if _equivalence_keys(str(row.get("name") or ""), region=is_region) & _equivalence_keys(
+                    name, region=is_region
+                ):
+                    if not row.get("kpl_code"):
+                        _apply_kpl(row, cand, native=False)
+                    hit_ths = True
+                    break
+            if hit_ths:
+                continue
         row = _blank_unified(name=name)
         row["origin"] = "kpl"
         _apply_kpl(row, cand, native=True)
@@ -251,8 +362,8 @@ def _build_fused_kind(
         row["tree_path"] = f"{kind_label} › {name}"
         row["parent_id"] = f"__kpl_{kpl_kind}_root__"
         row["depth"] = 1
-        if key:
-            matched_keys.add(key)
+        if code:
+            matched_codes.add(code)
         out.append(row)
 
     return out
@@ -304,9 +415,13 @@ def _build_kpl_hot(
         row["tree_path"] = f"人气 › {name}"
         row["parent_id"] = "__kpl_hot_root__"
         row["depth"] = 1
-        key = _name_key(name)
-        if key and ths_map.get(key):
-            _apply_ths(row, ths_map[key], native=False)
+        ths_hit = None
+        for k in _equivalence_keys(name):
+            ths_hit = ths_map.get(k)
+            if ths_hit:
+                break
+        if ths_hit:
+            _apply_ths(row, ths_hit, native=False)
             row["kind"] = "hot"
             row["kind_label"] = "人气"
             row["origin"] = "kpl"
@@ -471,23 +586,21 @@ def resolve_follow_to_kpl(
                 # 同花顺原生行优先保留
                 if rid not in by_id or row.get("origin") == "ths":
                     by_id[rid] = row
-            nkey = dialect.canonicalize_name(
-                str(row.get("name") or ""),
-                region=rkind == "region" or str(row.get("kpl_kind") or "") == "region",
-            )
-            if not nkey:
-                continue
-            prev = by_name.get(nkey)
-            # 点查优先人气 PlateID
-            if prev is None or str(row.get("kpl_kind") or "") == "hot":
-                by_name[nkey] = row
+            # 归一名 + 别名族均登记，便于关注项按别名命中
+            is_reg = rkind == "region" or str(row.get("kpl_kind") or "") == "region"
+            for nkey in _equivalence_keys(str(row.get("name") or ""), region=is_reg):
+                prev = by_name.get(nkey)
+                # 点查优先人气 PlateID
+                if prev is None or str(row.get("kpl_kind") or "") == "hot":
+                    by_name[nkey] = row
 
         if kind and fid and (kind, fid) in by_kind_id:
             return _hit(by_kind_id[(kind, fid)], via="block_manage:kind_id")
         if fid and fid in by_id:
             return _hit(by_id[fid], via="block_manage:id")
-        if mapped and mapped in by_name:
-            return _hit(by_name[mapped], via="block_manage:name")
+        for nkey in _equivalence_keys(name, region=is_region):
+            if nkey in by_name:
+                return _hit(by_name[nkey], via="block_manage:name")
 
     # 开盘啦全目录
     try:
