@@ -4538,6 +4538,7 @@ class TestThemeNormalize:
         assert "/config/trade-phases" in fe
         assert "/api/config/trade-phases" in be
         assert "板块别名" in page
+        assert "同花顺板块命名" in page
         assert "type: string" in fe
         assert "row.type" in page
         assert "上涨关键词" in page

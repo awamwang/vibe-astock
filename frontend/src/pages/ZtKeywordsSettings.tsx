@@ -32,7 +32,7 @@ const CONFIG_SECTIONS: {
   { id: "zt-keywords", label: "上涨关键词", icon: Tags, hint: "首板深入分析闭集标签" },
   { id: "message-follow", label: "消息关注词", icon: Eye, hint: "消息分析命中筛选" },
   { id: "message-manual-marks", label: "自定义消息标记", icon: Pencil, hint: "个股日记快捷标题" },
-  { id: "theme-aliases", label: "板块别名", icon: GitMerge, hint: "统计时别名合并" },
+  { id: "theme-aliases", label: "板块别名", icon: GitMerge, hint: "归类到同花顺板块名" },
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
   { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
   { id: "trade-phases", label: "仓位预算档位", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
@@ -1047,8 +1047,10 @@ export function ZtKeywordsSettings() {
           <GitMerge className="h-4 w-4 text-primary" /> 板块别名
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          存于本机后端数据目录。统计板块涨停数（题材事件树、多日情绪矩阵等）时，
-          把左侧别名合并到右侧标准板块；只走显式映射，不做模糊或语义归类。
+          <strong className="font-semibold text-foreground">目标：</strong>
+          将其他来源的别名板块名称，统一归类到同花顺板块命名，方便统计与匹配使用。
+          左侧填原始写法，右侧填同花顺标准板块名；只走显式映射，不做模糊或语义归类。
+          配置存于本机后端数据目录，题材事件树、多日情绪矩阵、同花顺板块页等共用同一套表。
         </p>
 
         {aliasLoading ? (
@@ -1085,7 +1087,7 @@ export function ZtKeywordsSettings() {
                         onChange={(e) => setAliasEditDraft((d) => ({ ...d, canonical: e.target.value }))}
                         maxLength={20}
                         disabled={aliasSaving}
-                        placeholder="标准板块"
+                        placeholder="同花顺板块名"
                         className="min-w-[5rem] flex-1 rounded border border-border bg-black/30 px-2 py-1 text-xs outline-none focus:border-primary/50 disabled:opacity-50"
                       />
                       <span className="text-muted-foreground">类型</span>
@@ -1177,7 +1179,7 @@ export function ZtKeywordsSettings() {
             />
           </div>
           <div className="min-w-[8rem] flex-1">
-            <label className="mb-1 block text-[11px] text-muted-foreground">标准板块</label>
+            <label className="mb-1 block text-[11px] text-muted-foreground">同花顺板块名</label>
             <input
               value={aliasDraft.canonical}
               onChange={(e) => setAliasDraft((d) => ({ ...d, canonical: e.target.value }))}
@@ -1188,7 +1190,7 @@ export function ZtKeywordsSettings() {
                 }
               }}
               maxLength={20}
-              placeholder="如：中报增长"
+              placeholder="同花顺标准名，如：中报增长"
               disabled={aliasSaving || aliasEditingKey != null}
               className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
             />
