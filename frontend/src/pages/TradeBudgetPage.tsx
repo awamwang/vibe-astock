@@ -24,6 +24,10 @@ function money2(v?: number | null): string {
   return v.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+/** 日快照默认展示条数；折叠区每次追加条数 */
+const SNAP_VISIBLE_INITIAL = 10;
+const SNAP_VISIBLE_PAGE = 50;
+
 export function TradeBudgetPage() {
   const [params, setParams] = useSearchParams();
   const date = params.get("date") || "";
@@ -44,6 +48,7 @@ export function TradeBudgetPage() {
   const [addShares, setAddShares] = useState("");
   const [addCost, setAddCost] = useState("");
   const [jsonOpen, setJsonOpen] = useState(false);
+  const [snapVisibleCount, setSnapVisibleCount] = useState(SNAP_VISIBLE_INITIAL);
 
   const load = useCallback(async (d?: string) => {
     setBusy(true);
@@ -160,6 +165,16 @@ export function TradeBudgetPage() {
       .map(([d, s]) => ({ date: d, ...s }))
       .sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [account]);
+
+  useEffect(() => {
+    setSnapVisibleCount(SNAP_VISIBLE_INITIAL);
+  }, [account?.snapshots]);
+
+  const visibleSnapRows = useMemo(
+    () => snapRows.slice(0, snapVisibleCount),
+    [snapRows, snapVisibleCount],
+  );
+  const hiddenSnapCount = Math.max(0, snapRows.length - visibleSnapRows.length);
 
   async function calcSize() {
     const sp = Number(stopPct) / 100;
@@ -307,6 +322,7 @@ export function TradeBudgetPage() {
           <h3 className="mb-2 text-sm font-bold">日快照（按日覆盖）</h3>
           <p className="mb-3 text-[11px] text-muted-foreground">
             同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。删除会连带清除当日预算落盘。
+            默认展示最近 {SNAP_VISIBLE_INITIAL} 条，更早记录折叠加载。
           </p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[48rem] text-left text-[12px]">
@@ -325,7 +341,7 @@ export function TradeBudgetPage() {
                 </tr>
               </thead>
               <tbody>
-                {snapRows.map((s) => (
+                {visibleSnapRows.map((s) => (
                   <tr key={s.date} className={cn("border-t border-border/50", s.date === date && "bg-primary/5")}>
                     <td className="py-1.5 pr-2 font-mono tabular-nums">{s.date}</td>
                     <td className="pr-2 tabular-nums">{money(s.equity)}</td>
@@ -360,6 +376,17 @@ export function TradeBudgetPage() {
               </tbody>
             </table>
           </div>
+          {hiddenSnapCount > 0 && (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setSnapVisibleCount((n) => n + SNAP_VISIBLE_PAGE)}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                展开更早快照（剩余 {hiddenSnapCount}，每次 +{SNAP_VISIBLE_PAGE}）
+              </button>
+            </div>
+          )}
         </div>
       )}
 
