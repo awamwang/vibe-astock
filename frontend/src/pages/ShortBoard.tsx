@@ -20,6 +20,7 @@ import {
   fetchMarketSession,
   fetchMoodBlocks,
   fetchShortBoard,
+  type FocusBlockItem,
   type FocusBlocksSnapshot,
   type LiveEmotion,
   type LiveZtEffect,
@@ -36,10 +37,27 @@ import { StockLabel } from "@/components/stock/StockLabel";
 import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { SortTh, type SortOrder } from "@/components/ui/SortTh";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
 const LIVE_MS = 10_000;
 const HEAVY_MS = 60_000;
+
+type FocusSortKey = "name" | "power" | "pct" | "m_net" | "zt";
+
+const FOCUS_SORT_DEFAULTS: Record<FocusSortKey, SortOrder> = {
+  name: "asc",
+  power: "desc",
+  pct: "desc",
+  m_net: "desc",
+  zt: "desc",
+};
+
+function focusSortValue(b: FocusBlockItem, key: FocusSortKey): number | string | null {
+  if (key === "name") return b.name || "";
+  const v = b.today?.[key];
+  return v == null || Number.isNaN(v) ? null : v;
+}
 
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null | undefined) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`);
@@ -314,8 +332,39 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [moodDone, setMoodDone] = useState(false);
   const [focusDone, setFocusDone] = useState(false);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [focusSortKey, setFocusSortKey] = useState<FocusSortKey>("power");
+  const [focusSortOrder, setFocusSortOrder] = useState<SortOrder>("desc");
 
   const mark = (key: string, on: boolean) => setBusy((b) => ({ ...b, [key]: on }));
+
+  const toggleFocusSort = (key: FocusSortKey) => {
+    if (focusSortKey === key) setFocusSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    else {
+      setFocusSortKey(key);
+      setFocusSortOrder(FOCUS_SORT_DEFAULTS[key]);
+    }
+  };
+
+  const sortedFocusBlocks = useMemo(() => {
+    const list = [...(focusBlocks?.blocks ?? [])];
+    const dir = focusSortOrder === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      const av = focusSortValue(a, focusSortKey);
+      const bv = focusSortValue(b, focusSortKey);
+      if (focusSortKey === "name") {
+        const cmp = String(av ?? "").localeCompare(String(bv ?? ""), "zh-CN");
+        if (cmp !== 0) return dir * cmp;
+      } else {
+        if (av == null && bv == null) { /* fall through */ }
+        else if (av == null) return 1;
+        else if (bv == null) return -1;
+        else if (av !== bv) return dir * (Number(av) - Number(bv));
+      }
+      return (a.name || "").localeCompare(b.name || "", "zh-CN")
+        || (a.code || "").localeCompare(b.code || "");
+    });
+    return list;
+  }, [focusBlocks?.blocks, focusSortKey, focusSortOrder]);
 
   const refreshLianban = (codes: string[]) => {
     if (!codes.length) return;
@@ -1114,6 +1163,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               "标签「人气」= 昨人气热点，「收藏」= 关注板块；可同时带两个标签。\n" +
               "人气/涨幅等为开盘啦指定板块点查；涨停来自 PlateAnalysis；昨日人气榜定稿可落盘。\n" +
               "读数格式：今日/昨日（斜杠对照）；相对昨日变大/变强为红，变小为绿。\n" +
+              "默认按今日人气倒序；可点击表头切换排序。\n" +
               "今 / 昨按数据场次对照，非日历今天。客观公开数据，非推荐。"
             } />
             <span>
@@ -1131,16 +1181,51 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                    <th className="whitespace-nowrap px-2 py-2 font-medium">板块</th>
+                    <SortTh
+                      col="name"
+                      label="板块"
+                      sortCol={focusSortKey}
+                      order={focusSortOrder}
+                      onSort={toggleFocusSort}
+                      className="whitespace-nowrap px-2 py-2 font-medium"
+                    />
                     <th className="whitespace-nowrap px-2 py-2 font-medium">标签</th>
-                    <th className="whitespace-nowrap px-2 py-2 font-medium">人气</th>
-                    <th className="whitespace-nowrap px-2 py-2 font-medium">涨幅</th>
-                    <th className="whitespace-nowrap px-2 py-2 font-medium">主力净额</th>
-                    <th className="whitespace-nowrap px-2 py-2 font-medium">涨停</th>
+                    <SortTh
+                      col="power"
+                      label="人气"
+                      sortCol={focusSortKey}
+                      order={focusSortOrder}
+                      onSort={toggleFocusSort}
+                      className="whitespace-nowrap px-2 py-2 font-medium"
+                    />
+                    <SortTh
+                      col="pct"
+                      label="涨幅"
+                      sortCol={focusSortKey}
+                      order={focusSortOrder}
+                      onSort={toggleFocusSort}
+                      className="whitespace-nowrap px-2 py-2 font-medium"
+                    />
+                    <SortTh
+                      col="m_net"
+                      label="主力净额"
+                      sortCol={focusSortKey}
+                      order={focusSortOrder}
+                      onSort={toggleFocusSort}
+                      className="whitespace-nowrap px-2 py-2 font-medium"
+                    />
+                    <SortTh
+                      col="zt"
+                      label="涨停"
+                      sortCol={focusSortKey}
+                      order={focusSortOrder}
+                      onSort={toggleFocusSort}
+                      className="whitespace-nowrap px-2 py-2 font-medium"
+                    />
                   </tr>
                 </thead>
                 <tbody>
-                  {focusBlocks.blocks.map((b) => (
+                  {sortedFocusBlocks.map((b) => (
                     <tr key={`${b.code || b.name}-${(b.tags || []).join(",")}`} className="border-b border-border/30">
                       <td className="px-2 py-2">
                         <BlockLabel name={b.name} variant="text" className="font-medium" />
