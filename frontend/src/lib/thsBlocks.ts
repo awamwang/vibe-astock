@@ -10,21 +10,14 @@ export const THS_BLOCK_KINDS = [
   { value: "daily", label: "每日动态" },
 ] as const;
 
-/** 板块管理：同花顺原始类型页签 */
-export const BLOCK_MANAGE_THS_KINDS = [
-  { value: "ths:conception", label: "概念", thsKind: "conception" },
-  { value: "ths:industry", label: "行业", thsKind: "industry" },
-  { value: "ths:region", label: "地域", thsKind: "region" },
-  { value: "ths:custom", label: "自定义", thsKind: "custom" },
-  { value: "ths:daily", label: "每日动态", thsKind: "daily" },
-] as const;
-
-/** 板块管理：开盘啦原始类型页签 */
-export const BLOCK_MANAGE_KPL_KINDS = [
-  { value: "kpl:concept", label: "概念", kplKind: "concept" },
-  { value: "kpl:industry", label: "行业", kplKind: "industry" },
-  { value: "kpl:region", label: "地域", kplKind: "region" },
-  { value: "kpl:hot", label: "人气", kplKind: "hot" },
+/** 板块管理：跨源融合类型（概念/行业/地域）+ 单源类型 */
+export const BLOCK_MANAGE_KINDS = [
+  { value: "conception", label: "概念", thsKind: "conception" as const, kplKind: "concept" as const, fused: true as const },
+  { value: "industry", label: "行业", thsKind: "industry" as const, kplKind: "industry" as const, fused: true as const },
+  { value: "region", label: "地域", thsKind: "region" as const, kplKind: "region" as const, fused: true as const },
+  { value: "custom", label: "自定义", thsKind: "custom" as const, fused: false as const },
+  { value: "daily", label: "每日动态", thsKind: "daily" as const, fused: false as const },
+  { value: "hot", label: "人气", kplKind: "hot" as const, fused: false as const },
 ] as const;
 
 export type ThsBlockKind = (typeof THS_BLOCK_KINDS)[number]["value"];
@@ -36,21 +29,35 @@ export const THS_NODE_TYPE_LABEL: Record<string, string> = {
 };
 
 export function thsBlockKindLabel(kind: string): string {
-  const manage = [...BLOCK_MANAGE_THS_KINDS, ...BLOCK_MANAGE_KPL_KINDS].find((k) => k.value === kind);
+  const manage = BLOCK_MANAGE_KINDS.find((k) => k.value === kind);
   if (manage) return manage.label;
   return THS_BLOCK_KINDS.find((k) => k.value === kind)?.label || kind;
 }
 
 /** 板块管理页签 → 同花顺树/成分股用的原生 kind */
 export function manageTabThsKind(tab: string): string | null {
-  const hit = BLOCK_MANAGE_THS_KINDS.find((k) => k.value === tab);
-  return hit?.thsKind ?? null;
+  const hit = BLOCK_MANAGE_KINDS.find((k) => k.value === tab);
+  return hit && "thsKind" in hit ? hit.thsKind : null;
 }
 
-export function manageTabOrigin(tab: string): "ths" | "kpl" | null {
-  if (tab.startsWith("ths:")) return "ths";
-  if (tab.startsWith("kpl:")) return "kpl";
-  return null;
+export function manageTabKplKind(tab: string): string | null {
+  const hit = BLOCK_MANAGE_KINDS.find((k) => k.value === tab);
+  return hit && "kplKind" in hit ? hit.kplKind : null;
+}
+
+/** 页签是否含同花顺树结构（融合页签以同花顺树为主） */
+export function manageTabHasThsTree(tab: string): boolean {
+  return manageTabThsKind(tab) != null && tab !== "hot";
+}
+
+/** @deprecated 融合后页签不再按来源前缀区分 */
+export function manageTabOrigin(tab: string): "ths" | "kpl" | "fused" | null {
+  const hit = BLOCK_MANAGE_KINDS.find((k) => k.value === tab);
+  if (!hit) return null;
+  if (hit.fused) return "fused";
+  if ("thsKind" in hit && !("kplKind" in hit)) return "ths";
+  if ("kplKind" in hit && !("thsKind" in hit)) return "kpl";
+  return "fused";
 }
 
 export const THS_CUSTOM_TYPE_LABEL: Record<string, string> = {

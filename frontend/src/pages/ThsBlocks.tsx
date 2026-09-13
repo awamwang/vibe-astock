@@ -18,13 +18,13 @@ import {
   isBlockFollowed, setFollowBlocksCache, type FollowBlock,
 } from "@/lib/message-follow-blocks";
 import {
-  THS_BLOCK_KINDS, BLOCK_MANAGE_THS_KINDS, BLOCK_MANAGE_KPL_KINDS, THS_NODE_TYPE_LABEL,
+  THS_BLOCK_KINDS, BLOCK_MANAGE_KINDS, THS_NODE_TYPE_LABEL,
   aliasesForBlockName, attachOrphanLeavesToTree, blockTreeNodeId,
   buildAliasesByCanonical, buildSyntheticBlockTree, collectThsBranchIds,
-  collectThsNodeIds, filterThsTree, manageTabOrigin, manageTabThsKind,
+  collectThsNodeIds, filterThsTree, manageTabKplKind, manageTabThsKind,
   normalizeThemeTag, parseThsTree, sortRowsByTreeOrder,
-  themeAliasEntriesFromConfig, thsBlockCodeSubtitle, thsBlockKindLabel,
-  thsBlockPrimaryCode, thsCustomSubtypeLabel,
+  themeAliasEntriesFromConfig, thsBlockKindLabel, thsBlockPrimaryCode,
+  thsCustomSubtypeLabel,
 } from "@/lib/thsBlocks";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 
@@ -390,7 +390,7 @@ export function ThsBlocks() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingKind, setRefreshingKind] = useState<string | null>(null);
 
-  const [kindFilter, setKindFilter] = useState<string>("ths:conception");
+  const [kindFilter, setKindFilter] = useState<string>("conception");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
   const [nodeFilter, setNodeFilter] = useState<"all" | "leaf" | "branch">("all");
@@ -644,43 +644,45 @@ export function ThsBlocks() {
   };
 
   const isFollowedView = kindFilter === FOLLOWED_KIND;
-  const tabOrigin = manageTabOrigin(kindFilter);
   const thsKindForTab = manageTabThsKind(kindFilter);
+  const kplKindForTab = manageTabKplKind(kindFilter);
 
-  /** 当前来源下可选的类型页签 */
+  /** 当前来源下可选的类型页签（概念/行业/地域不按来源拆分） */
   const visibleTypeTabs = useMemo(() => {
-    if (sourceFilter === "ths") return [...BLOCK_MANAGE_THS_KINDS];
-    if (sourceFilter === "kpl") return [...BLOCK_MANAGE_KPL_KINDS];
-    return [...BLOCK_MANAGE_THS_KINDS, ...BLOCK_MANAGE_KPL_KINDS];
+    if (sourceFilter === "ths") {
+      return BLOCK_MANAGE_KINDS.filter((k) => "thsKind" in k);
+    }
+    if (sourceFilter === "kpl") {
+      return BLOCK_MANAGE_KINDS.filter((k) => "kplKind" in k);
+    }
+    return [...BLOCK_MANAGE_KINDS];
   }, [sourceFilter]);
 
   useEffect(() => {
     if (isFollowedView) return;
     if (!visibleTypeTabs.some((t) => t.value === kindFilter)) {
-      setKindFilter(visibleTypeTabs[0]?.value || "ths:conception");
+      setKindFilter(visibleTypeTabs[0]?.value || "conception");
       setSelected(null);
       setStocksDetail(null);
     }
   }, [sourceFilter, visibleTypeTabs, kindFilter, isFollowedView]);
 
-  /** 关注视图：从融合行解析已关注；普通视图：当前原始类型页签 */
+  /** 关注视图：从融合行解析已关注；普通视图：当前类型页签，可再按来源筛行 */
   const allRows = useMemo(() => {
+    const matchSource = (row: ManagedBlockRow) => {
+      if (sourceFilter === "ths") return row.has_ths || row.origin === "ths";
+      if (sourceFilter === "kpl") return row.has_kpl || row.origin === "kpl";
+      return true;
+    };
     if (!isFollowedView) {
-      // 页签已按来源原始分类切开，不再用 source 二次混入对方类型
-      return snapshot?.merged?.[kindFilter] || [];
+      return (snapshot?.merged?.[kindFilter] || []).filter(matchSource);
     }
     const out: ManagedBlockRow[] = [];
     const seen = new Set<string>();
-    const matchSource = (row: ManagedBlockRow) => {
-      if (sourceFilter === "ths") return row.origin === "ths" || row.has_ths;
-      if (sourceFilter === "kpl") return row.origin === "kpl" || row.has_kpl;
-      return true;
-    };
     for (const fb of followBlocks) {
       const key = `${fb.kind}|${fb.id}`;
       if (seen.has(key)) continue;
-      const tabKey = `ths:${fb.kind}`;
-      const row = (snapshot?.merged?.[tabKey] || []).find((r) => r.id === fb.id);
+      const row = (snapshot?.merged?.[fb.kind] || []).find((r) => r.id === fb.id);
       if (row && matchSource(row)) {
         seen.add(key);
         out.push(row);
@@ -689,7 +691,7 @@ export function ThsBlocks() {
     return out;
   }, [isFollowedView, kindFilter, snapshot, followBlocks, sourceFilter]);
 
-  const kindEntry = isFollowedView || tabOrigin !== "ths" || !thsKindForTab
+  const kindEntry = isFollowedView || !thsKindForTab
     ? null
     : thsSnap?.kinds?.[thsKindForTab];
   const showSubtypeCol = thsKindForTab === "custom";
@@ -698,16 +700,16 @@ export function ThsBlocks() {
   const followedTreeSections = useMemo(() => {
     if (!isFollowedView || !thsSnap?.kinds) return [];
     const matchSource = (row: ManagedBlockRow) => {
-      if (sourceFilter === "ths") return row.origin === "ths" || row.has_ths;
+      if (sourceFilter === "ths") return row.has_ths || row.origin === "ths";
       if (sourceFilter === "kpl") return false; // 关注仅同花顺
-      return row.origin === "ths" || row.has_ths;
+      return row.has_ths || row.origin === "ths";
     };
     const sections: { kind: string; label: string; tree: ThsTreeNode; rowById: Map<string, ManagedBlockRow> }[] = [];
     for (const k of THS_BLOCK_KINDS) {
       const entry = thsSnap.kinds[k.value];
       const followedInKind = followBlocks.filter((b) => b.kind === k.value);
       if (!followedInKind.length) continue;
-      const mergedRows = (snapshot?.merged?.[`ths:${k.value}`] || []).filter(matchSource);
+      const mergedRows = (snapshot?.merged?.[k.value] || []).filter(matchSource);
       const rowById = new Map<string, ManagedBlockRow>();
       for (const row of mergedRows) {
         rowById.set(blockTreeNodeId(row), row);
@@ -793,10 +795,10 @@ export function ThsBlocks() {
     // 合成树：默认展开根
     setExpanded(new Set([
       `__root_${kindFilter}__`,
-      `__kpl_${kindFilter.replace("kpl:", "")}_root__`,
+      kplKindForTab ? `__kpl_${kplKindForTab}_root__` : "",
       "__hot_root__",
-    ]));
-  }, [kindFilter, canShowTree, viewMode, kindEntry?.tree, kindEntry?.tree_mode, isFollowedView, followedTreeSections]);
+    ].filter(Boolean)));
+  }, [kindFilter, kplKindForTab, canShowTree, viewMode, kindEntry?.tree, kindEntry?.tree_mode, isFollowedView, followedTreeSections]);
 
   const rowById = useMemo(() => {
     const m = new Map<string, ManagedBlockRow>();
@@ -825,11 +827,12 @@ export function ThsBlocks() {
       }
     }
     if (!root) {
-      const kplKind = kindFilter.startsWith("kpl:") ? kindFilter.slice(4) : "";
       root = buildSyntheticBlockTree(
         allRows,
         label,
-        kplKind ? `__kpl_${kplKind}_root__` : `__root_${kindFilter}__`,
+        kplKindForTab && !thsKindForTab
+          ? `__kpl_${kplKindForTab}_root__`
+          : `__root_${kindFilter}__`,
       );
     }
     return filterThsTree(root, {
@@ -838,7 +841,7 @@ export function ThsBlocks() {
       codeById,
       aliasesByName: aliasesByCanonical,
     });
-  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, q, nodeFilter, allRows, aliasesByCanonical, kindFilter]);
+  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, q, nodeFilter, allRows, aliasesByCanonical, kindFilter, kplKindForTab, thsKindForTab]);
 
   const filteredRows = useMemo((): ManagedBlockRow[] => {
     const query = q.trim().toLowerCase();
@@ -975,6 +978,9 @@ export function ThsBlocks() {
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
+  const detailTitle = selected
+    ? (selected.name || selected.id || selected.kpl_code || "")
+    : "";
   const selectedAliases = selected
     ? aliasesForBlockName(selected.name, aliasesByCanonical)
     : [];
@@ -990,7 +996,7 @@ export function ThsBlocks() {
               <h1 className="text-xl font-bold text-foreground">板块管理</h1>
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              同花顺与开盘啦按名称融合；开盘啦目录每日自动最多拉取一次，手动「刷新板块」可强制更新。
+              概念 / 行业 / 地域按名称跨来源融合；开盘啦目录每日自动最多拉取一次，手动「刷新板块」可强制更新。
             </p>
           </div>
           <button
@@ -1040,20 +1046,34 @@ export function ThsBlocks() {
             ))}
           </div>
 
-          {/* key=sourceFilter：来源切换时整行重挂载，避免页签增删与前缀 span 原地 reconcile 触发 removeChild */}
+          {/* key=sourceFilter：来源切换时整行重挂载，避免页签增删原地 reconcile 触发 removeChild */}
           <div key={sourceFilter} className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">类型</span>
             {visibleTypeTabs.map((k) => {
-              const isThs = "thsKind" in k;
-              const count = isThs
-                ? (snapshot?.merged?.[k.value]?.length ?? thsSnap?.kinds?.[k.thsKind]?.count)
-                : (snapshot?.merged?.[k.value]?.length ?? snapshot?.kpl?.kinds?.[k.kplKind]?.count);
-              const loaded = isThs
-                ? thsSnap?.kinds?.[k.thsKind] != null || (snapshot?.merged?.[k.value]?.length ?? 0) > 0
-                : (count ?? 0) > 0 || !!snapshot?.kpl?.kinds?.[k.kplKind];
-              const hasErr = isThs && kindHasError(thsSnap?.errors || snapshot?.errors, k.thsKind);
+              const hasThs = "thsKind" in k;
+              const hasKpl = "kplKind" in k;
+              const fused = Boolean(k.fused);
+              const rows = snapshot?.merged?.[k.value] || [];
+              const count = (() => {
+                if (rows.length || snapshot?.merged?.[k.value]) {
+                  if (sourceFilter === "ths") {
+                    return rows.filter((r) => r.has_ths || r.origin === "ths").length;
+                  }
+                  if (sourceFilter === "kpl") {
+                    return rows.filter((r) => r.has_kpl || r.origin === "kpl").length;
+                  }
+                  return rows.length;
+                }
+                if (hasThs && k.thsKind) return thsSnap?.kinds?.[k.thsKind]?.count;
+                if (hasKpl && k.kplKind) return snapshot?.kpl?.kinds?.[k.kplKind]?.count;
+                return undefined;
+              })();
+              const loaded = (count ?? 0) > 0
+                || (hasThs && k.thsKind != null && thsSnap?.kinds?.[k.thsKind] != null)
+                || (hasKpl && k.kplKind != null && !!snapshot?.kpl?.kinds?.[k.kplKind]);
+              const hasErr = hasThs && k.thsKind != null
+                && kindHasError(thsSnap?.errors || snapshot?.errors, k.thsKind);
               const active = kindFilter === k.value;
-              const prefix = sourceFilter === "all" ? (isThs ? "同花顺·" : "开盘啦·") : null;
               return (
                 <button
                   key={k.value}
@@ -1066,15 +1086,16 @@ export function ThsBlocks() {
                   className={cn(
                     "rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
                     active
-                      ? isThs
-                        ? "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-300"
-                        : "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                      ? fused
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : hasThs && !hasKpl
+                          ? "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-300"
+                          : "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
                       : "border-border bg-background text-muted-foreground hover:text-foreground",
                     hasErr && "border-amber-500/50",
                   )}
-                  title={isThs ? "同花顺原始类型" : "开盘啦原始类型"}
+                  title={fused ? "同花顺与开盘啦按名称融合" : hasThs ? "同花顺" : "开盘啦"}
                 >
-                  {prefix != null && <span className="mr-1 opacity-60">{prefix}</span>}
                   <span>{k.label}</span>
                   {count != null && (
                     <span className="ml-1.5 tabular-nums opacity-70">{count}</span>
@@ -1224,7 +1245,7 @@ export function ThsBlocks() {
                   <span>
                     {isFollowedView
                       ? " · 关注"
-                      : ` · ${tabOrigin === "kpl" ? "开盘啦" : tabOrigin === "ths" ? "同花顺" : ""}${thsBlockKindLabel(kindFilter)}`}
+                      : ` · ${thsBlockKindLabel(kindFilter)}`}
                   </span>
                   {sourceFilter === "ths" && <span> · 筛选同花顺</span>}
                   {sourceFilter === "kpl" && <span> · 筛选开盘啦</span>}
@@ -1364,9 +1385,9 @@ export function ThsBlocks() {
                 )
               ) : !allRows.length && !kindEntry ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
-                  {tabOrigin === "kpl"
-                    ? "该开盘啦类型暂无数据"
-                    : "该同花顺类型尚未加载"}
+                  {kindFilter === "hot"
+                    ? "该人气类型暂无数据"
+                    : "该类型尚未加载或当前来源下无匹配"}
                   {thsKindForTab && kindHasError(thsSnap?.errors || snapshot?.errors, thsKindForTab) && (
                     <p className="mt-2 text-amber-700 dark:text-amber-300">
                       {(thsSnap?.errors || snapshot?.errors || [])
@@ -1445,23 +1466,6 @@ export function ThsBlocks() {
                         />
                       )}
                     </div>
-                    {selected.has_ths && (() => {
-                      const sub = thsBlockCodeSubtitle(selected);
-                      return (
-                        <p className="mt-1 font-mono text-xs">
-                          <span className="font-medium text-foreground">{sub.primary}</span>
-                          {sub.secondary && (
-                            <span className="text-muted-foreground"> · {sub.secondary}</span>
-                          )}
-                        </p>
-                      );
-                    })()}
-                    {selected.kpl_code && (
-                      <p className="mt-1 font-mono text-xs text-muted-foreground">
-                        开盘啦 <span className="font-medium text-foreground">{selected.kpl_code}</span>
-                        {selected.kpl_kind_label ? ` · ${selected.kpl_kind_label}` : ""}
-                      </p>
-                    )}
                     {selected.tree_path && (
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selected.tree_path}</p>
                     )}
@@ -1471,22 +1475,29 @@ export function ThsBlocks() {
                     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
                       <dt className="text-muted-foreground">类型</dt>
                       <dd className="text-foreground">{thsBlockKindLabel(selected.kind) || selected.kpl_kind_label || "—"}</dd>
-                      {selected.code && (
+                      {selected.code && selected.code !== detailTitle && (
                         <>
                           <dt className="text-muted-foreground">同花顺行情码</dt>
                           <dd className="font-mono text-foreground">{selected.code}</dd>
                         </>
                       )}
-                      {selected.id && (
+                      {selected.id && selected.id !== detailTitle && selected.id !== selected.code && (
                         <>
                           <dt className="text-muted-foreground">同花顺本地 ID</dt>
                           <dd className="font-mono text-muted-foreground">{selected.id}</dd>
                         </>
                       )}
-                      {selected.kpl_code && (
+                      {selected.kpl_code && selected.kpl_code !== detailTitle && (
                         <>
                           <dt className="text-muted-foreground">开盘啦 PlateID</dt>
                           <dd className="font-mono text-foreground">{selected.kpl_code}</dd>
+                        </>
+                      )}
+                      {selected.kpl_kind_label
+                        && selected.kpl_kind_label !== (thsBlockKindLabel(selected.kind) || "") && (
+                        <>
+                          <dt className="text-muted-foreground">开盘啦类型</dt>
+                          <dd className="text-foreground">{selected.kpl_kind_label}</dd>
                         </>
                       )}
                       {selected.kpl_power != null && (

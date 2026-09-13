@@ -381,12 +381,15 @@ def test_directory_nodes_not_indexed():
         ("银行", "industry"),
         ("白酒", "industry"),
         ("广东", "region"),
-        ("上海", "region"),
+        ("广东省", "region"),
+        ("上海市", "region"),
         ("安徽", "region"),
     ):
         r = bp.resolve_one(raw)
         assert r["status"] == "matched", raw
         assert r["block"]["kind"] == kind, raw
+        if raw in ("广东省", "上海市"):
+            assert r["block"]["name"] in ("广东", "上海"), raw
 
     scanned = bp.scan_text(
         "行业与地域板块分化，关注价格驱动、半导体与广东、华为概念。",

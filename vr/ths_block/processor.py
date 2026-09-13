@@ -115,13 +115,26 @@ def _norm(raw: str) -> str:
     return str(raw or "").replace(" ", "").replace("\u3000", "").strip()
 
 
-def _canonicalize(tag: str) -> str:
+def _canonicalize(tag: str, *, region: bool = False) -> str:
     try:
-        from duanxian.theme_normalize import canonicalize_tag  # noqa: PLC0415
+        from duanxian.block_dialect import canonicalize_name  # noqa: PLC0415
 
-        return canonicalize_tag(tag)
+        return canonicalize_name(tag, region=region)
     except Exception:  # noqa: BLE001
-        return _norm(tag)
+        try:
+            from duanxian.theme_normalize import canonicalize_tag  # noqa: PLC0415
+
+            t = canonicalize_tag(tag)
+        except Exception:  # noqa: BLE001
+            t = _norm(tag)
+        if region:
+            try:
+                from duanxian.block_dialect import strip_region_suffix  # noqa: PLC0415
+
+                return strip_region_suffix(t) or t
+            except Exception:  # noqa: BLE001
+                return t
+        return t
 
 
 def _kind_rank(kind: str) -> int:
@@ -259,6 +272,11 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             seen_ids.add(key)
             ref = _block_ref(str(kind), kind_label, bid_norm, name_norm, code=code)
             index.setdefault(name_norm, []).append(ref)
+            # 地域：额外登记去省/市/自治区后缀的键
+            if str(kind) == "region":
+                stripped = _canonicalize(name_norm, region=True)
+                if stripped and stripped != name_norm:
+                    index.setdefault(stripped, []).append(ref)
 
         for row in entry.get("rows") or []:
             if not isinstance(row, dict):
@@ -591,6 +609,13 @@ def resolve_one(raw: str, *, index: dict[str, list[dict[str, Any]]] | None = Non
         }
 
     exact_refs = idx.get(mapped) or []
+    # 未命中时按地域去后缀再试（广东省 → 广东）
+    if not exact_refs:
+        region_key = _canonicalize(raw_norm, region=True)
+        if region_key and region_key != mapped:
+            exact_refs = idx.get(region_key) or []
+            if exact_refs:
+                mapped = region_key
     if exact_refs:
         best = _pick_best(exact_refs)
         return {

@@ -41,6 +41,25 @@ class TestBlockDialect:
         assert hit["status"] == "unmatched"
         assert hit["code"] == ""
 
+    def test_strip_region_suffix(self):
+        from duanxian import block_dialect as bd
+
+        assert bd.strip_region_suffix("广东省") == "广东"
+        assert bd.strip_region_suffix("北京市") == "北京"
+        assert bd.strip_region_suffix("内蒙古自治区") == "内蒙古"
+        assert bd.strip_region_suffix("广西壮族自治区") == "广西"
+        assert bd.strip_region_suffix("广东") == "广东"
+
+    def test_resolve_region_ignores_suffix(self):
+        from duanxian import block_dialect as bd
+
+        idx = bd.build_kpl_index([
+            {"code": "880001", "name": "广东", "kind": "region"},
+        ])
+        hit = bd.resolve_to_kpl(name="广东省", kind="region", index=idx)
+        assert hit["status"] == "matched"
+        assert hit["code"] == "880001"
+
 
 @pytest.mark.unit
 class TestResolveFollowViaManage:
@@ -52,7 +71,7 @@ class TestResolveFollowViaManage:
 
         manage_snap = {
             "merged": {
-                "ths:conception": [{
+                "conception": [{
                     "name": "AI手机",
                     "origin": "ths",
                     "has_ths": True,
@@ -86,7 +105,7 @@ class TestResolveFollowViaManage:
 
         manage_snap = {
             "merged": {
-                "ths:conception": [{
+                "conception": [{
                     "name": "AI手机",
                     "origin": "ths",
                     "has_ths": True,
@@ -324,7 +343,7 @@ class TestFocusBlocks:
             "snapshot",
             lambda **_k: {
                 "merged": {
-                    "ths:conception": [{
+                    "conception": [{
                         "name": "通信",
                         "origin": "ths",
                         "has_ths": True,

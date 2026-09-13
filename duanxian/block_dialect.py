@@ -23,17 +23,43 @@ def norm_name(raw: str) -> str:
     return str(raw or "").replace(" ", "").replace("\u3000", "").strip()
 
 
-def canonicalize_name(raw: str) -> str:
-    """名称归一：空白清理 + 题材别名表。"""
+# 地域名尾缀：匹配时忽略（长后缀优先）
+_REGION_SUFFIXES = (
+    "特别行政区",
+    "壮族自治区",
+    "回族自治区",
+    "维吾尔自治区",
+    "自治区",
+    "省",
+    "市",
+)
+
+
+def strip_region_suffix(name: str) -> str:
+    """去掉地域名尾部的省/市/自治区等行政后缀。"""
+    t = norm_name(name)
+    if not t:
+        return t
+    for suf in _REGION_SUFFIXES:
+        if len(t) > len(suf) and t.endswith(suf):
+            return t[: -len(suf)]
+    return t
+
+
+def canonicalize_name(raw: str, *, region: bool = False) -> str:
+    """名称归一：空白清理 + 题材别名表；地域可再去行政后缀。"""
     t = norm_name(raw)
     if not t:
         return t
     try:
         from .theme_normalize import canonicalize_tag  # noqa: PLC0415
 
-        return canonicalize_tag(t)
+        t = canonicalize_tag(t)
     except Exception:  # noqa: BLE001
-        return t
+        pass
+    if region:
+        return strip_region_suffix(t) or t
+    return t
 
 
 class KplNameIndex:
@@ -50,7 +76,12 @@ class KplNameIndex:
             return
         row = {"code": code_s, "name": str(name or "").strip() or name_s, **extra}
         self.by_code[code_s] = row
-        for key in (name_s, canonicalize_name(name_s)):
+        keys = {name_s, canonicalize_name(name_s)}
+        # 地域类型额外登记去后缀键，便于「广东」↔「广东省」
+        if str(extra.get("kind") or "") == "region":
+            keys.add(canonicalize_name(name_s, region=True))
+            keys.add(strip_region_suffix(name_s))
+        for key in keys:
             if key and key not in self.by_name:
                 self.by_name[key] = code_s
 
@@ -62,12 +93,21 @@ class KplNameIndex:
                 k: v for k, v in row.items() if k not in ("code", "name")
             })
 
-    def resolve_name(self, name: str) -> Optional[str]:
+    def resolve_name(self, name: str, *, region: bool = False) -> Optional[str]:
         """名称 → 开盘啦 code；未命中返回 None。"""
-        mapped = canonicalize_name(name)
+        mapped = canonicalize_name(name, region=region)
         if not mapped:
             return None
-        return self.by_name.get(mapped) or self.by_name.get(norm_name(name))
+        hit = self.by_name.get(mapped) or self.by_name.get(norm_name(name))
+        if hit:
+            return hit
+        if region:
+            return None
+        # 非地域调用时仍尝试去后缀，兼容目录混排
+        stripped = canonicalize_name(name, region=True)
+        if stripped and stripped != mapped:
+            return self.by_name.get(stripped)
+        return None
 
     def get(self, code: str) -> Optional[dict[str, Any]]:
         return self.by_code.get(str(code or "").strip())
@@ -141,7 +181,10 @@ def resolve_to_kpl(
             "source_id": code_s,
         }
 
-    kpl_code = idx.resolve_name(mapped or name_s)
+    is_region = str(kind or "").strip() == "region"
+    if is_region:
+        mapped = canonicalize_name(name_s or code_s, region=True) or mapped
+    kpl_code = idx.resolve_name(mapped or name_s, region=is_region)
     if kpl_code:
         hit = idx.get(kpl_code) or {}
         return {

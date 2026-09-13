@@ -112,10 +112,10 @@ def test_kpl_ensure_force_refetches(monkeypatch: pytest.MonkeyPatch):
     assert out["kinds"]["hot"]["rows"][0]["code"] == "801660"
 
 
-def test_merge_keeps_original_type_tabs(monkeypatch: pytest.MonkeyPatch):
+def test_merge_fuses_concept_tabs(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "duanxian.block_dialect.canonicalize_name",
-        lambda raw: str(raw or "").replace(" ", "").strip(),
+        lambda raw, region=False: str(raw or "").replace(" ", "").strip(),
     )
     ths_snap = {
         "updated_at": "t",
@@ -171,29 +171,74 @@ def test_merge_keeps_original_type_tabs(monkeypatch: pytest.MonkeyPatch):
     }
     merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap=kpl_snap)
 
-    ths_conception = merged["ths:conception"]
-    assert len(ths_conception) == 1
-    hit = ths_conception[0]
+    conception = merged["conception"]
+    assert len(conception) == 2
+    hit = next(r for r in conception if r["name"] == "通信")
     assert hit["origin"] == "ths"
     assert hit["kind"] == "conception"
     assert hit["id"] == "D574"
     assert hit["code"] == "885001"
-    # 同名仅补字段，不把开盘啦独有概念并入同花顺页签
+    # 同名补字段；开盘啦独有概念并入同一页签
     assert hit["kpl_code"] == "801660"
     assert hit["has_kpl"] is True
-    assert all(r["name"] != "AI应用" for r in ths_conception)
+    only_kpl = next(r for r in conception if r["name"] == "AI应用")
+    assert only_kpl["origin"] == "kpl"
+    assert only_kpl["kind"] == "conception"
+    assert only_kpl["kpl_code"] == "886100"
 
-    kpl_concept = merged["kpl:concept"]
-    assert len(kpl_concept) == 1
-    assert kpl_concept[0]["origin"] == "kpl"
-    assert kpl_concept[0]["kind"] == "concept"
-    assert kpl_concept[0]["kpl_code"] == "886100"
-
-    hot_rows = merged["kpl:hot"]
+    hot_rows = merged["hot"]
     assert len(hot_rows) == 1
     assert hot_rows[0]["origin"] == "kpl"
     assert hot_rows[0]["kind"] == "hot"
     assert hot_rows[0]["kpl_code"] == "801660"
-    # 人气页签可补同花顺字段，但不改变类型
     assert hot_rows[0]["ths_kind"] == "conception"
     assert hot_rows[0]["id"] == "D574"
+
+
+def test_merge_region_strips_admin_suffix():
+    ths_snap = {
+        "updated_at": "t",
+        "kinds": {
+            "conception": {"rows": []},
+            "industry": {"rows": []},
+            "region": {
+                "rows": [{
+                    "kind": "region",
+                    "kind_label": "地域",
+                    "id": "R001",
+                    "name": "广东",
+                    "code": "882001",
+                    "node_type": "leaf",
+                    "tree_path": "地域 › 广东",
+                }],
+            },
+            "custom": {"rows": []},
+            "daily": {"rows": []},
+        },
+    }
+    kpl_snap = {
+        "kinds": {
+            "region": {
+                "rows": [{
+                    "kind": "region",
+                    "kind_label": "地域",
+                    "code": "880001",
+                    "name": "广东省",
+                    "power": 1,
+                    "pct": 0.1,
+                    "speed": 0,
+                    "m_net": 0,
+                    "sort": 1,
+                }],
+            },
+        },
+    }
+    merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap=kpl_snap)
+    region_rows = merged["region"]
+    assert len(region_rows) == 1
+    assert region_rows[0]["name"] == "广东"
+    assert region_rows[0]["id"] == "R001"
+    assert region_rows[0]["kpl_code"] == "880001"
+    assert region_rows[0]["has_ths"] is True
+    assert region_rows[0]["has_kpl"] is True
+
