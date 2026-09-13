@@ -11,7 +11,7 @@ import { SortTh } from "@/components/ui/SortTh";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
-  type Quote, type ThemeAliasEntry, type ThsBlockRow, type ThsBlocksSnapshot,
+  type BlocksManageSnapshot, type ManagedBlockRow, type Quote, type ThemeAliasEntry,
   type ThsBlockStocksDetail, type ThsTreeNode,
 } from "@/lib/api";
 import {
@@ -37,10 +37,36 @@ const selectCls =
 const inputCls =
   "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
-type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype";
+type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype" | "kpl_code";
 type ViewMode = "tree" | "list";
+type SourceFilter = "all" | "ths" | "kpl";
 /** 关注为虚拟类型：跨 kind 展示已关注板块，树视图按原层级裁剪 */
 const FOLLOWED_KIND = "followed";
+
+function managedRowKey(row: Pick<ManagedBlockRow, "kind" | "id" | "kpl_code" | "name">): string {
+  if (row.id) return `${row.kind}|${row.id}`;
+  return `${row.kind}|kpl:${row.kpl_code || row.name}`;
+}
+
+function SourceBadges({ row }: { row: ManagedBlockRow }) {
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {row.has_ths && (
+        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+          同花顺
+        </span>
+      )}
+      {row.has_kpl && (
+        <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+          开盘啦
+        </span>
+      )}
+      {!row.has_ths && !row.has_kpl && (
+        <span className="text-muted-foreground/50">—</span>
+      )}
+    </span>
+  );
+}
 
 function DetailSection({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -119,24 +145,26 @@ function FollowedOrKindTable({
   onOpen,
   onToggleFollow,
 }: {
-  filteredRows: ThsBlockRow[];
+  filteredRows: ManagedBlockRow[];
   showSubtypeCol: boolean;
   sort: SortKey;
   order: "asc" | "desc";
   onSort: (key: SortKey) => void;
-  selected: ThsBlockRow | null;
+  selected: ManagedBlockRow | null;
   followedIds: Set<string>;
   aliasesByCanonical: Map<string, string[]>;
-  onOpen: (row: ThsBlockRow) => void;
-  onToggleFollow: (row: ThsBlockRow) => void;
+  onOpen: (row: ManagedBlockRow) => void;
+  onToggleFollow: (row: ManagedBlockRow) => void;
 }) {
-  const colCount = (showSubtypeCol ? 7 : 6);
+  const colCount = (showSubtypeCol ? 9 : 8);
   return (
-    <table className="w-full min-w-[760px] text-sm">
+    <table className="w-full min-w-[920px] text-sm">
       <thead className="sticky top-0 z-[1] bg-background/95 backdrop-blur">
         <tr className="border-b border-border/60 text-left">
-          <SortTh col="id" label="代码" sortCol={sort} order={order} onSort={onSort} />
+          <SortTh col="id" label="同花顺码" sortCol={sort} order={order} onSort={onSort} />
+          <SortTh col="kpl_code" label="开盘啦码" sortCol={sort} order={order} onSort={onSort} />
           <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={onSort} />
+          <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">来源</th>
           <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">别名</th>
           {showSubtypeCol && (
             <SortTh col="subtype" label="子类型" sortCol={sort} order={order} onSort={onSort} />
@@ -148,14 +176,14 @@ function FollowedOrKindTable({
       </thead>
       <tbody>
         {filteredRows.map((row) => {
-          const active = selected?.kind === row.kind && selected?.id === row.id;
+          const active = selected != null && managedRowKey(selected) === managedRowKey(row);
           const subtype = thsCustomSubtypeLabel(row);
           const depth = row.depth ?? 0;
-          const followed = followedIds.has(`${row.kind}|${row.id}`);
+          const followed = row.id ? followedIds.has(`${row.kind}|${row.id}`) : false;
           const aliases = aliasesForBlockName(row.name, aliasesByCanonical);
           return (
             <tr
-              key={`${row.kind}-${row.id}`}
+              key={managedRowKey(row)}
               className={cn(
                 "cursor-pointer border-b border-border/40 transition-colors hover:bg-muted/30",
                 active && "bg-primary/8",
@@ -165,9 +193,14 @@ function FollowedOrKindTable({
               <td className="px-4 py-2.5 font-mono text-xs">
                 {row.code ? (
                   <span className="text-foreground">{row.code}</span>
-                ) : (
+                ) : row.id ? (
                   <span className="text-muted-foreground">{row.id}</span>
+                ) : (
+                  <span className="text-muted-foreground/50">—</span>
                 )}
+              </td>
+              <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                {row.kpl_code || "—"}
               </td>
               <td className="px-4 py-2.5 font-medium text-foreground">
                 <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
@@ -179,6 +212,9 @@ function FollowedOrKindTable({
                   </span>
                 )}
               </td>
+              <td className="px-3 py-2.5">
+                <SourceBadges row={row} />
+              </td>
               <td className="max-w-[180px] truncate px-3 py-2.5 text-xs">
                 <AliasInlineText aliases={aliases} />
               </td>
@@ -186,17 +222,21 @@ function FollowedOrKindTable({
                 <td className="px-4 py-2.5 text-muted-foreground">{subtype || "—"}</td>
               )}
               <td className="px-4 py-2.5 text-muted-foreground">
-                {THS_NODE_TYPE_LABEL[row.node_type] || row.node_type}
+                {THS_NODE_TYPE_LABEL[row.node_type] || row.node_type || "—"}
               </td>
               <td className="max-w-[280px] truncate px-4 py-2.5 text-muted-foreground" title={row.tree_path}>
-                {row.tree_path}
+                {row.tree_path || "—"}
               </td>
               <td className="px-3 py-2.5 text-center">
-                <FollowBlockButton
-                  followed={followed}
-                  onToggle={() => onToggleFollow(row)}
-                  className="mx-auto"
-                />
+                {row.has_ths && row.id ? (
+                  <FollowBlockButton
+                    followed={followed}
+                    onToggle={() => onToggleFollow(row)}
+                    className="mx-auto"
+                  />
+                ) : (
+                  <span className="text-muted-foreground/40">—</span>
+                )}
               </td>
             </tr>
           );
@@ -227,13 +267,13 @@ function ThsBlockTreeItem({
   node: ThsTreeNode;
   depth: number;
   expanded: Set<string>;
-  rowById: Map<string, ThsBlockRow>;
+  rowById: Map<string, ManagedBlockRow>;
   selectedId: string | null;
   followedIds: Set<string>;
   aliasesByCanonical: Map<string, string[]>;
   onToggle: (id: string) => void;
-  onSelect: (row: ThsBlockRow) => void;
-  onToggleFollow: (row: ThsBlockRow) => void;
+  onSelect: (row: ManagedBlockRow) => void;
+  onToggleFollow: (row: ManagedBlockRow) => void;
 }) {
   const isBranch = node.node_type === "branch";
   const isOpen = isBranch && expanded.has(node.id);
@@ -332,12 +372,13 @@ function ThsBlockTreeItem({
 }
 
 export function ThsBlocks() {
-  const [snapshot, setSnapshot] = useState<ThsBlocksSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<BlocksManageSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingKind, setRefreshingKind] = useState<string | null>(null);
 
   const [kindFilter, setKindFilter] = useState<string>("conception");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
   const [nodeFilter, setNodeFilter] = useState<"all" | "leaf" | "branch">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
@@ -345,7 +386,7 @@ export function ThsBlocks() {
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
 
-  const [selected, setSelected] = useState<ThsBlockRow | null>(null);
+  const [selected, setSelected] = useState<ManagedBlockRow | null>(null);
   const [stocksDetail, setStocksDetail] = useState<ThsBlockStocksDetail | null>(null);
   const [stocksLoading, setStocksLoading] = useState(false);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
@@ -355,6 +396,8 @@ export function ThsBlocks() {
   const [aliasDraft, setAliasDraft] = useState("");
   const [aliasEditingKey, setAliasEditingKey] = useState<string | null>(null);
   const [aliasEditDraft, setAliasEditDraft] = useState("");
+
+  const thsSnap = snapshot?.ths ?? null;
 
   const followedIds = useMemo(
     () => new Set(followBlocks.map((b) => `${b.kind}|${b.id}`)),
@@ -369,10 +412,10 @@ export function ThsBlocks() {
   const loadSnapshot = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.thsBlocksSnapshot();
+      const data = await api.blocksManage();
       setSnapshot(data);
     } catch (e) {
-      notify.error(e instanceof ApiError ? e.message : "加载板块缓存失败");
+      notify.error(e instanceof ApiError ? e.message : "加载板块管理失败");
     } finally {
       setLoading(false);
     }
@@ -498,7 +541,11 @@ export function ThsBlocks() {
     await persistAliases(next);
   }, [selected, aliasEditingKey, aliasEditDraft, aliasEntries, persistAliases]);
 
-  const toggleFollow = useCallback(async (row: ThsBlockRow) => {
+  const toggleFollow = useCallback(async (row: ManagedBlockRow) => {
+    if (!row.has_ths || !row.id) {
+      notify.error("仅同花顺板块可关注");
+      return;
+    }
     const nextFollow = !isBlockFollowed(row.kind, row.id, followBlocks);
     try {
       const data = await api.toggleMessageFollowBlock({
@@ -517,16 +564,30 @@ export function ThsBlocks() {
   const refreshAll = async () => {
     setRefreshing(true);
     const failed: string[] = [];
-    let latest: ThsBlocksSnapshot | null = snapshot;
 
     for (const k of THS_BLOCK_KINDS) {
       setRefreshingKind(k.value);
       try {
-        latest = await api.thsBlocksRefreshKind(k.value);
-        setSnapshot(latest);
+        await api.thsBlocksRefreshKind(k.value);
       } catch (e) {
         const msg = e instanceof ApiError ? e.message : "刷新失败";
         failed.push(`${k.label}: ${msg}`);
+      }
+    }
+
+    setRefreshingKind("kpl");
+    let latest: BlocksManageSnapshot | null = null;
+    try {
+      latest = await api.blocksManageRefreshKpl();
+      setSnapshot(latest);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "开盘啦刷新失败";
+      failed.push(`开盘啦: ${msg}`);
+      try {
+        latest = await api.blocksManage();
+        setSnapshot(latest);
+      } catch {
+        /* ignore */
       }
     }
 
@@ -535,13 +596,13 @@ export function ThsBlocks() {
     setStocksDetail(null);
     setQuotes({});
 
-    const loaded = latest?.kinds ? Object.keys(latest.kinds).length : 0;
+    const loaded = latest?.ths?.kinds ? Object.keys(latest.ths.kinds).length : 0;
     if (latest?.linker_unavailable) {
       notify.error(latest.linker_message || "依赖于第三方工具，目前无法请求");
     } else if (failed.length) {
-      notify.error(`部分类型刷新失败（${loaded}/${THS_BLOCK_KINDS.length} 成功）：${failed.join("；")}`);
+      notify.error(`部分刷新失败（同花顺 ${loaded}/${THS_BLOCK_KINDS.length}）：${failed.join("；")}`);
     } else {
-      notify.success(`板块已刷新 · ${latest?.updated_at || ""}`);
+      notify.success(`板块已刷新 · 同花顺 ${latest?.ths?.updated_at || "—"} · 开盘啦 ${latest?.kpl?.fetched_date || "—"}`);
     }
     setRefreshing(false);
   };
@@ -550,10 +611,11 @@ export function ThsBlocks() {
     setRefreshing(true);
     setRefreshingKind(kind);
     try {
-      const data = await api.thsBlocksRefreshKind(kind);
+      await api.thsBlocksRefreshKind(kind);
+      const data = await api.blocksManage();
       setSnapshot(data);
       const label = thsBlockKindLabel(kind);
-      const err = (data.errors || []).find((e) => e.startsWith(`${kind}:`));
+      const err = (data.ths?.errors || data.errors || []).find((e) => e.startsWith(`${kind}:`));
       if (err) {
         notify.error(`${label}：${err.slice(kind.length + 2)}`);
       } else {
@@ -569,34 +631,39 @@ export function ThsBlocks() {
 
   const isFollowedView = kindFilter === FOLLOWED_KIND;
 
-  /** 关注视图：从各 kind 快照解析已关注行；普通视图：当前 kind 全部行 */
+  /** 关注视图：从融合行解析已关注；普通视图：当前 kind 融合行 */
   const allRows = useMemo(() => {
+    const matchSource = (row: ManagedBlockRow) => {
+      if (sourceFilter === "ths") return row.has_ths;
+      if (sourceFilter === "kpl") return row.has_kpl;
+      return true;
+    };
     if (!isFollowedView) {
-      return snapshot?.kinds?.[kindFilter]?.rows || [];
+      return (snapshot?.merged?.[kindFilter] || []).filter(matchSource);
     }
-    const out: ThsBlockRow[] = [];
+    const out: ManagedBlockRow[] = [];
     const seen = new Set<string>();
     for (const fb of followBlocks) {
       const key = `${fb.kind}|${fb.id}`;
       if (seen.has(key)) continue;
-      const row = snapshot?.kinds?.[fb.kind]?.rows?.find((r) => r.id === fb.id);
-      if (row) {
+      const row = (snapshot?.merged?.[fb.kind] || []).find((r) => r.id === fb.id);
+      if (row && matchSource(row)) {
         seen.add(key);
         out.push(row);
       }
     }
     return out;
-  }, [isFollowedView, kindFilter, snapshot, followBlocks]);
+  }, [isFollowedView, kindFilter, snapshot, followBlocks, sourceFilter]);
 
-  const kindEntry = isFollowedView ? null : snapshot?.kinds?.[kindFilter];
+  const kindEntry = isFollowedView ? null : thsSnap?.kinds?.[kindFilter];
   const showSubtypeCol = kindFilter === "custom";
 
   /** 关注视图：任一关注项所属 kind 有树即可树形浏览 */
   const followedTreeSections = useMemo(() => {
-    if (!isFollowedView || !snapshot?.kinds) return [];
-    const sections: { kind: string; label: string; tree: ThsTreeNode; rowById: Map<string, ThsBlockRow> }[] = [];
+    if (!isFollowedView || !thsSnap?.kinds || sourceFilter === "kpl") return [];
+    const sections: { kind: string; label: string; tree: ThsTreeNode; rowById: Map<string, ManagedBlockRow> }[] = [];
     for (const k of THS_BLOCK_KINDS) {
-      const entry = snapshot.kinds[k.value];
+      const entry = thsSnap.kinds[k.value];
       if (!entry?.tree || entry.tree_mode !== "tree") continue;
       const followedInKind = followBlocks.filter((b) => b.kind === k.value);
       if (!followedInKind.length) continue;
@@ -604,7 +671,8 @@ export function ThsBlocks() {
       const root = parseThsTree(entry.tree);
       if (!root) continue;
       const codeById = new Map<string, string>();
-      for (const row of entry.rows || []) {
+      const mergedRows = snapshot?.merged?.[k.value] || [];
+      for (const row of mergedRows) {
         if (row.code) codeById.set(row.id, row.code);
       }
       const pruned = filterThsTree(root, {
@@ -619,15 +687,15 @@ export function ThsBlocks() {
         kind: k.value,
         label: k.label,
         tree: pruned,
-        rowById: new Map((entry.rows || []).map((row) => [row.id, row])),
+        rowById: new Map(mergedRows.filter((r) => r.id).map((row) => [row.id, row])),
       });
     }
     return sections;
-  }, [isFollowedView, snapshot, followBlocks, q, nodeFilter, aliasesByCanonical]);
+  }, [isFollowedView, thsSnap, followBlocks, q, nodeFilter, aliasesByCanonical, sourceFilter, snapshot]);
 
-  const canShowTree = isFollowedView
+  const canShowTree = sourceFilter !== "kpl" && (isFollowedView
     ? followedTreeSections.length > 0
-    : kindEntry?.tree_mode === "tree" && !!kindEntry.tree;
+    : kindEntry?.tree_mode === "tree" && !!kindEntry.tree);
 
   useEffect(() => {
     if (canShowTree) {
@@ -669,7 +737,7 @@ export function ThsBlocks() {
   }, [kindFilter, canShowTree, kindEntry?.tree, isFollowedView, followedTreeSections]);
 
   const rowById = useMemo(
-    () => new Map(allRows.map((row) => [row.id, row])),
+    () => new Map(allRows.filter((row) => row.id).map((row) => [row.id, row])),
     [allRows],
   );
 
@@ -689,19 +757,20 @@ export function ThsBlocks() {
     });
   }, [isFollowedView, canShowTree, kindEntry?.tree, q, nodeFilter, allRows, aliasesByCanonical]);
 
-  const filteredRows = useMemo(() => {
+  const filteredRows = useMemo((): ManagedBlockRow[] => {
     const query = q.trim().toLowerCase();
-    let rows = allRows.filter((row) => {
+    let rows: ManagedBlockRow[] = allRows.filter((row) => {
       if (nodeFilter === "leaf" && row.node_type === "branch") return false;
       if (nodeFilter === "branch" && row.node_type !== "branch") return false;
       if (!query) return true;
       const subtype = thsCustomSubtypeLabel(row) || "";
       const aliases = aliasesForBlockName(row.name, aliasesByCanonical);
       return (
-        row.id.toLowerCase().includes(query)
+        (row.id || "").toLowerCase().includes(query)
         || (row.code || "").toLowerCase().includes(query)
-        || row.name.toLowerCase().includes(query)
-        || row.tree_path.toLowerCase().includes(query)
+        || (row.kpl_code || "").toLowerCase().includes(query)
+        || (row.name || "").toLowerCase().includes(query)
+        || (row.tree_path || "").toLowerCase().includes(query)
         || subtype.toLowerCase().includes(query)
         || (row.query_key || "").toLowerCase().includes(query)
         || aliases.some((a) => a.toLowerCase().includes(query))
@@ -719,6 +788,9 @@ export function ThsBlocks() {
       } else if (sort === "id") {
         av = thsBlockPrimaryCode(a);
         bv = thsBlockPrimaryCode(b);
+      } else if (sort === "kpl_code") {
+        av = a.kpl_code || "";
+        bv = b.kpl_code || "";
       } else {
         av = String(a[sort] ?? "");
         bv = String(b[sort] ?? "");
@@ -733,7 +805,7 @@ export function ThsBlocks() {
   const followedFlatGroups = useMemo(() => {
     if (!isFollowedView) return [];
     const treeKinds = new Set(followedTreeSections.map((s) => s.kind));
-    const groups: { kind: string; label: string; rows: ThsBlockRow[] }[] = [];
+    const groups: { kind: string; label: string; rows: ManagedBlockRow[] }[] = [];
     for (const k of THS_BLOCK_KINDS) {
       if (treeKinds.has(k.value)) continue;
       const rows = filteredRows.filter((r) => r.kind === k.value);
@@ -777,11 +849,15 @@ export function ThsBlocks() {
 
   const collapseAllBranches = () => setExpanded(new Set());
 
-  const openDetail = async (row: ThsBlockRow) => {
+  const openDetail = async (row: ManagedBlockRow) => {
     setSelected(row);
     setStocksDetail(null);
     setQuotes({});
     if (row.node_type === "branch") return;
+    if (!row.has_ths || !row.id) {
+      setStocksLoading(false);
+      return;
+    }
     setStocksLoading(true);
     try {
       const detail = await api.thsBlockStocks(row.kind, row.id);
@@ -805,7 +881,9 @@ export function ThsBlocks() {
     }
   };
 
-  const emptyCache = !snapshot?.updated_at;
+  const emptyThs = !thsSnap?.updated_at;
+  const emptyKpl = !snapshot?.kpl?.available;
+  const emptyCache = emptyThs && emptyKpl;
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const selectedSubtype = selected ? thsCustomSubtypeLabel(selected) : null;
@@ -821,10 +899,10 @@ export function ThsBlocks() {
           <div>
             <div className="mb-1 flex items-center gap-2">
               <Boxes className="h-5 w-5 text-primary" />
-              <h1 className="text-xl font-bold text-foreground">同花顺板块</h1>
+              <h1 className="text-xl font-bold text-foreground">板块管理</h1>
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              概念 / 行业 / 地域层级树，以及自定义、每日动态板块；数据经 ths-linker 读取，成分股来自本地配置。
+              同花顺与开盘啦按名称融合；开盘啦目录每日自动最多拉取一次，手动「刷新板块」可强制更新。
             </p>
           </div>
           <button
@@ -834,7 +912,9 @@ export function ThsBlocks() {
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
           >
             {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {refreshingKind ? `刷新 ${thsBlockKindLabel(refreshingKind)}…` : "刷新板块"}
+            {refreshingKind
+              ? `刷新 ${refreshingKind === "kpl" ? "开盘啦" : thsBlockKindLabel(refreshingKind)}…`
+              : "刷新板块"}
           </button>
         </div>
 
@@ -846,9 +926,9 @@ export function ThsBlocks() {
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {THS_BLOCK_KINDS.map((k) => {
-            const loaded = snapshot?.kinds?.[k.value] != null;
-            const hasErr = kindHasError(snapshot?.errors, k.value);
-            const count = snapshot?.kinds?.[k.value]?.count;
+            const loaded = thsSnap?.kinds?.[k.value] != null || (snapshot?.merged?.[k.value]?.length ?? 0) > 0;
+            const hasErr = kindHasError(thsSnap?.errors || snapshot?.errors, k.value);
+            const count = snapshot?.merged?.[k.value]?.length ?? thsSnap?.kinds?.[k.value]?.count;
             return (
               <button
                 key={k.value}
@@ -911,10 +991,16 @@ export function ThsBlocks() {
           {linkerDown ? (
             <span className="text-amber-700 dark:text-amber-300">{linkerMessage}</span>
           ) : emptyCache ? (
-            <span className="text-amber-700 dark:text-amber-300">尚未刷新 — 请点击「刷新板块」从 ths-linker 拉取</span>
+            <span className="text-amber-700 dark:text-amber-300">尚未加载 — 请点击「刷新板块」</span>
           ) : (
             <>
-              <span>缓存 <strong className="text-foreground">{snapshot?.updated_at}</strong></span>
+              <span>
+                同花顺 <strong className="text-foreground">{thsSnap?.updated_at || "未加载"}</strong>
+              </span>
+              <span>
+                开盘啦 <strong className="text-foreground">{snapshot?.kpl?.fetched_date || "未加载"}</strong>
+                {snapshot?.kpl?.from_cache ? "（当日缓存）" : snapshot?.kpl?.available ? "（刚拉取）" : ""}
+              </span>
               {snapshot?.ths_dir && (
                 <span className="max-w-xs truncate" title={snapshot.ths_dir}>{snapshot.ths_dir}</span>
               )}
@@ -942,7 +1028,7 @@ export function ThsBlocks() {
               onClick={() => void refreshOneKind(kindFilter)}
               className="text-primary hover:underline disabled:opacity-50"
             >
-              仅刷新当前类型
+              仅刷新当前同花顺类型
             </button>
           )}
         </div>
@@ -957,11 +1043,24 @@ export function ThsBlocks() {
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
                     className={inputCls}
-                    placeholder="搜索 ID、名称、别名、树路径…"
+                    placeholder="搜索代码、名称、别名、树路径…"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                   />
                 </div>
+                <select
+                  className={selectCls}
+                  value={sourceFilter}
+                  onChange={(e) => {
+                    setSourceFilter(e.target.value as SourceFilter);
+                    setSelected(null);
+                    setStocksDetail(null);
+                  }}
+                >
+                  <option value="all">全部来源</option>
+                  <option value="ths">仅同花顺</option>
+                  <option value="kpl">仅开盘啦</option>
+                </select>
                 <select
                   className={selectCls}
                   value={nodeFilter}
@@ -1003,7 +1102,8 @@ export function ThsBlocks() {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   共 <strong className="text-foreground">{visibleCount}</strong> 条
-                  {isFollowedView ? " · 关注" : kindEntry ? ` · ${kindEntry.kind_label}` : ""}
+                  {isFollowedView ? " · 关注" : kindEntry ? ` · ${kindEntry.kind_label}` : ` · ${thsBlockKindLabel(kindFilter)}`}
+                  {sourceFilter === "ths" ? " · 同花顺" : sourceFilter === "kpl" ? " · 开盘啦" : ""}
                   {viewMode === "tree" && canShowTree ? " · 树形浏览" : ""}
                 </p>
                 {viewMode === "tree" && canShowTree && (
@@ -1025,13 +1125,13 @@ export function ThsBlocks() {
                 <div className="flex items-center justify-center gap-2 p-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" /> 加载中…
                 </div>
-              ) : linkerDown ? (
+              ) : linkerDown && emptyKpl && emptyThs ? (
                 <div className="p-12 text-center text-sm text-amber-700 dark:text-amber-300">
                   {linkerMessage}
                 </div>
               ) : emptyCache ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
-                  点击右上角「刷新板块」加载同花顺板块数据
+                  点击右上角「刷新板块」加载同花顺与开盘啦目录
                 </div>
               ) : isFollowedView ? (
                 !followBlocks.length ? (
@@ -1138,12 +1238,14 @@ export function ThsBlocks() {
                     onToggleFollow={(row) => void toggleFollow(row)}
                   />
                 )
-              ) : !kindEntry ? (
+              ) : !kindEntry && !allRows.length ? (
                 <div className="p-12 text-center text-sm text-muted-foreground">
                   该类型尚未加载
-                  {kindHasError(snapshot?.errors, kindFilter) && (
+                  {kindHasError(thsSnap?.errors || snapshot?.errors, kindFilter) && (
                     <p className="mt-2 text-amber-700 dark:text-amber-300">
-                      {(snapshot?.errors || []).find((e) => e.startsWith(`${kindFilter}:`))?.slice(kindFilter.length + 2)}
+                      {(thsSnap?.errors || snapshot?.errors || [])
+                        .find((e) => e.startsWith(`${kindFilter}:`))
+                        ?.slice(kindFilter.length + 2)}
                     </p>
                   )}
                 </div>
@@ -1197,22 +1299,27 @@ export function ThsBlocks() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-semibold text-foreground">{selected.name || selected.id}</h2>
-                      <span className={cn(
-                        "rounded-md px-2 py-0.5 text-[11px] font-bold",
-                        selected.node_type === "branch"
-                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                          : "bg-primary/15 text-primary",
-                      )}>
-                        {THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}
-                      </span>
-                      <FollowBlockButton
-                        followed={followedIds.has(`${selected.kind}|${selected.id}`)}
-                        onToggle={() => void toggleFollow(selected)}
-                        size="md"
-                      />
+                      <h2 className="text-lg font-semibold text-foreground">{selected.name || selected.id || selected.kpl_code}</h2>
+                      <SourceBadges row={selected} />
+                      {selected.node_type && (
+                        <span className={cn(
+                          "rounded-md px-2 py-0.5 text-[11px] font-bold",
+                          selected.node_type === "branch"
+                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            : "bg-primary/15 text-primary",
+                        )}>
+                          {THS_NODE_TYPE_LABEL[selected.node_type] || selected.node_type}
+                        </span>
+                      )}
+                      {selected.has_ths && selected.id && (
+                        <FollowBlockButton
+                          followed={followedIds.has(`${selected.kind}|${selected.id}`)}
+                          onToggle={() => void toggleFollow(selected)}
+                          size="md"
+                        />
+                      )}
                     </div>
-                    {(() => {
+                    {selected.has_ths && (() => {
                       const sub = thsBlockCodeSubtitle(selected);
                       return (
                         <p className="mt-1 font-mono text-xs">
@@ -1223,6 +1330,12 @@ export function ThsBlocks() {
                         </p>
                       );
                     })()}
+                    {selected.kpl_code && (
+                      <p className="mt-1 font-mono text-xs text-muted-foreground">
+                        开盘啦 <span className="font-medium text-foreground">{selected.kpl_code}</span>
+                        {selected.kpl_kind_label ? ` · ${selected.kpl_kind_label}` : ""}
+                      </p>
+                    )}
                     {selected.tree_path && (
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selected.tree_path}</p>
                     )}
@@ -1231,15 +1344,37 @@ export function ThsBlocks() {
                   <div className="rounded-xl border border-border/60 bg-muted/15 p-4 text-sm">
                     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
                       <dt className="text-muted-foreground">类型</dt>
-                      <dd className="text-foreground">{thsBlockKindLabel(selected.kind)}</dd>
+                      <dd className="text-foreground">{thsBlockKindLabel(selected.kind) || selected.kpl_kind_label || "—"}</dd>
                       {selected.code && (
                         <>
-                          <dt className="text-muted-foreground">行情代码</dt>
+                          <dt className="text-muted-foreground">同花顺行情码</dt>
                           <dd className="font-mono text-foreground">{selected.code}</dd>
                         </>
                       )}
-                      <dt className="text-muted-foreground">本地 ID</dt>
-                      <dd className="font-mono text-muted-foreground">{selected.id}</dd>
+                      {selected.id && (
+                        <>
+                          <dt className="text-muted-foreground">同花顺本地 ID</dt>
+                          <dd className="font-mono text-muted-foreground">{selected.id}</dd>
+                        </>
+                      )}
+                      {selected.kpl_code && (
+                        <>
+                          <dt className="text-muted-foreground">开盘啦 PlateID</dt>
+                          <dd className="font-mono text-foreground">{selected.kpl_code}</dd>
+                        </>
+                      )}
+                      {selected.kpl_power != null && (
+                        <>
+                          <dt className="text-muted-foreground">开盘啦人气</dt>
+                          <dd className="text-foreground">{selected.kpl_power}</dd>
+                        </>
+                      )}
+                      {selected.kpl_pct != null && (
+                        <>
+                          <dt className="text-muted-foreground">开盘啦涨幅</dt>
+                          <dd className="text-foreground">{selected.kpl_pct}%</dd>
+                        </>
+                      )}
                       {selectedSubtype && (
                         <>
                           <dt className="text-muted-foreground">子类型</dt>
@@ -1404,6 +1539,10 @@ export function ThsBlocks() {
                   {selected.node_type === "branch" ? (
                     <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
                       分组节点不含成分股，请展开并选择叶子板块。
+                    </p>
+                  ) : !selected.has_ths || !selected.id ? (
+                    <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
+                      仅开盘啦映射的板块暂无同花顺成分股；可在短线盘面用人气/点查查看。
                     </p>
                   ) : (
                     <DetailSection label="成分股">

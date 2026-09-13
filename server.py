@@ -32,8 +32,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    focus_blocks, live_emotion, live_zt_effect, mood_block, overseas, preflight, reflection, review_store,
-    screenshot_parse, risk_stance, short_board, trade_calendar, trade_budget, trade_store,
+    block_manage, focus_blocks, kpl_blocks, live_emotion, live_zt_effect, mood_block, overseas,
+    preflight, reflection, review_store, screenshot_parse, risk_stance, short_board,
+    trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -75,6 +76,11 @@ def _startup_aktools():
         from ths_block.processor import schedule_ensure_kinds_cached
 
         schedule_ensure_kinds_cached()
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        threading.Thread(target=lambda: kpl_blocks.ensure(force=False), daemon=True).start()
     except Exception:  # noqa: BLE001
         pass
 
@@ -456,6 +462,36 @@ def api_market_focus_blocks():
     指标以开盘啦 GetPlate_Info_QJ 点查为主；昨日人气榜定稿可落盘复用。
     """
     return focus_blocks.snapshot()
+
+
+@app.get("/api/blocks-manage")
+def api_blocks_manage():
+    """板块管理：同花顺缓存 + 开盘啦目录（自动日更最多一次）+ 按名融合行。"""
+    return block_manage.snapshot(ensure_kpl=True, force_kpl=False)
+
+
+@app.post("/api/blocks-manage/refresh")
+def api_blocks_manage_refresh(body: dict | None = Body(None)):
+    """手动刷新板块管理。
+
+    body.refresh_ths=true 时顺带刷同花顺全量；开盘啦始终强制重拉（忽略日限）。
+    """
+    payload = body or {}
+    ths_dir = str(payload.get("ths_dir") or "").strip() or None
+    refresh_ths = bool(payload.get("refresh_ths", True))
+    try:
+        return block_manage.refresh(ths_dir=ths_dir, refresh_ths=refresh_ths)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"板块管理刷新失败：{e}"}, status_code=502)
+
+
+@app.post("/api/blocks-manage/refresh/kpl")
+def api_blocks_manage_refresh_kpl():
+    """仅强制刷新开盘啦板块目录。"""
+    try:
+        return block_manage.snapshot(ensure_kpl=True, force_kpl=True)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"开盘啦目录刷新失败：{e}"}, status_code=502)
 
 
 @app.get("/api/market/overseas")

@@ -43,7 +43,7 @@ const REVIEW_NAV: NavItem[] = [
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/messages", icon: Newspaper, label: "消息分析" },
-  { to: "/blocks", icon: Boxes, label: "同花顺板块" },
+  { to: "/blocks", icon: Boxes, label: "板块管理" },
   { to: "/agent/review", icon: Swords, label: "复盘看板", agent: true },
   { to: "/first-board", icon: Flame, label: "涨停分析" },
   { to: "/heat", icon: CalendarRange, label: "多日情绪" },

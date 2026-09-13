@@ -951,6 +951,12 @@ export const api = {
   thsBlocksResolve: (names: string[]) =>
     request<BlockResolveResult>("/ths-blocks/resolve", "POST", { names }),
   thsBlocksIndexInfo: () => get<BlockIndexInfo>("/ths-blocks/index-info"),
+  /** 板块管理：同花顺 + 开盘啦融合（开盘啦自动日更最多一次） */
+  blocksManage: () => get<BlocksManageSnapshot>("/blocks-manage"),
+  blocksManageRefresh: (opts: { ths_dir?: string; refresh_ths?: boolean } = {}) =>
+    request<BlocksManageSnapshot>("/blocks-manage/refresh", "POST", opts),
+  blocksManageRefreshKpl: () =>
+    request<BlocksManageSnapshot>("/blocks-manage/refresh/kpl", "POST"),
   stocksResolve: (queries: StockResolveQuery[]) =>
     request<StockResolveResult>("/stocks/resolve", "POST", { queries }),
   stocksIndexInfo: () => get<StockIndexInfo>("/stocks/index-info"),
@@ -1054,6 +1060,41 @@ export interface ThsBlockRow {
   query_key?: string;
   hex_id?: string;
   stock_count?: number;
+}
+
+/** 板块管理融合行：同花顺 + 开盘啦字段并集，缺失留空 */
+export interface ManagedBlockRow extends ThsBlockRow {
+  sources: Array<"ths" | "kpl">;
+  has_ths: boolean;
+  has_kpl: boolean;
+  kpl_code?: string;
+  kpl_kind?: string;
+  kpl_kind_label?: string;
+  kpl_power?: number | null;
+  kpl_pct?: number | null;
+  kpl_speed?: number | null;
+  kpl_m_net?: number | null;
+  kpl_sort?: number | null;
+}
+
+export interface KplBlocksMeta {
+  updated_at: string | null;
+  fetched_date: string | null;
+  from_cache: boolean;
+  available: boolean;
+  errors?: string[];
+  kinds: Record<string, { kind?: string; kind_label?: string; count?: number; api_count?: number | null }>;
+}
+
+export interface BlocksManageSnapshot {
+  updated_at: string | null;
+  ths: ThsBlocksSnapshot;
+  kpl: KplBlocksMeta;
+  merged: Record<string, ManagedBlockRow[]>;
+  linker_unavailable?: boolean;
+  linker_message?: string;
+  ths_dir?: string | null;
+  errors?: string[];
 }
 
 export interface ThsTreeNode {

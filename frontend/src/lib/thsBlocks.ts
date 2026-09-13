@@ -214,7 +214,7 @@ export function parseThsTree(raw: Record<string, unknown> | undefined): ThsTreeN
 }
 
 /** 按 tree_order 保持 DFS 顺序筛选表格行 */
-export function sortRowsByTreeOrder(rows: ThsBlockRow[]): ThsBlockRow[] {
+export function sortRowsByTreeOrder<T extends ThsBlockRow>(rows: T[]): T[] {
   return [...rows].sort((a, b) => {
     const ao = a.tree_order ?? Number.MAX_SAFE_INTEGER;
     const bo = b.tree_order ?? Number.MAX_SAFE_INTEGER;

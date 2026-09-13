@@ -1050,7 +1050,7 @@ export function ZtKeywordsSettings() {
           <strong className="font-semibold text-foreground">目标：</strong>
           将其他来源的别名板块名称，统一归类到同花顺板块命名，方便统计与匹配使用。
           左侧填原始写法，右侧填同花顺标准板块名；只走显式映射，不做模糊或语义归类。
-          配置存于本机后端数据目录，题材事件树、多日情绪矩阵、同花顺板块页等共用同一套表。
+          配置存于本机后端数据目录，题材事件树、多日情绪矩阵、板块管理页等共用同一套表。
         </p>
 
         {aliasLoading ? (
