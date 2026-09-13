@@ -43,6 +43,77 @@ class TestBlockDialect:
 
 
 @pytest.mark.unit
+class TestResolveFollowViaManage:
+    """收藏同花顺 id ≠ 开盘啦 code，但融合行已有 kpl_code。"""
+
+    def test_resolve_by_ths_id_from_merged(self, monkeypatch):
+        from duanxian import block_manage as bm
+        from duanxian import kpl_blocks
+
+        manage_snap = {
+            "merged": {
+                "ths:conception": [{
+                    "name": "AI手机",
+                    "origin": "ths",
+                    "has_ths": True,
+                    "has_kpl": True,
+                    "kind": "conception",
+                    "ths_kind": "conception",
+                    "id": "885901",
+                    "code": "885901",
+                    "kpl_code": "801999",
+                    "kpl_kind": "hot",
+                    "sources": ["ths", "kpl"],
+                }],
+            },
+        }
+        monkeypatch.setattr(kpl_blocks, "build_name_index", lambda snap=None: __import__(
+            "duanxian.block_dialect", fromlist=["build_kpl_index"]
+        ).build_kpl_index())
+
+        hit = bm.resolve_follow_to_kpl(
+            {"kind": "conception", "id": "885901", "name": "AI手机"},
+            manage_snap=manage_snap,
+        )
+        assert hit["status"] == "matched"
+        assert hit["code"] == "801999"
+        assert hit["via"].startswith("block_manage")
+        assert hit["source_id"] == "885901"
+
+    def test_resolve_by_name_when_id_missing_on_follow(self, monkeypatch):
+        from duanxian import block_manage as bm
+        from duanxian import kpl_blocks
+
+        manage_snap = {
+            "merged": {
+                "ths:conception": [{
+                    "name": "AI手机",
+                    "origin": "ths",
+                    "has_ths": True,
+                    "has_kpl": True,
+                    "kind": "conception",
+                    "ths_kind": "conception",
+                    "id": "885901",
+                    "kpl_code": "801999",
+                    "kpl_kind": "concept",
+                    "sources": ["ths", "kpl"],
+                }],
+            },
+        }
+        monkeypatch.setattr(kpl_blocks, "build_name_index", lambda snap=None: __import__(
+            "duanxian.block_dialect", fromlist=["build_kpl_index"]
+        ).build_kpl_index())
+
+        hit = bm.resolve_follow_to_kpl(
+            {"kind": "conception", "id": "other-id", "name": "AI手机"},
+            manage_snap=manage_snap,
+        )
+        assert hit["status"] == "matched"
+        assert hit["code"] == "801999"
+        assert hit["via"] == "block_manage:name"
+
+
+@pytest.mark.unit
 class TestMoodBlockPlateParse:
     def test_parse_dated_plate_info(self):
         from duanxian import mood_block as mb
@@ -109,7 +180,16 @@ class TestFocusBlocks:
             {"kind": "theme", "id": "x1", "name": "AI应用"},
             {"kind": "theme", "id": "x2", "name": "完全不存在"},
         ]
-        items = fb._build_tracked(y_blocks=y_blocks, follows=follows, index=index)
+
+        def resolve(fb):
+            return bd.resolve_ths_block(fb, index)
+
+        items = fb._build_tracked(
+            y_blocks=y_blocks,
+            follows=follows,
+            index=index,
+            resolve_follow=resolve,
+        )
         by_name = {it["name"]: it for it in items}
         assert "通信" in by_name
         assert "hot" in by_name["通信"]["tags"]
@@ -120,10 +200,45 @@ class TestFocusBlocks:
         assert len(unmatched) == 1
         assert unmatched[0]["name"] == "完全不存在"
 
+    def test_build_tracked_follow_via_manage_id(self):
+        """同花顺 id 与开盘啦 code 不同，经融合解析后应匹配。"""
+        from duanxian import block_dialect as bd
+        from duanxian import focus_blocks as fb
+
+        index = bd.build_kpl_index()  # 人气薄榜为空
+        follows = [
+            {"kind": "conception", "id": "885901", "name": "AI手机"},
+        ]
+
+        def resolve(fb):
+            assert fb["id"] == "885901"
+            return {
+                "status": "matched",
+                "lang": "kpl",
+                "code": "801999",
+                "name": "AI手机",
+                "mapped": "AI手机",
+                "source_kind": "conception",
+                "source_id": "885901",
+                "via": "block_manage:kind_id",
+            }
+
+        items = fb._build_tracked(
+            y_blocks=[],
+            follows=follows,
+            index=index,
+            resolve_follow=resolve,
+        )
+        assert len(items) == 1
+        assert items[0]["map_status"] == "matched"
+        assert items[0]["code"] == "801999"
+        assert items[0]["tags"] == ["follow"]
+
     def test_snapshot_uses_archive_and_plate(self, tmp_path, monkeypatch):
         from duanxian import focus_blocks as fb
         from duanxian import mood_block as mb
         from duanxian import message_follow_blocks as mfb
+        from duanxian import block_manage as bm
 
         monkeypatch.setattr(mb, "_CACHE_DIR", str(tmp_path))
         mb._cache.clear()
@@ -138,8 +253,29 @@ class TestFocusBlocks:
             lambda: False,
         )
         monkeypatch.setattr(mfb, "load_blocks", lambda: [
-            {"kind": "theme", "id": "1", "name": "通信"},
+            {"kind": "conception", "id": "D574", "name": "通信"},
         ])
+        monkeypatch.setattr(
+            bm,
+            "snapshot",
+            lambda **_k: {
+                "merged": {
+                    "ths:conception": [{
+                        "name": "通信",
+                        "origin": "ths",
+                        "has_ths": True,
+                        "has_kpl": True,
+                        "kind": "conception",
+                        "ths_kind": "conception",
+                        "id": "D574",
+                        "code": "885001",
+                        "kpl_code": "801660",
+                        "kpl_kind": "hot",
+                        "sources": ["ths", "kpl"],
+                    }],
+                },
+            },
+        )
 
         y_blocks = [
             {"code": "801660", "name": "通信", "power": 6609, "pct": -0.8,

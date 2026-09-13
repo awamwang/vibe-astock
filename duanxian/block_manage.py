@@ -332,3 +332,106 @@ def refresh(*, ths_dir: str | None = None, refresh_ths: bool = True) -> dict[str
         except Exception:  # noqa: BLE001
             pass
     return snapshot(ensure_kpl=True, force_kpl=True)
+
+
+def iter_merged_rows(manage_snap: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """展平融合页签中的全部行。"""
+    snap = manage_snap if manage_snap is not None else snapshot(ensure_kpl=False, force_kpl=False)
+    out: list[dict[str, Any]] = []
+    for rows in (snap.get("merged") or {}).values():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict):
+                out.append(row)
+    return out
+
+
+def resolve_follow_to_kpl(
+    follow: dict[str, Any],
+    *,
+    manage_snap: dict[str, Any] | None = None,
+    fallback_index: dialect.KplNameIndex | None = None,
+) -> dict[str, Any]:
+    """收藏板块（同花顺 kind+id+name）→ 开盘啦 PlateID。
+
+    优先级：
+      1. 板块管理融合行：``(kind, id)`` / ``id`` / 归一名，且已有 ``kpl_code``
+      2. 开盘啦全目录名称索引（``kpl_blocks``）
+      3. 可选人气薄索引 / 已是 ``80xxxx`` 的直接点查
+    """
+    kind = str(follow.get("kind") or "").strip()
+    fid = str(follow.get("id") or "").strip()
+    name = str(follow.get("name") or "").strip()
+    mapped = dialect.canonicalize_name(name)
+
+    def _hit(row: dict[str, Any], *, via: str) -> dict[str, Any]:
+        code = str(row.get("kpl_code") or row.get("code") or "").strip()
+        return {
+            "status": "matched",
+            "lang": dialect.LANG_KPL,
+            "code": code,
+            "name": str(row.get("name") or name or code),
+            "mapped": mapped or dialect.norm_name(str(row.get("name") or "")),
+            "source_kind": kind,
+            "source_id": fid,
+            "via": via,
+        }
+
+    snap = manage_snap
+    if snap is None:
+        try:
+            snap = snapshot(ensure_kpl=True, force_kpl=False)
+        except Exception:  # noqa: BLE001
+            snap = None
+
+    if snap:
+        by_kind_id: dict[tuple[str, str], dict[str, Any]] = {}
+        by_id: dict[str, dict[str, Any]] = {}
+        by_name: dict[str, dict[str, Any]] = {}
+        for row in iter_merged_rows(snap):
+            kpl = str(row.get("kpl_code") or "").strip()
+            if not kpl:
+                continue
+            rid = str(row.get("id") or "").strip()
+            rkind = str(row.get("ths_kind") or "").strip() or str(row.get("kind") or "").strip()
+            if rid:
+                if rkind:
+                    by_kind_id[(rkind, rid)] = row
+                # 同花顺原生行优先保留
+                if rid not in by_id or row.get("origin") == "ths":
+                    by_id[rid] = row
+            nkey = dialect.canonicalize_name(str(row.get("name") or ""))
+            if not nkey:
+                continue
+            prev = by_name.get(nkey)
+            # 点查优先人气 PlateID
+            if prev is None or str(row.get("kpl_kind") or "") == "hot":
+                by_name[nkey] = row
+
+        if kind and fid and (kind, fid) in by_kind_id:
+            return _hit(by_kind_id[(kind, fid)], via="block_manage:kind_id")
+        if fid and fid in by_id:
+            return _hit(by_id[fid], via="block_manage:id")
+        if mapped and mapped in by_name:
+            return _hit(by_name[mapped], via="block_manage:name")
+
+    # 开盘啦全目录
+    try:
+        kpl_idx = kpl_blocks.build_name_index()
+    except Exception:  # noqa: BLE001
+        kpl_idx = dialect.build_kpl_index()
+    if fallback_index is not None:
+        # 薄索引补全未覆盖名称；不覆盖全目录已有项
+        for code, row in fallback_index.by_code.items():
+            if code not in kpl_idx.by_code:
+                kpl_idx.add(code, str(row.get("name") or ""), **{
+                    k: v for k, v in row.items() if k not in ("code", "name")
+                })
+
+    hit = dialect.resolve_to_kpl(name=name, code=fid, kind=kind, index=kpl_idx)
+    if hit.get("status") == "matched":
+        hit = dict(hit)
+        hit["via"] = hit.get("via") or "kpl_catalog"
+        return hit
+    return hit

@@ -2,7 +2,7 @@
 
 跟踪集合：
   · 昨日人气定稿榜中人气 > 5000 的板块（标签「人气」）
-  · 消息关注板块配置（标签「收藏」）；经 ``block_dialect`` 映射到开盘啦 PlateID
+  · 消息关注板块配置（标签「收藏」）；经板块管理融合 / 开盘啦目录映射到 PlateID
 
 指标：优先 ``GetPlate_Info_QJ`` 指定板块点查；昨日榜内已有字段则复用，避免重复请求。
 昨日人气榜只拉一次定稿（``mood_block.ranking_for_date``，可落盘）。
@@ -13,9 +13,10 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Callable
 
 from . import block_dialect as dialect
+from . import block_manage
 from . import message_follow_blocks as mfb
 from . import mood_block as mb
 from . import trade_calendar
@@ -111,6 +112,7 @@ def _build_tracked(
     y_blocks: list[dict],
     follows: list[dict],
     index: dialect.KplNameIndex,
+    resolve_follow: Callable[[dict], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """合并人气热点与收藏，产出待跟踪列表（含映射状态）。"""
     by_code: dict[str, dict[str, Any]] = {}
@@ -131,9 +133,14 @@ def _build_tracked(
             "y_rank": row,
         }
 
+    def _default_resolve(fb: dict) -> dict[str, Any]:
+        return block_manage.resolve_follow_to_kpl(fb, fallback_index=index)
+
+    resolve = resolve_follow or _default_resolve
+
     unmatched_follows: list[dict[str, Any]] = []
     for fb in follows:
-        hit = dialect.resolve_ths_block(fb, index)
+        hit = resolve(fb)
         if hit.get("status") != "matched" or not hit.get("code"):
             unmatched_follows.append({
                 "code": "",
@@ -223,8 +230,26 @@ def snapshot() -> dict:
         index = dialect.build_kpl_index(y_blocks)
         index.extend(t_rows)
 
+        manage_snap = None
+        try:
+            manage_snap = block_manage.snapshot(ensure_kpl=True, force_kpl=False)
+        except Exception:  # noqa: BLE001
+            manage_snap = None
+
+        def _resolve(fb: dict) -> dict[str, Any]:
+            return block_manage.resolve_follow_to_kpl(
+                fb,
+                manage_snap=manage_snap,
+                fallback_index=index,
+            )
+
         follows = mfb.load_blocks()
-        tracked = _build_tracked(y_blocks=y_blocks, follows=follows, index=index)
+        tracked = _build_tracked(
+            y_blocks=y_blocks,
+            follows=follows,
+            index=index,
+            resolve_follow=_resolve,
+        )
 
         # 喂未映射名称进同花顺待匹配（与 mood_block 一致）
         try:
