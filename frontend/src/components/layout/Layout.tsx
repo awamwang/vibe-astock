@@ -26,7 +26,7 @@ function XLogo({ className }: { className?: string }) {
   );
 }
 
-const APP_VERSION = "v0.1.3";
+const APP_VERSION = "v0.2.0";
 const REPO_URL = "https://github.com/awamwang/vibe-astock";
 // 作者联系方式只留 X。
 const X_URL = "https://x.com/linsizhen";

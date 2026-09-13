@@ -34,7 +34,7 @@ import ths_block as ths_block_layer
 import stock_universe
 import stock_processor
 
-app = FastAPI(title="Vibe-Research API", version="0.1.3")
+app = FastAPI(title="Vibe-Research API", version="0.2.0")
 
 stock_universe.startup_load()
 
@@ -89,7 +89,7 @@ def _validate(code: str) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "vibe-research-api", "version": "0.1.3"}
+    return {"ok": True, "service": "vibe-research-api", "version": "0.2.0"}
 
 
 class LLMConfig(BaseModel):

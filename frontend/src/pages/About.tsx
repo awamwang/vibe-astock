@@ -5,7 +5,7 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 
-const APP_VERSION = "v0.1.3";
+const APP_VERSION = "v0.2.0";
 const REPO_URL = "https://github.com/awamwang/vibe-astock";
 const ISSUES_URL = `${REPO_URL}/issues`;
 const NEW_ISSUE_URL = `${REPO_URL}/issues/new`;

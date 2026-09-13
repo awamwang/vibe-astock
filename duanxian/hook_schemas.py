@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 SCHEMA_BASE = "https://vibe-astock.dev/schemas/hook"
-ENGINE_VERSION = "0.1.4"
+ENGINE_VERSION = "0.2.0"
 
 ENVELOPE = f"{SCHEMA_BASE}/envelope/1.0.0"
 METRICS_SNAPSHOT = f"{SCHEMA_BASE}/metrics-snapshot/1.0.0"
