@@ -360,3 +360,139 @@ def test_merge_exact_name_and_alias(monkeypatch: pytest.MonkeyPatch):
     assert semi["kpl_code"] == "881121"
     assert semi["kpl_name"] == "半导体"
     assert not any(r.get("origin") == "kpl" and r.get("name") == "半导体" for r in industry)
+
+
+def test_custom_matches_all_kpl_kinds(monkeypatch: pytest.MonkeyPatch):
+    """自定义同花顺板块可与全部开盘啦类型同名匹配；不并入开盘啦独有行。"""
+    monkeypatch.setattr(
+        "duanxian.theme_normalize.load_aliases",
+        lambda: {"酿酒": "白酒"},
+    )
+    monkeypatch.setattr(
+        "duanxian.theme_normalize.canonicalize_tag",
+        lambda tag, aliases=None: {"酿酒": "白酒"}.get(
+            str(tag or "").replace(" ", "").strip(),
+            str(tag or "").replace(" ", "").strip(),
+        ),
+    )
+    ths_snap = {
+        "updated_at": "t",
+        "kinds": {
+            "conception": {"rows": []},
+            "industry": {"rows": []},
+            "region": {"rows": []},
+            "custom": {
+                "rows": [
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "278",
+                        "name": "AI应用",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                    },
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "279",
+                        "name": "白酒",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                    },
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "280",
+                        "name": "广东",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                    },
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "281",
+                        "name": "人气龙头",
+                        "node_type": "flat",
+                        "custom_type": "dynamic",
+                        "dynamic_kind": "watch",
+                    },
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "282",
+                        "name": "仅同花顺",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                    },
+                ],
+            },
+            "daily": {"rows": []},
+        },
+    }
+    kpl_snap = {
+        "kinds": {
+            "concept": {
+                "rows": [{
+                    "kind": "concept",
+                    "kind_label": "概念",
+                    "code": "886100",
+                    "name": "AI应用",
+                }],
+            },
+            "industry": {
+                "rows": [{
+                    "kind": "industry",
+                    "kind_label": "行业",
+                    "code": "881273",
+                    "name": "酿酒",
+                }],
+            },
+            "region": {
+                "rows": [{
+                    "kind": "region",
+                    "kind_label": "地域",
+                    "code": "880001",
+                    "name": "广东省",
+                }],
+            },
+            "hot": {
+                "rows": [{
+                    "kind": "hot",
+                    "kind_label": "人气",
+                    "code": "801001",
+                    "name": "人气龙头",
+                    "power": 99,
+                }],
+            },
+        },
+    }
+    merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap=kpl_snap)
+    custom = merged["custom"]
+    assert len(custom) == 5
+    assert not any(r.get("origin") == "kpl" for r in custom)
+
+    ai = next(r for r in custom if r["id"] == "278")
+    assert ai["has_kpl"] is True
+    assert ai["kpl_code"] == "886100"
+    assert ai["kpl_kind"] == "concept"
+    assert ai["kpl_name"] == "AI应用"
+
+    baijiu = next(r for r in custom if r["id"] == "279")
+    assert baijiu["kpl_code"] == "881273"
+    assert baijiu["kpl_kind"] == "industry"
+    assert baijiu["kpl_name"] == "酿酒"
+    assert baijiu["name"] == "白酒"
+
+    gd = next(r for r in custom if r["id"] == "280")
+    assert gd["kpl_code"] == "880001"
+    assert gd["kpl_kind"] == "region"
+    assert gd["kpl_name"] == "广东省"
+
+    hot = next(r for r in custom if r["id"] == "281")
+    assert hot["kpl_code"] == "801001"
+    assert hot["kpl_kind"] == "hot"
+    assert hot["kpl_power"] == 99
+
+    only = next(r for r in custom if r["id"] == "282")
+    assert only["has_kpl"] is False
+    assert only["kpl_code"] == ""

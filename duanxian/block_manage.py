@@ -1,7 +1,8 @@
 """板块管理 —— 同花顺 / 开盘啦按类型融合。
 
 概念 / 行业 / 地域：跨来源按「完全同名 + 板块别名族」并入同一页签（字段并集）；
-自定义 / 每日动态仅同花顺；人气仅开盘啦。
+自定义：同花顺页签，并与全部开盘啦板块（概念/行业/地域/人气）同名匹配补字段；
+每日动态仅同花顺；人气仅开盘啦。
 合并后保留 ``kpl_name``（开盘啦原始名称）。
 开盘啦侧经 ``kpl_blocks.ensure`` 初始化，自动日更最多一次。
 """
@@ -185,6 +186,18 @@ def _kpl_by_name_for_kind(
         if not isinstance(row, dict):
             continue
         for key in _equivalence_keys(str(row.get("name") or ""), region=region):
+            if key not in out:
+                out[key] = row
+    return out
+
+
+def _kpl_structural_by_name(kpl_snap: dict[str, Any]) -> dict[str, dict]:
+    """开盘啦结构榜（概念/行业/地域）名称键→行；同名时先写入者优先。"""
+    out: dict[str, dict] = {}
+    for kind in ("concept", "industry", "region"):
+        for key, row in _kpl_by_name_for_kind(
+            kpl_snap, kind, region=(kind == "region"),
+        ).items():
             if key not in out:
                 out[key] = row
     return out
@@ -391,6 +404,61 @@ def _build_ths_only(
     return out
 
 
+def _build_custom(
+    *,
+    ths_rows: list[dict],
+    kpl_snap: dict[str, Any],
+) -> list[dict]:
+    """自定义页签：同花顺行，并与全部开盘啦板块同名/别名匹配补字段。
+
+    不把开盘啦独有行并入本页签；结构榜优先，人气作点查码兜底。
+    """
+    kpl_map = _kpl_structural_by_name(kpl_snap)
+    hot_map = _kpl_by_name_for_kind(kpl_snap, "hot")
+    matched_codes: set[str] = set()
+
+    ths_built: list[tuple[dict, dict]] = []
+    for ths in ths_rows:
+        if not isinstance(ths, dict):
+            continue
+        name = str(ths.get("name") or ths.get("id") or "")
+        row = _blank_unified(name=name)
+        row["origin"] = "ths"
+        _apply_ths(row, ths, native=True)
+        row["kind"] = "custom"
+        row["kind_label"] = str(ths.get("kind_label") or "自定义")
+        row["ths_kind"] = "custom"
+        ths_built.append((ths, row))
+
+    def _is_branch(src: dict) -> bool:
+        return str(src.get("node_type") or "") == "branch"
+
+    for ths, row in ths_built:
+        if _is_branch(ths):
+            continue
+        _attach_kpl_to_ths(
+            row,
+            name=str(row.get("name") or ""),
+            kpl_map=kpl_map,
+            hot_map=hot_map,
+            region=False,
+            matched_codes=matched_codes,
+        )
+    for ths, row in ths_built:
+        if not _is_branch(ths) or row.get("kpl_code"):
+            continue
+        _attach_kpl_to_ths(
+            row,
+            name=str(row.get("name") or ""),
+            kpl_map=kpl_map,
+            hot_map=hot_map,
+            region=False,
+            matched_codes=matched_codes,
+        )
+
+    return [row for _, row in ths_built]
+
+
 def _build_kpl_hot(
     *,
     kpl_rows: list[dict],
@@ -434,7 +502,7 @@ def _build_kpl_hot(
 
 
 def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[str, list[dict]]:
-    """产出融合页签：概念/行业/地域跨源合并；自定义/每日/人气分列。"""
+    """产出融合页签：概念/行业/地域跨源合并；自定义可匹配全部开盘啦；每日/人气分列。"""
     merged: dict[str, list[dict]] = {}
     ths_kinds = ths_snap.get("kinds") or {}
     kpl_kinds = kpl_snap.get("kinds") or {}
@@ -453,11 +521,14 @@ def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[
     for key, ths_kind, label in THS_ONLY_KEYS:
         entry = ths_kinds.get(ths_kind) or {}
         ths_rows = list(entry.get("rows") or []) if isinstance(entry, dict) else []
-        merged[key] = _build_ths_only(
-            ths_kind=ths_kind,
-            kind_label=label,
-            ths_rows=ths_rows,
-        )
+        if ths_kind == "custom":
+            merged[key] = _build_custom(ths_rows=ths_rows, kpl_snap=kpl_snap)
+        else:
+            merged[key] = _build_ths_only(
+                ths_kind=ths_kind,
+                kind_label=label,
+                ths_rows=ths_rows,
+            )
 
     for key, kpl_kind, label in KPL_ONLY_KEYS:
         entry = kpl_kinds.get(kpl_kind) or {}
