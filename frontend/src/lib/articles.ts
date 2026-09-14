@@ -40,6 +40,41 @@ function todayYmd(): string {
   ].join("-");
 }
 
+/** 单票文章：标题与文件名须含股票中文名（AI 漏写时兜底）。 */
+function ensureSingleStockInTitle(
+  title: string,
+  filename: string | undefined,
+  stocks: { code?: string | null; name?: string | null }[],
+  date: string,
+): { title: string; filename?: string } {
+  const named = stocks
+    .map((s) => (s.name || "").trim())
+    .filter(Boolean);
+  if (named.length !== 1) {
+    return filename ? { title, filename } : { title };
+  }
+  const stockName = named[0];
+  let nextTitle = title.trim() || "未命名文章";
+  if (!nextTitle.includes(stockName)) {
+    nextTitle = `${stockName}：${nextTitle}`;
+  }
+  let nextFilename = (filename || "").trim();
+  if (nextFilename) {
+    if (!nextFilename.includes(stockName)) {
+      const base = nextFilename.replace(/\.md$/i, "");
+      const dated = base.match(/^(.+)-(\d{4}-\d{2}-\d{2})$/);
+      if (dated) {
+        nextFilename = `${stockName}：${dated[1]}-${dated[2]}.md`;
+      } else {
+        nextFilename = `${stockName}：${base}.md`;
+      }
+    }
+  } else {
+    nextFilename = `${nextTitle}-${date}.md`;
+  }
+  return { title: nextTitle, filename: nextFilename };
+}
+
 function parseJsonObject(text: string): Record<string, unknown> {
   const raw = (text || "").trim();
   if (!raw) throw new Error("模型未返回内容");
@@ -99,14 +134,15 @@ export function parseArticleJson(text: string, original: string): ArticleDraftFi
         if (name) sectors.push({ name });
       }
     }
+    const ensured = ensureSingleStockInTitle(title, filename || undefined, stocks, date);
     out.push({
-      title,
-      summary: summary || title,
+      title: ensured.title,
+      summary: summary || ensured.title,
       date,
       original: original.trim(),
       stocks,
       sectors,
-      ...(filename ? { filename } : {}),
+      ...(ensured.filename ? { filename: ensured.filename } : {}),
     });
   }
   if (!out.length) throw new Error("files 中没有有效文章");
@@ -131,7 +167,6 @@ export function parseArticleIngestExtract(text: string, original: string): Artic
   }
   let summary = String(obj.summary || "").trim();
   if (summary.length > 120) summary = summary.slice(0, 117) + "…";
-  if (!summary) summary = title;
   let date = String(obj.date || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) date = ymd;
 
@@ -217,8 +252,10 @@ export function parseArticleIngestExtract(text: string, original: string): Artic
     }
   }
 
+  const ensured = ensureSingleStockInTitle(title, undefined, stocks, date);
+  if (!summary) summary = ensured.title;
   return {
-    title,
+    title: ensured.title,
     summary,
     date,
     keywords,
@@ -232,6 +269,14 @@ export function parseArticleIngestExtract(text: string, original: string): Artic
   };
 }
 
+const TITLE_RULES = [
+  "标题规则（硬性）：",
+  "- 标题必须简要概括文章核心内容（结论/事件/主题），禁止引导性、悬念式、口号式、贩卖焦虑或纯吸睛标题（如「必看」「重磅」「一文读懂」「后市如何」「千万别错过」等）。",
+  "- 原文标题若不符合上述要求，必须重新生成符合要求的标题，不要照搬。",
+  "- 若文章主要针对单只股票（主体明确为该股，而非泛行业综述），标题与 filename 都必须包含该股票中文名称。",
+  "- 多股并重或行业/板块综述：标题概括主题即可，不必硬塞某一只股票名。",
+].join("\n");
+
 export function buildArticleIngestPrompt(note: string): string {
   const ymd = todayYmd();
   return [
@@ -239,7 +284,8 @@ export function buildArticleIngestPrompt(note: string): string {
     "硬性规则：",
     "1. 只做信息整理与客观标注；不推荐买卖、不预测涨跌、不给目标价。",
     "2. 保留整篇原文语义，不要改写正文；original 字段原样回传用户输入。",
-    "3. 若原文无明显标题，生成简洁中文标题；有则提取。",
+    "3. 生成或改写标题时遵守下列标题规则；不要照搬不符合要求的原文标题。",
+    TITLE_RULES,
     "4. summary 为一句话摘要（≤120字）。",
     "5. date 优先用文中明确日期（YYYY-MM-DD）；否则用 " + ymd + "。",
     "6. keywords：3～8 个关键词（题材/行业/事件）。",
@@ -247,7 +293,7 @@ export function buildArticleIngestPrompt(note: string): string {
     "8. stocks / sectors：分别列出文中个股与板块/题材（可与 targets 对应）。",
     "9. impact_level / freshness / effect_status 按消息分析口径标注。",
     "10. 只输出一个 JSON 对象，不要解释、不要代码围栏。骨架：",
-    '{"title":"标题","date":"' + ymd + '","summary":"一句话","original":"原文","keywords":["词"],"impact_level":"medium","freshness":"new","effect_status":"not_erupted","targets":[{"kind":"stock","code":"600519","name":"贵州茅台"}],"stocks":[{"code":"600519","name":"贵州茅台"}],"sectors":[{"name":"白酒"}]}',
+    '{"title":"贵州茅台：Q2利润增速放缓但现金流改善","date":"' + ymd + '","summary":"一句话","original":"原文","keywords":["词"],"impact_level":"medium","freshness":"new","effect_status":"not_erupted","targets":[{"kind":"stock","code":"600519","name":"贵州茅台"}],"stocks":[{"code":"600519","name":"贵州茅台"}],"sectors":[{"name":"白酒"}]}',
     "",
     "【用户粘贴的整篇原文】",
     note.trim(),
@@ -266,15 +312,16 @@ export function buildArticlePrompt(
     "你是 A 股研报/文章整理助手。用户粘贴的是文字版研报或资讯文章。",
     "要求：",
     "1. 保留原文，不要改写、不要删减正文；original 字段原样回传用户输入。",
-    "2. 若原文无明显标题，生成简洁中文标题；有则提取。",
+    "2. 生成或改写标题时遵守下列标题规则；不要照搬不符合要求的原文标题。",
+    TITLE_RULES,
     "3. summary 为一句话摘要（≤80字），客观陈述，不给买卖建议。",
     "4. date 优先用文中明确日期（YYYY-MM-DD）；否则用 " + ymd + "。",
-    "5. filename 建议为「标题-YYYY-MM-DD.md」（中文可）。",
+    "5. filename 为「标题-YYYY-MM-DD.md」（中文可）；单票文章时文件名须含股票中文名。",
     "6. stocks：文中提及的 A 股个股，每项 {\"code\":\"6位或null\",\"name\":\"名称\"}。",
     "7. sectors：文中提及的板块/题材/行业，每项 {\"name\":\"名称\"}。",
     "8. 通常一次输入对应 1 篇文章（files 长度 1）；不要把多篇无关内容硬拆。",
     "9. 只输出一个 JSON 对象，不要解释、不要代码围栏。骨架：",
-    '{"files":[{"filename":"标题-2026-08-28.md","title":"标题","date":"2026-08-28","summary":"一句话","original":"原文","stocks":[{"code":"600519","name":"贵州茅台"}],"sectors":[{"name":"白酒"}]}]}',
+    '{"files":[{"filename":"贵州茅台：Q2利润增速放缓但现金流改善-2026-08-28.md","title":"贵州茅台：Q2利润增速放缓但现金流改善","date":"2026-08-28","summary":"一句话","original":"原文","stocks":[{"code":"600519","name":"贵州茅台"}],"sectors":[{"name":"白酒"}]}]}',
     "",
     "【现有文章索引】（避免标题严重重复时可微调命名）",
     indexBlock,
