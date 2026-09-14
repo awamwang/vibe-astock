@@ -1925,6 +1925,26 @@ def api_experience_commit(request: Request, body: dict = Body(...)):
     return {"data": result}
 
 
+@app.delete("/api/experience/topic")
+def api_experience_topic_delete(request: Request, name: str = ""):
+    """删除单个经验主题文件，并刷新 index.md。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import experience as exp
+
+    filename = (name or "").strip()
+    if not filename:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    try:
+        return {"data": exp.delete_topic(filename)}
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+
+
 @app.get("/api/articles/meta")
 def api_articles_meta():
     """研报文章库根路径与文章列表。"""
@@ -2032,6 +2052,26 @@ def api_articles_update(request: Request, body: dict = Body(...)):
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
     return {"data": result}
+
+
+@app.delete("/api/articles/item")
+def api_articles_item_delete(request: Request, name: str = ""):
+    """删除单篇研报文章，并刷新 index.md。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
+    from duanxian import articles as arts
+
+    filename = (name or "").strip()
+    if not filename:
+        return JSONResponse({"error": "缺少 name", "detail": "缺少 name"}, status_code=400)
+    try:
+        return {"data": arts.delete_article(filename)}
+    except FileNotFoundError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=404)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
 
 
 def _plugin_row(rec) -> dict:

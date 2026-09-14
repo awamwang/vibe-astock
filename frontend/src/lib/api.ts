@@ -850,6 +850,8 @@ export const api = {
     request<ExperienceRetrieveResult>("/experience/retrieve", "POST", { query, k }),
   experienceCommit: (files: ExperienceDraftFile[]) =>
     request<ExperienceCommitResult>("/experience/commit", "POST", { files }),
+  experienceDelete: (name: string) =>
+    request<ExperienceDeleteResult>(`/experience/topic?name=${encodeURIComponent(name)}`, "DELETE"),
   articlesMeta: () => get<ArticlesMeta>("/articles/meta"),
   articlesItem: (name: string) =>
     get<ArticleItem>(`/articles/item?name=${encodeURIComponent(name)}`),
@@ -861,6 +863,8 @@ export const api = {
     request<ArticlesToMessageResult>("/articles/to-message", "POST", { name }),
   articlesUpdate: (body: { name: string; content?: string; title?: string; summary?: string }) =>
     request<ArticlesUpdateResult>("/articles/update", "POST", body),
+  articlesDelete: (name: string) =>
+    request<ArticlesDeleteResult>(`/articles/item?name=${encodeURIComponent(name)}`, "DELETE"),
   pluginsList: () => get<PluginsListResult>("/plugins"),
   pluginsPick: (initialDir?: string) =>
     request<PluginPickResult>("/plugins/pick", "POST", { initial_dir: initialDir || "" }),
@@ -1398,6 +1402,12 @@ export interface ExperienceCommitResult {
   written: (ExperienceTopicMeta & { path: string })[];
   topics: ExperienceTopicMeta[];
 }
+export interface ExperienceDeleteResult {
+  ok: boolean;
+  root: string;
+  deleted: string;
+  topics: ExperienceTopicMeta[];
+}
 
 export interface ArticleMeta {
   filename: string;
@@ -1476,6 +1486,12 @@ export interface ArticlesUpdateResult {
   ok: boolean;
   root: string;
   article: ArticleItem;
+  articles: ArticleMeta[];
+}
+export interface ArticlesDeleteResult {
+  ok: boolean;
+  root: string;
+  deleted: string;
   articles: ArticleMeta[];
 }
 

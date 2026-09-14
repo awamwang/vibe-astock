@@ -255,10 +255,11 @@ function EnvThemesCard({
 }
 
 function EnvGroup({
-  label, hint, children, tone = "default",
+  label, hint, caliber, children, tone = "default",
 }: {
   label: string;
   hint?: string;
+  caliber?: string;
   children: ReactNode;
   tone?: "default" | "qcj";
 }) {
@@ -271,14 +272,15 @@ function EnvGroup({
           : "border border-border/40 bg-muted/15",
       )}
     >
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <span
           className={cn(
-            "text-[11px] font-semibold tracking-wide",
+            "inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide",
             tone === "qcj" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
           )}
         >
           {label}
+          {caliber && <Caliber text={caliber} />}
         </span>
         {hint && <span className="text-[10px] text-muted-foreground/55">{hint}</span>}
       </div>
@@ -723,8 +725,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
         caliber={
           "场次对照：左侧 = 行情所属场次，右侧 = 其前一交易日（周末展示周五 vs 周四）。\n" +
           "情绪全景：情绪分°（偏向连板情绪与赚钱效应）、阶段、涨跌停家数、龙头、主线题材；昨日场次优先取历史序列。\n" +
-          "实时打板：最高连板 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
-          "昨涨停效应：打板成功率开 / 连板溢价 / 涨停大跌数；昨涨停名单与开盘溢价按日缓存，仅涨跌幅随盘刷新。\n" +
+          "实时打板：连板高度 / 连板家数 / 晋级率 / 炸板家数随盘刷新；晋级率分母为上一场涨停家数。\n" +
+          "昨涨停效应：打板成功率开 / 连板溢价 / 昨涨停跌超5%；昨涨停名单与开盘溢价按日缓存，仅涨跌幅随盘刷新。\n" +
           "颜色：相对昨日变强/变多为红（下跌类指标相反）。"
         }
         hint={
@@ -807,15 +809,26 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               />
               <EnvThemesCard today={t.qcj_themes} yesterday={y.qcj_themes} />
             </EnvGroup>
-            <EnvGroup label="打板质量" hint="炸板 · 溢价 · 连板晋级 · 昨涨停效应（盘中刷新）">
-              <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
-              <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
+            <EnvGroup
+              label="打板质量"
+              hint="成功率 · 溢价 · 高度晋级 · 炸板（盘中刷新）"
+              caliber={
+                "打板成功率开 = 昨日涨停股今日开盘相对昨收红盘的比例（今开 > 昨收，平开不算）。\n" +
+                "涨停溢价 = 昨日涨停股今日平均涨跌幅（选股宝口径）。\n" +
+                "连板溢价 = 昨日 2 板及以上个股今日平均涨跌幅（高标承接）。\n" +
+                "晋级率 = 今日仍涨停家数 ÷ 上一场涨停家数。\n" +
+                "炸板率 = 选股宝炸板率（越高越冷）。\n" +
+                "连板高度 / 连板（2板+）/ 炸板家数 = 今日实时打板池读数。\n" +
+                "昨涨停跌超5% = 昨日涨停池里，今日涨跌幅 ≤ −5% 的只数（恰好 −5% 也算；不是全市场跌超 5%）。"
+              }
+            >
               <EnvCard
                 name="打板成功率开"
                 today={ztEffect?.open_success_rate}
                 yesterday={zteY.open_success_rate}
                 format={pctEmo}
               />
+              <EnvCard name="涨停溢价(%)" today={t.zt_avg_zr} yesterday={y.zt_avg_zr} format={pct1} />
               <EnvCard
                 name="连板溢价(%)"
                 today={ztEffect?.consec_premium_avg}
@@ -823,14 +836,14 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
                 format={pct1}
               />
               <EnvCard
-                name="涨停大跌数"
-                today={ztEffect?.deep_loss_5_count}
-                yesterday={zteY.deep_loss_5_count}
-                format={intFmt}
-                reversed
+                name="晋级率"
+                today={liveEmo?.promotion_rate}
+                yesterday={ley.promotion_rate}
+                format={pctEmo}
               />
+              <EnvCard name="炸板率(%)" today={t.broken_r} yesterday={y.broken_r} format={pct1} reversed />
               <EnvCard
-                name="最高连板"
+                name="连板高度"
                 today={liveEmo?.max_boards}
                 yesterday={ley.max_boards}
                 format={(v) => `${Math.round(v)} 板`}
@@ -843,10 +856,11 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
                 formatYesterday={(v) => `${fmtCountPermille(v, sentTotalY)} 家`}
               />
               <EnvCard
-                name="晋级率"
-                today={liveEmo?.promotion_rate}
-                yesterday={ley.promotion_rate}
-                format={pctEmo}
+                name="昨涨停跌超5%"
+                today={ztEffect?.deep_loss_5_count}
+                yesterday={zteY.deep_loss_5_count}
+                format={intFmt}
+                reversed
               />
               <EnvCard
                 name="炸板家数"
