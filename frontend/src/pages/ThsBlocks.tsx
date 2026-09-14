@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
@@ -45,6 +45,13 @@ type ViewMode = "tree" | "list";
 type SourceFilter = "all" | "ths" | "kpl";
 /** 关注为虚拟类型：跨 kind 展示已关注板块，树视图按原层级裁剪 */
 const FOLLOWED_KIND = "followed";
+/** 关注树分区在非关注视图下保持稳定空引用，避免搜索时无谓触发展开 effect */
+const EMPTY_FOLLOWED_TREE_SECTIONS: {
+  kind: string;
+  label: string;
+  tree: ThsTreeNode;
+  rowById: Map<string, ManagedBlockRow>;
+}[] = [];
 
 function managedRowKey(row: Pick<ManagedBlockRow, "kind" | "id" | "kpl_code" | "name">): string {
   if (row.id) return `${row.kind}|${row.id}`;
@@ -65,7 +72,7 @@ function AliasInlineText({ aliases }: { aliases: string[] }) {
   );
 }
 
-function FollowedOrKindTable({
+const FollowedOrKindTable = memo(function FollowedOrKindTable({
   filteredRows,
   showSubtypeCol,
   sort,
@@ -186,7 +193,8 @@ function FollowedOrKindTable({
       </tbody>
     </table>
   );
-}
+});
+
 function ThsBlockTreeItem({
   node,
   depth,
@@ -315,15 +323,23 @@ export function ThsBlocks() {
   const [kindFilter, setKindFilter] = useState<string>("conception");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
+  /** 实际用于列表/树筛选；中文输入法合成结束前不更新，避免拼音阶段反复过滤大表 */
+  const [qFilter, setQFilter] = useState("");
   const [nodeFilter, setNodeFilter] = useState<"all" | "leaf" | "branch">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
+  const searchComposingRef = useRef(false);
 
   const [selected, setSelected] = useState<ManagedBlockRow | null>(null);
   const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
+
+  const applySearchInput = useCallback((value: string, commitFilter: boolean) => {
+    setQ(value);
+    if (commitFilter) setQFilter(value);
+  }, []);
 
   const thsSnap = snapshot?.ths ?? null;
 
@@ -556,7 +572,7 @@ export function ThsBlocks() {
 
   /** 关注视图：任一关注项所属 kind 有树即可树形浏览 */
   const followedTreeSections = useMemo(() => {
-    if (!isFollowedView || !thsSnap?.kinds) return [];
+    if (!isFollowedView || !thsSnap?.kinds) return EMPTY_FOLLOWED_TREE_SECTIONS;
     const matchSource = (row: ManagedBlockRow) => {
       if (sourceFilter === "ths") return row.has_ths || row.origin === "ths";
       if (sourceFilter === "kpl") return false; // 关注仅同花顺
@@ -601,7 +617,7 @@ export function ThsBlocks() {
         else if (row.kpl_code) codeById.set(nid, row.kpl_code);
       }
       const pruned = filterThsTree(root, {
-        query: q,
+        query: qFilter,
         nodeFilter,
         codeById,
         aliasesByName: aliasesByCanonical,
@@ -616,7 +632,7 @@ export function ThsBlocks() {
       });
     }
     return sections;
-  }, [isFollowedView, thsSnap, followBlocks, q, nodeFilter, aliasesByCanonical, sourceFilter, snapshot]);
+  }, [isFollowedView, thsSnap, followBlocks, qFilter, nodeFilter, aliasesByCanonical, sourceFilter, snapshot]);
 
   /** 有同花顺树或可合成挂根树时均可树形浏览；筛选不强制切视图 */
   const canShowTree = isFollowedView
@@ -694,15 +710,15 @@ export function ThsBlocks() {
       );
     }
     return filterThsTree(root, {
-      query: q,
+      query: qFilter,
       nodeFilter,
       codeById,
       aliasesByName: aliasesByCanonical,
     });
-  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, q, nodeFilter, allRows, aliasesByCanonical, kindFilter, kplKindForTab, thsKindForTab]);
+  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, qFilter, nodeFilter, allRows, aliasesByCanonical, kindFilter, kplKindForTab, thsKindForTab]);
 
   const filteredRows = useMemo((): ManagedBlockRow[] => {
-    const query = q.trim().toLowerCase();
+    const query = qFilter.trim().toLowerCase();
     let rows: ManagedBlockRow[] = allRows.filter((row) => {
       if (nodeFilter === "leaf" && row.node_type === "branch") return false;
       if (nodeFilter === "branch" && row.node_type !== "branch") return false;
@@ -743,7 +759,7 @@ export function ThsBlocks() {
       return order === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree, aliasesByCanonical]);
+  }, [allRows, qFilter, nodeFilter, sort, order, viewMode, canShowTree, aliasesByCanonical]);
 
   /** 关注视图中无树结构的类型（自定义 / 每日动态等），树形模式下附在裁剪树之后 */
   const followedFlatGroups = useMemo(() => {
@@ -759,13 +775,13 @@ export function ThsBlocks() {
     return groups;
   }, [isFollowedView, followedTreeSections, filteredRows]);
 
-  const toggleSort = (key: SortKey) => {
+  const toggleSort = useCallback((key: SortKey) => {
     if (sort === key) setOrder((o) => (o === "asc" ? "desc" : "asc"));
     else {
       setSort(key);
       setOrder("asc");
     }
-  };
+  }, [sort]);
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -797,9 +813,9 @@ export function ThsBlocks() {
 
   const collapseAllBranches = () => setExpanded(new Set());
 
-  const openDetail = (row: ManagedBlockRow) => {
+  const openDetail = useCallback((row: ManagedBlockRow) => {
     setSelected(row);
-  };
+  }, []);
 
   const emptyThs = !thsSnap?.updated_at;
   const emptyKpl = !snapshot?.kpl?.available;
@@ -807,6 +823,8 @@ export function ThsBlocks() {
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const visibleCount = filteredRows.length;
+  /** 搜索/筛选变化时强制重挂载列表，避免大表格增量调和后 DOM 与「共 N 条」不一致 */
+  const listMountKey = `${kindFilter}|${sourceFilter}|${nodeFilter}|${qFilter.trim()}`;
 
   return (
     <div className="space-y-6">
@@ -1047,7 +1065,22 @@ export function ThsBlocks() {
                     className={inputCls}
                     placeholder="搜索代码、名称、别名、树路径…"
                     value={q}
-                    onChange={(e) => setQ(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      applySearchInput(value, !searchComposingRef.current);
+                    }}
+                    onCompositionStart={() => {
+                      searchComposingRef.current = true;
+                    }}
+                    onCompositionEnd={(e) => {
+                      searchComposingRef.current = false;
+                      applySearchInput(e.currentTarget.value, true);
+                    }}
+                    onBlur={(e) => {
+                      // 防止合成异常未触发 compositionEnd 时筛选词落后于输入框
+                      searchComposingRef.current = false;
+                      applySearchInput(e.currentTarget.value, true);
+                    }}
                   />
                 </div>
                 <select
@@ -1222,6 +1255,7 @@ export function ThsBlocks() {
                   )
                 ) : (
                   <FollowedOrKindTable
+                    key={`followed-list-${listMountKey}`}
                     filteredRows={filteredRows}
                     showSubtypeCol={false}
                     sort={sort}
@@ -1230,8 +1264,8 @@ export function ThsBlocks() {
                     selected={selected}
                     followedIds={followedIds}
                     aliasesByCanonical={aliasesByCanonical}
-                    onOpen={(row) => void openDetail(row)}
-                    onToggleFollow={(row) => void toggleFollow(row)}
+                    onOpen={openDetail}
+                    onToggleFollow={toggleFollow}
                   />
                 )
               ) : !allRows.length && !kindEntry ? (
@@ -1249,7 +1283,7 @@ export function ThsBlocks() {
                 </div>
               ) : viewMode === "tree" && canShowTree ? (
                 filteredTree ? (
-                  <div className="py-1">
+                  <div key={`tree-${listMountKey}`} className="py-1">
                     <ThsBlockTreeItem
                       node={filteredTree}
                       depth={0}
@@ -1259,8 +1293,8 @@ export function ThsBlocks() {
                       followedIds={followedIds}
                       aliasesByCanonical={aliasesByCanonical}
                       onToggle={toggleExpanded}
-                      onSelect={(row) => void openDetail(row)}
-                      onToggleFollow={(row) => void toggleFollow(row)}
+                      onSelect={openDetail}
+                      onToggleFollow={toggleFollow}
                     />
                   </div>
                 ) : (
@@ -1268,6 +1302,7 @@ export function ThsBlocks() {
                 )
               ) : (
                 <FollowedOrKindTable
+                  key={`kind-list-${listMountKey}`}
                   filteredRows={filteredRows}
                   showSubtypeCol={showSubtypeCol}
                   sort={sort}
@@ -1276,8 +1311,8 @@ export function ThsBlocks() {
                   selected={selected}
                   followedIds={followedIds}
                   aliasesByCanonical={aliasesByCanonical}
-                  onOpen={(row) => void openDetail(row)}
-                  onToggleFollow={(row) => void toggleFollow(row)}
+                  onOpen={openDetail}
+                  onToggleFollow={toggleFollow}
                 />
               )}
             </div>
