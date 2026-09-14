@@ -258,6 +258,9 @@ export interface EventLedger extends FactBase {
   loss_events?: LedgerEvent[];    // 断板 / 炸板 / 跌停 —— 今天钱亏在哪
   gain_events?: LedgerEvent[];    // 最高标 / 题材首封 —— 今天钱赚在哪
   split_events?: LedgerEvent[];   // 反复开板 —— 分歧，两头都不算
+  loss_total?: number;            // 炸板池 + 跌停池全量（未截断）
+  split_total?: number;           // 炸板≥2 次又回封的全量
+  gain_total?: number;            // 最高标全量 + 有首封时间的题材方向数
 }
 export interface BoardStat {
   limit_up: number; highest: number; broken?: number; limit_down?: number;

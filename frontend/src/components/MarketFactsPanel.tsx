@@ -432,6 +432,9 @@ export function Ledger({ el }: { el?: EventLedger }) {
   const gain = el?.gain_events ?? all.filter((e) => GAIN.includes(e.tag));
   const split = el?.split_events ?? all.filter((e) => !LOSS.includes(e.tag) && !GAIN.includes(e.tag));
 
+  const countLabel = (shown: number, total?: number) =>
+    total != null && total > shown ? `${shown}/${total} 起` : `${shown} 起`;
+
   const Row = ({ e }: { e: Ev }) => (
     <div className="flex items-center gap-2 border-b border-border/40 py-1 text-[12px] last:border-0">
       <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold",
@@ -448,14 +451,16 @@ export function Ledger({ el }: { el?: EventLedger }) {
     </div>
   );
 
-  const Group = ({ title, note, list }: {
-    title: string; note: string; list: Ev[];
+  const Group = ({ title, note, list, total }: {
+    title: string; note: string; list: Ev[]; total?: number;
   }) => (
     <div>
       <div className="mb-1 flex items-baseline gap-2">
         <span className="text-[12px] font-bold text-foreground">{title}</span>
         <span className="text-[11px] text-muted-foreground">{note}</span>
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{list.length} 起</span>
+        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+          {countLabel(list.length, total)}
+        </span>
       </div>
       <div className="max-h-56 space-y-1 overflow-y-auto">
         {list.length ? list.map((e, i) => <Row key={`${e.code}-${e.tag}-${i}`} e={e} />)
@@ -473,7 +478,7 @@ export function Ledger({ el }: { el?: EventLedger }) {
         "昨日板位最高的断板股（最多 6 只）、跌得最狠的（最多 5 只）。\n" +
         "「今天钱亏在哪」记的是**打板资金吃面的地方**，不是这些票都收跌 ——\n" +
         "炸板的票当天照样可能收红（冲板又掉下来、收盘还涨 7%），埋的是打板那一下。\n" +
-        "「N 起」= 这一堆里有 N 只票。\n" +
+        "「N 起」= 这一堆里挑出来的条数；有截断时写成「展示/全量」。\n" +
         "⚠️ **按方向分三堆，堆内不排序。**\n" +
         "⚠️ 断板按**昨日板位**排，不按炸板次数：一只普通首板炸十次，信息量远不如「昨日 5 板断了」。"}
       available={el?.available}
@@ -481,11 +486,11 @@ export function Ledger({ el }: { el?: EventLedger }) {
     >
       {}
       <div className="space-y-3">
-        <Group title="今天钱亏在哪" note="断板 · 炸板 · 跌停" list={loss} />
+        <Group title="今天钱亏在哪" note="断板 · 炸板 · 跌停" list={loss} total={el?.loss_total} />
         {split.length > 0 && (
-          <Group title="分歧最大的" note="反复开板后回封" list={split} />
+          <Group title="分歧最大的" note="反复开板后回封" list={split} total={el?.split_total} />
         )}
-        <Group title="今天钱赚在哪" note="最高标 · 题材首封" list={gain} />
+        <Group title="今天钱赚在哪" note="最高标 · 题材首封" list={gain} total={el?.gain_total} />
       </div>
     </Section>
   );

@@ -545,24 +545,31 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
             "prev_boards": prev_boards.get(r["code"]),
         })
 
+    highest_n = 0
+    split_total = 0
+    theme_first_total = 0
     if zt:
         top = max(int(r.get("boards") or 1) for r in zt)
         for r in zt:
             if int(r.get("boards") or 1) == top:
+                highest_n += 1
                 add("最高标", r, f"今日最高 {top} 板")
-        # 反复炸板又回封 —— 分歧最大的票
-        for r in sorted(zt, key=lambda x: -(x.get("broken_times") or 0))[:3]:
-            if (r.get("broken_times") or 0) >= 2:
-                add("反复开板", r, f"炸板 {r['broken_times']} 次后回封")
-        # 每个题材最早封板的那只 = 该方向的发起者
+        # 反复炸板又回封 —— 分歧最大的票（只挑炸得最多的 3 只，总数另记）
+        split_cands = [r for r in zt if (r.get("broken_times") or 0) >= 2]
+        split_total = len(split_cands)
+        for r in sorted(split_cands, key=lambda x: -(x.get("broken_times") or 0))[:3]:
+            add("反复开板", r, f"炸板 {r['broken_times']} 次后回封")
+        # 每个题材最早封板的那只 = 该方向的发起者（最多列 4 个方向）
+        theme_first: list[dict] = []
         seen: set[str] = set()
         for r in sorted(zt, key=lambda x: _hhmmss(x.get("first_seal")) or "999999"):
             s = (r.get("sector") or "").strip()
             if s and s not in seen and _hhmmss(r.get("first_seal")):
                 seen.add(s)
-                add("题材首封", r, f"{s} 当日最早封板")
-            if len(seen) >= 4:
-                break
+                theme_first.append(r)
+        theme_first_total = len(theme_first)
+        for r in theme_first[:4]:
+            add("题材首封", r, f"{(r.get('sector') or '').strip()} 当日最早封板")
     zb_sorted = sorted(zb, key=lambda x: (-(prev_boards.get(x["code"]) or 0),
                                           -(x.get("broken_times") or 0)))
     for r in zb_sorted[:6]:
@@ -585,12 +592,19 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
 
     _LOSS = {"高位断板", "连板断板", "炸板", "高标跌停", "跌停"}
     _GAIN = {"最高标", "题材首封"}
+    loss_events = [e for e in events if e["tag"] in _LOSS]
+    gain_events = [e for e in events if e["tag"] in _GAIN]
+    split_events = [e for e in events if e["tag"] not in _LOSS | _GAIN]
     return {
         "available": True, "events": events, "count": len(events),
-        "loss_events": [e for e in events if e["tag"] in _LOSS],
-        "gain_events": [e for e in events if e["tag"] in _GAIN],
+        "loss_events": loss_events,
+        "gain_events": gain_events,
         # 「反复开板」既不是纯赚也不是纯亏 —— 它是**分歧**，单独一堆
-        "split_events": [e for e in events if e["tag"] not in _LOSS | _GAIN],
+        "split_events": split_events,
+        # 池子全量（未截断）；展示条数仍是上面各 list 的长度
+        "loss_total": len(zb) + len(dt),
+        "split_total": split_total,
+        "gain_total": highest_n + theme_first_total,
     }
 
 

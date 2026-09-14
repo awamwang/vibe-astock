@@ -2950,6 +2950,47 @@ class TestPastSessionsStayViewable:
 
 
 @pytest.mark.unit
+class TestEventLedgerTotals:
+    """账本展示条数有上限；全量要从同一份涨停/炸板/跌停池里带出来。"""
+
+    def test_truncated_groups_expose_pool_totals(self, monkeypatch):
+        from duanxian import market_facts as mf
+
+        def row(code, name, boards=1, sector="", broken=0, first_seal="093000",
+                ret=9.9, board="主板"):
+            return {
+                "code": code, "name": name, "boards": boards, "sector": sector,
+                "broken_times": broken, "first_seal": first_seal, "last_seal": first_seal,
+                "ret": ret, "board": board, "turnover": None, "consec_dt": 1,
+            }
+
+        zt = (
+            [row(f"00000{i}", f"高标{i}", boards=4, sector=f"方向{i}",
+                 broken=3, first_seal=f"09300{i}") for i in range(2)]
+            + [row(f"00001{i}", f"首封{i}", boards=1, sector=f"题材{i}",
+                   first_seal=f"10000{i}") for i in range(6)]
+            + [row(f"00002{i}", f"分歧{i}", boards=2, sector="公用",
+                   broken=2 + i) for i in range(5)]
+        )
+        zb = [row(f"30000{i}", f"炸{i}", boards=0, broken=2, ret=5.0) for i in range(10)]
+        dt = [row(f"40000{i}", f"跌{i}", boards=0, ret=-10.0) for i in range(8)]
+
+        monkeypatch.setattr(mf, "pools", lambda date: {"zt": zt, "zb": zb, "dt": dt})
+        monkeypatch.setattr(mf, "_prev_boards_map", lambda prev: {})
+        monkeypatch.setattr(mf.trade_calendar, "prev_trade_date", lambda date: "2026-07-28")
+
+        r = mf.event_ledger("2026-07-29")
+        assert r["available"] is True
+        assert len(r["loss_events"]) == 11  # 炸板 6 + 跌停 5
+        assert r["loss_total"] == 18        # 10 + 8
+        assert len(r["split_events"]) == 3
+        assert r["split_total"] == 7        # 2 高标(broken=3) + 5 分歧
+        assert len(r["gain_events"]) == 6   # 最高标 2 + 题材首封 4
+        # 最高标 2 + 有首封的方向：方向0/1、题材0-5、公用
+        assert r["gain_total"] == 11
+
+
+@pytest.mark.unit
 class TestMarketSentimentArchive:
     """乐咕市场情绪按日归档：收盘后最后一次覆盖 = 次日昨日对照。"""
 
