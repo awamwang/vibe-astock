@@ -4958,6 +4958,26 @@ class TestExperienceMemory:
         with pytest.raises((ValueError, FileNotFoundError)):
             exp.read_topic("index.md", root)
 
+    def test_delete_topic_removes_file_and_index(self, tmp_path):
+        from duanxian import experience as exp
+
+        root = str(tmp_path / "experience")
+        exp.commit_files([
+            {"title": "情绪周期", "summary": "低吸", "content": "低吸优于追高\n"},
+            {"title": "仓位管理", "summary": "半仓", "content": "单笔不超过半仓\n"},
+        ], root)
+        out = exp.delete_topic("情绪周期.md", root)
+        assert out["ok"]
+        assert out["deleted"] == "情绪周期.md"
+        assert not (tmp_path / "experience" / "情绪周期.md").exists()
+        assert (tmp_path / "experience" / "仓位管理.md").is_file()
+        idx = (tmp_path / "experience" / "index.md").read_text(encoding="utf-8")
+        assert "情绪周期.md" not in idx
+        assert "仓位管理.md" in idx
+        assert all(t["filename"] != "情绪周期.md" for t in out["topics"])
+        with pytest.raises(FileNotFoundError):
+            exp.delete_topic("情绪周期.md", root)
+
     def test_parse_index_lines(self):
         from duanxian import experience as exp
 
@@ -5128,6 +5148,31 @@ class TestArticles:
         assert out["article"]["summary"] == "新摘要"
         idx = (tmp_path / "articles" / "index.md").read_text(encoding="utf-8")
         assert "新摘要" in idx
+
+    def test_delete_article_removes_file_and_index(self, tmp_path, monkeypatch):
+        from duanxian import articles as arts
+
+        monkeypatch.setattr(arts, "_resolve_stocks", lambda _s: [])
+        monkeypatch.setattr(arts, "_resolve_sectors", lambda _s: [])
+        root = str(tmp_path / "articles")
+        arts.commit_files([
+            {"title": "待删文章", "date": "2026-08-28", "summary": "删我",
+             "original": "将被删除\n"},
+            {"title": "保留文章", "date": "2026-08-29", "summary": "留下",
+             "original": "继续保留\n"},
+        ], root)
+        name = "待删文章-2026-08-28.md"
+        out = arts.delete_article(name, root)
+        assert out["ok"]
+        assert out["deleted"] == name
+        assert not (tmp_path / "articles" / name).exists()
+        assert (tmp_path / "articles" / "保留文章-2026-08-29.md").is_file()
+        idx = (tmp_path / "articles" / "index.md").read_text(encoding="utf-8")
+        assert name not in idx
+        assert "保留文章-2026-08-29.md" in idx
+        assert all(a["filename"] != name for a in out["articles"])
+        with pytest.raises(FileNotFoundError):
+            arts.delete_article(name, root)
 
     def test_list_articles_sorted_by_added_at_desc(self, tmp_path, monkeypatch):
         from duanxian import articles as arts

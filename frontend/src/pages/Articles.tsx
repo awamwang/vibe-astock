@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText,
+  AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText, Trash2,
   Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw, Search,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -32,6 +32,7 @@ export function Articles() {
   const [editBaseline, setEditBaseline] = useState<ArticleEditState | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [converting, setConverting] = useState(false);
   const [note, setNote] = useState("");
   const [organizing, setOrganizing] = useState(false);
@@ -152,6 +153,31 @@ export function Articles() {
 
   const resetEdit = () => {
     if (editBaseline) setEdit({ ...editBaseline });
+  };
+
+  const deleteArticle = async () => {
+    if (!selected || !edit) return;
+    if (editDirty) {
+      toast.error("请先保存或撤销当前编辑");
+      return;
+    }
+    const label = edit.title || selected;
+    if (!window.confirm(`确定删除文章「${label}」？此操作不可恢复。`)) return;
+    setDeleting(true);
+    try {
+      const res = await api.articlesDelete(selected);
+      setArticles(res.articles || []);
+      setRoot(res.root || root);
+      setSelected(null);
+      setEdit(null);
+      setEditBaseline(null);
+      toast.success("已删除文章");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "删除失败");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -558,12 +584,22 @@ export function Articles() {
               <button
                 type="button"
                 onClick={() => void toMessage()}
-                disabled={!selected || converting || editDirty}
+                disabled={!selected || converting || editDirty || deleting}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 hover:text-primary disabled:opacity-40"
                 title="把当前文章插入消息分析；产生时间为转换时刻，原文末尾保留文章文件关联"
               >
                 {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
                 转为消息
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteArticle()}
+                disabled={!selected || deleting || editDirty || editLoading || saving}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-40"
+                title="从文章库删除当前文章"
+              >
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                删除
               </button>
             </div>
           </div>

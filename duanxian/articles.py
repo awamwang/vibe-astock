@@ -899,3 +899,30 @@ def update_article(
         "article": read_article(name, base),
         "articles": list_articles_for_api(base),
     }
+
+
+def delete_article(filename: str, root: Optional[str] = None) -> dict[str, Any]:
+    """删除文章文件并刷新 index.md。"""
+    path = _article_path(filename, root)
+    name = os.path.basename(path)
+    base = ensure_dir(root)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"文章不存在：{name}")
+
+    with _LOCK:
+        try:
+            os.unlink(path)
+        except OSError as exc:
+            raise OSError(f"删除文章失败：{name}") from exc
+        articles = {a["filename"].lower(): dict(a) for a in load_index_articles(base)}
+        articles.pop(name.lower(), None)
+        ordered = sorted(articles.values(), key=lambda t: t["filename"])
+        index_path = os.path.join(base, INDEX_NAME)
+        _atomic_write_text(index_path, build_index(ordered, base))
+
+    return {
+        "ok": True,
+        "root": base,
+        "deleted": name,
+        "articles": list_articles_for_api(base),
+    }

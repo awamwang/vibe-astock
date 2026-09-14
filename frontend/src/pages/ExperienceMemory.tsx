@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  AlertCircle, BookMarked, Check, ChevronDown, ChevronUp, Copy, FileText,
+  AlertCircle, BookMarked, Check, ChevronDown, ChevronUp, Copy, FileText, Trash2,
   Loader2, Send, Settings, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ export function ExperienceMemory() {
   const [drafts, setDrafts] = useState<ExperienceDraftFile[] | null>(null);
   const [draftTab, setDraftTab] = useState(0);
   const [committing, setCommitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const [qaOpen, setQaOpen] = useState(false);
@@ -140,6 +141,27 @@ export function ExperienceMemory() {
       toast.error(e instanceof ApiError ? e.message : "写入失败");
     } finally {
       setCommitting(false);
+    }
+  };
+
+  const deleteTopic = async () => {
+    if (!selected) return;
+    const meta = topics.find((t) => t.filename === selected);
+    const label = meta?.title || selected;
+    if (!window.confirm(`确定删除主题「${label}」？此操作不可恢复。`)) return;
+    setDeleting(true);
+    try {
+      const res = await api.experienceDelete(selected);
+      setTopics(res.topics || []);
+      setRoot(res.root || root);
+      setSelected(null);
+      setSelectedBody("");
+      toast.success("已删除主题");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "删除失败");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -333,9 +355,21 @@ export function ExperienceMemory() {
         </GlassCard>
 
         <GlassCard className="mb-2">
-          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
-            <FileText className="h-4 w-4 text-primary" /> 主题列表（只读）
-          </h3>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+              <FileText className="h-4 w-4 text-primary" /> 主题列表（只读）
+            </h3>
+            <button
+              type="button"
+              onClick={() => void deleteTopic()}
+              disabled={!selected || deleting}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-40"
+              title="从记忆库删除当前主题"
+            >
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              删除
+            </button>
+          </div>
           {topics.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无主题。输入经验后点「AI 归纳」开始沉淀。</p>
           ) : (

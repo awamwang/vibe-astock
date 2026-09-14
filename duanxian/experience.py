@@ -324,3 +324,30 @@ def commit_files(
         "written": written,
         "topics": load_index_topics(base),
     }
+
+
+def delete_topic(filename: str, root: Optional[str] = None) -> dict[str, Any]:
+    """删除主题文件并刷新 index.md。"""
+    path = _topic_path(filename, root)
+    name = os.path.basename(path)
+    base = ensure_dir(root)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"主题不存在：{name}")
+
+    with _LOCK:
+        try:
+            os.unlink(path)
+        except OSError as exc:
+            raise OSError(f"删除主题失败：{name}") from exc
+        topics = {t["filename"].lower(): dict(t) for t in load_index_topics(base)}
+        topics.pop(name.lower(), None)
+        ordered = sorted(topics.values(), key=lambda t: t["filename"])
+        index_path = os.path.join(base, INDEX_NAME)
+        _atomic_write_text(index_path, build_index(ordered, base))
+
+    return {
+        "ok": True,
+        "root": base,
+        "deleted": name,
+        "topics": load_index_topics(base),
+    }
