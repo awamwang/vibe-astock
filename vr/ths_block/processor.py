@@ -11,7 +11,7 @@ from . import linker, service
 
 _BEIJING = timezone(timedelta(hours=8))
 
-_KIND_PRIORITY = ("conception", "industry", "region", "custom", "daily")
+_KIND_PRIORITY = ("conception", "theme", "industry", "region", "custom", "daily")
 
 _SOURCE_SORT: dict[str, int] = {
     "emotion_industry": 10,
@@ -64,10 +64,11 @@ _DIRECTORY_BLOCK_NAMES = frozenset(
         "工业类",
         "行业",
         "地域",
+        "热点主题",
     }
 )
-# 概念 / 行业 / 地域树根 id（与 tree._TREE_ROOT_IDS 一致）
-_TREE_ROOT_BLOCK_IDS = frozenset({"2B", "DFF8", "47"})
+# 概念 / 行业 / 地域树根 id（与 tree._TREE_ROOT_IDS 一致）+ 热点主题森林虚拟根
+_TREE_ROOT_BLOCK_IDS = frozenset({"2B", "DFF8", "47", "__theme_root__"})
 
 
 def _extract_concept_names(text: str) -> list[str]:
@@ -287,12 +288,34 @@ def _build_name_index(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                 code=str(row.get("code") or "") or None,
                 node_type=str(row.get("node_type") or ""),
             )
+            # 热点主题：额外登记在线 theme_key，便于「光模块/CPO」类名称命中
+            if str(kind) == "theme":
+                theme_key = _norm(str(row.get("theme_key") or ""))
+                name_norm = _norm(str(row.get("name") or ""))
+                bid_norm = str(row.get("id") or "").strip()
+                if theme_key and theme_key != name_norm and bid_norm:
+                    ref = _block_ref(
+                        str(kind),
+                        kind_label,
+                        bid_norm,
+                        name_norm or theme_key,
+                        code=str(row.get("code") or "") or None,
+                    )
+                    index.setdefault(theme_key, []).append(ref)
         for bid, name in (entry.get("blocks") or {}).items():
             code = None
             meta = meta_map.get(str(bid)) if isinstance(meta_map, dict) else None
             if isinstance(meta, dict):
                 code = str(meta.get("code") or "") or None
             _add(str(bid), str(name or ""), code=code)
+            if str(kind) == "theme" and isinstance(meta, dict):
+                theme_key = _norm(str(meta.get("theme_key") or ""))
+                name_norm = _norm(str(name or ""))
+                if theme_key and theme_key != name_norm:
+                    ref = _block_ref(
+                        str(kind), kind_label, str(bid), name_norm or theme_key, code=code,
+                    )
+                    index.setdefault(theme_key, []).append(ref)
     return index
 
 

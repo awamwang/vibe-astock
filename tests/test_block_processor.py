@@ -17,12 +17,13 @@ if str(ROOT) not in sys.path:
 from ths_block import cache as block_cache
 from ths_block import linker
 from ths_block import processor as bp
+from ths_block import theme_daily
 
 
 def _fake_snapshot() -> dict:
     kinds: dict = {}
     for kind in linker.list_kinds():
-        label = {"conception": "概念", "industry": "行业", "region": "地域", "custom": "自定义", "daily": "日线"}.get(kind, kind)
+        label = {"conception": "概念", "industry": "行业", "region": "地域", "custom": "自定义", "daily": "日线", "theme": "热点主题"}.get(kind, kind)
         if kind == "conception":
             blocks = {"D001": "华为概念", "D002": "存储芯片"}
         elif kind == "industry":
@@ -42,7 +43,10 @@ def _fake_snapshot() -> dict:
 
 
 @pytest.fixture(autouse=True)
-def _reset_processor(monkeypatch: pytest.MonkeyPatch):
+def _reset_processor(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory):
+    cache_dir = tmp_path_factory.mktemp("ths_theme")
+    monkeypatch.setattr(theme_daily, "_CACHE_DIR", str(cache_dir))
+    theme_daily.clear_mem()
     bp.clear_pending()
     bp.invalidate_index()
     block_cache.set_snapshot(_fake_snapshot())
@@ -52,7 +56,7 @@ def _reset_processor(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(
         "ths_block.service.refresh_kind",
-        lambda *, kind, ths_dir=None: block_cache.get() or {},
+        lambda *, kind, ths_dir=None, force=False: block_cache.get() or {},
     )
 
 
@@ -61,6 +65,52 @@ def test_exact_match_prefers_conception():
     assert r["status"] == "matched"
     assert r["block"]["kind"] == "conception"
     assert r["block"]["id"] == "D001"
+
+
+def test_theme_kind_participates_in_resolve():
+    """热点主题作为同花顺板块参与名称匹配；theme_key 也可命中。"""
+    snap = _fake_snapshot()
+    snap["kinds"]["theme"] = {
+        "kind": "theme",
+        "kind_label": "热点主题",
+        "blocks": {"C0CD": "共封装光学(CPO)", "B097": "光模块"},
+        "blocks_meta": {
+            "C0CD": {"theme_key": "光模块/CPO", "block_type": "hot-theme"},
+            "B097": {"theme_key": "光模块/CPO", "root_id": "C0CD", "block_type": "concept-subdivision"},
+        },
+        "rows": [
+            {
+                "kind": "theme", "kind_label": "热点主题", "id": "__theme_root__",
+                "name": "热点主题", "node_type": "branch",
+            },
+            {
+                "kind": "theme", "kind_label": "热点主题", "id": "C0CD",
+                "name": "共封装光学(CPO)", "node_type": "branch",
+                "theme_key": "光模块/CPO", "block_type": "hot-theme",
+            },
+            {
+                "kind": "theme", "kind_label": "热点主题", "id": "B097",
+                "name": "光模块", "node_type": "leaf",
+                "theme_key": "光模块/CPO", "root_id": "C0CD",
+                "block_type": "concept-subdivision",
+            },
+        ],
+    }
+    block_cache.set_snapshot(snap)
+    bp.invalidate_index()
+
+    by_name = bp.resolve_one("光模块")
+    assert by_name["status"] == "matched"
+    assert by_name["block"]["kind"] == "theme"
+    assert by_name["block"]["id"] == "B097"
+
+    by_key = bp.resolve_one("光模块/CPO")
+    assert by_key["status"] == "matched"
+    assert by_key["block"]["kind"] == "theme"
+
+    # 虚拟根不入库
+    root = bp.resolve_one("热点主题")
+    assert root["status"] == "unmatched"
 
 
 def test_partial_match_recorded():
@@ -141,7 +191,7 @@ def test_ensure_kinds_cached_triggers_missing(monkeypatch: pytest.MonkeyPatch):
     block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
     called: list[str] = []
 
-    def fake_refresh(*, kind: str, ths_dir=None):
+    def fake_refresh(*, kind: str, ths_dir=None, force=False):
         called.append(kind)
         snap = block_cache.get() or {"kinds": {}}
         kinds = dict(snap.get("kinds") or {})
@@ -156,6 +206,9 @@ def test_ensure_kinds_cached_triggers_missing(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
     bp.invalidate_index()
+    # 空快照，确保会触发全部类型补拉（含 theme）
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    theme_daily.clear_mem()
     refreshed = bp.ensure_kinds_cached()
     assert set(called) == set(linker.list_kinds())
     assert set(refreshed) == set(linker.list_kinds())
@@ -165,7 +218,7 @@ def test_ensure_kinds_cached_skips_when_complete(monkeypatch: pytest.MonkeyPatch
     called: list[str] = []
     monkeypatch.setattr(
         "ths_block.service.refresh_kind",
-        lambda *, kind, ths_dir=None: called.append(kind),
+        lambda *, kind, ths_dir=None, force=False: called.append(kind),
     )
     bp.invalidate_index()
     bp.ensure_kinds_cached()
@@ -179,7 +232,7 @@ def test_feed_skips_without_cache(monkeypatch: pytest.MonkeyPatch):
     bp.invalidate_index()
     called: list[str] = []
 
-    def fake_refresh(*, kind: str, ths_dir=None):
+    def fake_refresh(*, kind: str, ths_dir=None, force=False):
         called.append(kind)
         return block_cache.get() or {}
 
@@ -407,7 +460,7 @@ def test_schedule_ensure_kinds_cached_async(monkeypatch: pytest.MonkeyPatch):
     block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
     called: list[str] = []
 
-    def fake_refresh(*, kind: str, ths_dir=None):
+    def fake_refresh(*, kind: str, ths_dir=None, force=False):
         called.append(kind)
         snap = block_cache.get() or {"kinds": {}}
         kinds = dict(snap.get("kinds") or {})
@@ -422,6 +475,7 @@ def test_schedule_ensure_kinds_cached_async(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("ths_block.service.refresh_kind", fake_refresh)
     bp.invalidate_index()
+    theme_daily.clear_mem()
     assert bp.schedule_ensure_kinds_cached() is True
     import time
     deadline = time.time() + 5
@@ -456,7 +510,7 @@ def test_linker_unavailable_skips_ensure_and_feed(monkeypatch: pytest.MonkeyPatc
     bp.invalidate_index()
     called: list[str] = []
 
-    def fake_refresh(*, kind: str, ths_dir=None):
+    def fake_refresh(*, kind: str, ths_dir=None, force=False):
         called.append(kind)
         return block_cache.get() or {}
 

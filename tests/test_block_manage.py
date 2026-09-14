@@ -197,6 +197,74 @@ def test_merge_fuses_concept_tabs(monkeypatch: pytest.MonkeyPatch):
     assert hot_rows[0]["id"] == "D574"
 
 
+def test_merge_includes_theme_tab():
+    ths_snap = {
+        "updated_at": "t",
+        "kinds": {
+            "conception": {"rows": []},
+            "industry": {"rows": []},
+            "region": {"rows": []},
+            "custom": {"rows": []},
+            "daily": {"rows": []},
+            "theme": {
+                "rows": [{
+                    "kind": "theme",
+                    "kind_label": "热点主题",
+                    "id": "B097",
+                    "name": "光模块",
+                    "node_type": "leaf",
+                    "tree_path": "热点主题 › 共封装光学(CPO) › 光模块",
+                    "theme_key": "光模块/CPO",
+                    "root_id": "C0CD",
+                    "block_type": "concept-subdivision",
+                    "stock_count": 50,
+                }],
+            },
+        },
+    }
+    kpl_snap = {
+        "kinds": {
+            "concept": {
+                "rows": [{
+                    "kind": "concept",
+                    "kind_label": "概念",
+                    "code": "886200",
+                    "name": "光模块",
+                    "power": 88,
+                    "pct": 1.2,
+                    "speed": 0.1,
+                    "m_net": 1,
+                    "sort": 1,
+                }],
+            },
+            "hot": {
+                "rows": [{
+                    "kind": "hot",
+                    "kind_label": "人气",
+                    "code": "801200",
+                    "name": "光模块/CPO",
+                    "power": 100,
+                    "pct": 0.5,
+                    "speed": 0,
+                    "m_net": 0,
+                    "sort": 2,
+                }],
+            },
+        },
+    }
+    merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap=kpl_snap)
+    theme_rows = merged["theme"]
+    assert len(theme_rows) == 1
+    assert theme_rows[0]["origin"] == "ths"
+    assert theme_rows[0]["kind"] == "theme"
+    assert theme_rows[0]["ths_kind"] == "theme"
+    assert theme_rows[0]["theme_key"] == "光模块/CPO"
+    assert theme_rows[0]["root_id"] == "C0CD"
+    assert theme_rows[0]["has_ths"] is True
+    assert theme_rows[0]["has_kpl"] is True
+    assert theme_rows[0]["kpl_code"] == "886200"
+
+
 def test_merge_region_strips_admin_suffix():
     ths_snap = {
         "updated_at": "t",

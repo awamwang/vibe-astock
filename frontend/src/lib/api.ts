@@ -1064,6 +1064,12 @@ export interface ThsBlockRow {
   query_key?: string;
   hex_id?: string;
   stock_count?: number;
+  /** 热点主题：在线 theme_key */
+  theme_key?: string;
+  /** 热点主题：本地根板块 ID */
+  root_id?: string;
+  /** hot-theme / concept-subdivision 等 */
+  block_type?: string;
 }
 
 /** 板块管理融合行：同花顺 + 开盘啦字段并集，缺失留空 */

@@ -1,7 +1,7 @@
 """板块管理 —— 同花顺 / 开盘啦按类型融合。
 
 概念 / 行业 / 地域：跨来源按「完全同名 + 板块别名族」并入同一页签（字段并集）；
-自定义：同花顺页签，并与全部开盘啦板块（概念/行业/地域/人气）同名匹配补字段；
+自定义 / 热点主题：同花顺页签，并与全部开盘啦板块（概念/行业/地域/人气）同名匹配补字段；
 每日动态仅同花顺；人气仅开盘啦。
 合并后保留 ``kpl_name``（开盘啦原始名称）。
 开盘啦侧经 ``kpl_blocks.ensure`` 初始化，自动日更最多一次。
@@ -24,6 +24,7 @@ FUSED_KIND_KEYS = (
 THS_ONLY_KEYS = (
     ("custom", "custom", "自定义"),
     ("daily", "daily", "每日动态"),
+    ("theme", "theme", "热点主题"),
 )
 # 开盘啦独有
 KPL_ONLY_KEYS = (
@@ -67,6 +68,9 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
         "query_key": None,
         "hex_id": None,
         "stock_count": None,
+        "theme_key": None,
+        "root_id": None,
+        "block_type": None,
         "kpl_code": "",
         "kpl_name": "",  # 开盘啦原始名称（合并后展示名可能已是同花顺/标准名）
         "kpl_kind": "",
@@ -128,7 +132,7 @@ def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False
         for key in (
             "kind", "kind_label", "id", "code", "node_type", "tree_path",
             "depth", "parent_id", "tree_order", "custom_type", "dynamic_kind",
-            "query_key", "hex_id", "stock_count",
+            "query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type",
         ):
             if key in ths and ths[key] is not None:
                 row[key] = ths[key]
@@ -137,7 +141,7 @@ def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False
     else:
         for key in (
             "id", "code", "custom_type", "dynamic_kind",
-            "query_key", "hex_id", "stock_count",
+            "query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type",
         ):
             if key in ths and ths[key] is not None and row.get(key) in (None, ""):
                 row[key] = ths[key]
@@ -220,7 +224,7 @@ def _ths_leaf_by_name(
 ) -> dict[str, dict]:
     """同花顺叶子 名称键→行（含别名族）；可限定类型。"""
     out: dict[str, dict] = {}
-    kinds = (ths_kind,) if ths_kind else ("conception", "industry", "region", "custom", "daily")
+    kinds = (ths_kind,) if ths_kind else ("conception", "industry", "region", "custom", "daily", "theme")
     for kind in kinds:
         entry = (ths_snap.get("kinds") or {}).get(kind) or {}
         for ths in entry.get("rows") or []:
@@ -404,15 +408,14 @@ def _build_ths_only(
     return out
 
 
-def _build_custom(
+def _build_ths_with_kpl_match(
     *,
+    ths_kind: str,
+    kind_label: str,
     ths_rows: list[dict],
     kpl_snap: dict[str, Any],
 ) -> list[dict]:
-    """自定义页签：同花顺行，并与全部开盘啦板块同名/别名匹配补字段。
-
-    不把开盘啦独有行并入本页签；结构榜优先，人气作点查码兜底。
-    """
+    """同花顺页签行，并与开盘啦结构榜/人气按同名/别名补字段（不并入开盘啦独有行）。"""
     kpl_map = _kpl_structural_by_name(kpl_snap)
     hot_map = _kpl_by_name_for_kind(kpl_snap, "hot")
     matched_codes: set[str] = set()
@@ -425,9 +428,9 @@ def _build_custom(
         row = _blank_unified(name=name)
         row["origin"] = "ths"
         _apply_ths(row, ths, native=True)
-        row["kind"] = "custom"
-        row["kind_label"] = str(ths.get("kind_label") or "自定义")
-        row["ths_kind"] = "custom"
+        row["kind"] = ths_kind
+        row["kind_label"] = str(ths.get("kind_label") or kind_label)
+        row["ths_kind"] = ths_kind
         ths_built.append((ths, row))
 
     def _is_branch(src: dict) -> bool:
@@ -444,6 +447,18 @@ def _build_custom(
             region=False,
             matched_codes=matched_codes,
         )
+        # 热点主题：再用 theme_key 试一次开盘啦同名
+        if ths_kind == "theme" and not row.get("kpl_code"):
+            tk = str(row.get("theme_key") or "").strip()
+            if tk and tk != str(row.get("name") or ""):
+                _attach_kpl_to_ths(
+                    row,
+                    name=tk,
+                    kpl_map=kpl_map,
+                    hot_map=hot_map,
+                    region=False,
+                    matched_codes=matched_codes,
+                )
     for ths, row in ths_built:
         if not _is_branch(ths) or row.get("kpl_code"):
             continue
@@ -455,8 +470,36 @@ def _build_custom(
             region=False,
             matched_codes=matched_codes,
         )
+        if ths_kind == "theme" and not row.get("kpl_code"):
+            tk = str(row.get("theme_key") or "").strip()
+            if tk and tk != str(row.get("name") or ""):
+                _attach_kpl_to_ths(
+                    row,
+                    name=tk,
+                    kpl_map=kpl_map,
+                    hot_map=hot_map,
+                    region=False,
+                    matched_codes=matched_codes,
+                )
 
     return [row for _, row in ths_built]
+
+
+def _build_custom(
+    *,
+    ths_rows: list[dict],
+    kpl_snap: dict[str, Any],
+) -> list[dict]:
+    """自定义页签：同花顺行，并与全部开盘啦板块同名/别名匹配补字段。
+
+    不把开盘啦独有行并入本页签；结构榜优先，人气作点查码兜底。
+    """
+    return _build_ths_with_kpl_match(
+        ths_kind="custom",
+        kind_label="自定义",
+        ths_rows=ths_rows,
+        kpl_snap=kpl_snap,
+    )
 
 
 def _build_kpl_hot(
@@ -521,8 +564,13 @@ def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[
     for key, ths_kind, label in THS_ONLY_KEYS:
         entry = ths_kinds.get(ths_kind) or {}
         ths_rows = list(entry.get("rows") or []) if isinstance(entry, dict) else []
-        if ths_kind == "custom":
-            merged[key] = _build_custom(ths_rows=ths_rows, kpl_snap=kpl_snap)
+        if ths_kind in ("custom", "theme"):
+            merged[key] = _build_ths_with_kpl_match(
+                ths_kind=ths_kind,
+                kind_label=label,
+                ths_rows=ths_rows,
+                kpl_snap=kpl_snap,
+            )
         else:
             merged[key] = _build_ths_only(
                 ths_kind=ths_kind,
@@ -583,7 +631,7 @@ def refresh(*, ths_dir: str | None = None, refresh_ths: bool = True) -> dict[str
         try:
             from ths_block.service import refresh_cache  # noqa: PLC0415
 
-            refresh_cache(ths_dir=ths_dir)
+            refresh_cache(ths_dir=ths_dir, force_theme=True)
         except Exception:  # noqa: BLE001
             pass
     return snapshot(ensure_kpl=True, force_kpl=True)

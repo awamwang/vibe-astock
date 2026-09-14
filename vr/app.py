@@ -1213,7 +1213,7 @@ def ths_blocks_refresh(body: ThsBlockRefreshIn | None = None):
     """从 ths-linker 重新拉取全部板块类型并更新全局缓存。"""
     ths_dir = (body.ths_dir if body else "") or None
     try:
-        return {"data": ths_block_layer.refresh_cache(ths_dir=ths_dir)}
+        return {"data": ths_block_layer.refresh_cache(ths_dir=ths_dir, force_theme=True)}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"板块刷新失败：{e}") from e
 
@@ -1223,7 +1223,11 @@ def ths_blocks_refresh_kind(kind: str, body: ThsBlockRefreshIn | None = None):
     """刷新单个板块类型并合并进全局缓存。"""
     ths_dir = (body.ths_dir if body else "") or None
     try:
-        return {"data": ths_block_layer.refresh_kind(kind=kind, ths_dir=ths_dir)}
+        return {
+            "data": ths_block_layer.refresh_kind(
+                kind=kind, ths_dir=ths_dir, force=True,
+            )
+        }
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:  # noqa: BLE001

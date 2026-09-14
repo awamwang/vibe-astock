@@ -21,7 +21,17 @@ from ths_block import persist as block_persist
 from ths_block import processor as block_processor
 from ths_block import service as block_service
 from ths_block import stocks as block_stocks
+from ths_block import theme_daily
 from ths_block import tree as block_tree
+
+
+@pytest.fixture(autouse=True)
+def _isolate_theme_daily(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+    cache_dir = tmp_path_factory.mktemp("ths_theme")
+    monkeypatch.setattr(theme_daily, "_CACHE_DIR", str(cache_dir))
+    theme_daily.clear_mem()
+    yield
+    theme_daily.clear_mem()
 
 
 def _write_stockblock_ini(ths_dir: Path, filename: str, content: str) -> None:
@@ -181,6 +191,10 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: ths_str)
     monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
     monkeypatch.setattr("ths_block.linker.fetch_tree", fake_tree)
+    monkeypatch.setattr(
+        "ths_block.linker.fetch_theme_list",
+        lambda **_kw: {"ok": True, "action": "list", "source": "local", "blocks": {}},
+    )
 
     snap = block_service.refresh_cache()
     assert snap["ths_dir"] == ths_str
@@ -353,6 +367,10 @@ def test_tree_fallback_to_flat_list(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: ths_str)
     monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
     monkeypatch.setattr("ths_block.linker.fetch_tree", fake_tree_fail)
+    monkeypatch.setattr(
+        "ths_block.linker.fetch_theme_list",
+        lambda **_kw: {"ok": True, "action": "list", "source": "local", "blocks": {}},
+    )
 
     snap = block_service.refresh_cache()
     entry = snap["kinds"]["conception"]
@@ -433,6 +451,10 @@ def test_refresh_and_ensure_no_deadlock(tmp_path: Path, monkeypatch: pytest.Monk
         "ths_block.linker.fetch_tree",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip")),
     )
+    monkeypatch.setattr(
+        "ths_block.linker.fetch_theme_list",
+        lambda **_kw: {"ok": True, "action": "list", "source": "local", "blocks": {}},
+    )
 
     ensure_done = threading.Event()
     ensure_error: list[BaseException] = []
@@ -461,9 +483,177 @@ def test_refresh_cache_marks_linker_unavailable(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: "/tmp/ths")
     monkeypatch.setattr("ths_block.linker.fetch_list", fake_list)
+    monkeypatch.setattr(
+        "ths_block.linker.fetch_theme_list",
+        lambda **_kw: (_ for _ in ()).throw(RuntimeError("未找到 ths-linker 命令，请先安装并加入 PATH")),
+    )
 
     snap = block_service.refresh_cache()
     assert snap.get("linker_unavailable") is True
     assert snap.get("linker_message") == "依赖于第三方工具，目前无法请求"
-    assert not snap.get("kinds")
+    # 各类型均失败时不应残留可用板块数据
+    assert not any(
+        (isinstance(v.get("blocks"), dict) and v["blocks"])
+        or (isinstance(v.get("rows"), list) and v["rows"])
+        for v in (snap.get("kinds") or {}).values()
+        if isinstance(v, dict)
+    )
+
+def test_refresh_theme_kind_builds_forest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """热点主题：list + 各主题 tree 合成森林，成分股走 ths-theme stocks。"""
+    from ths_block import theme_daily
+
+    cache_dir = tmp_path / "ths_theme"
+    cache_dir.mkdir()
+    monkeypatch.setattr(theme_daily, "_CACHE_DIR", str(cache_dir))
+    theme_daily.clear_mem()
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+
+    def fake_theme_list(*, ths_dir=None, source="auto", tab="all"):
+        if source == "online":
+            raise RuntimeError("offline")
+        return {
+            "ok": True,
+            "action": "list",
+            "source": "local",
+            "kind": "theme",
+            "kind_label": "热点主题",
+            "count": 1,
+            "blocks": {
+                "C0CD": {
+                    "name": "共封装光学(CPO)",
+                    "block_type": "hot-theme",
+                    "is_ths_block": True,
+                    "stock_count": 0,
+                },
+            },
+        }
+
+    def fake_theme_tree(*, ths_dir=None, theme_key=None, root_id=None, source="auto"):
+        assert root_id == "C0CD" or theme_key
+        return {
+            "ok": True,
+            "action": "tree",
+            "source": "local",
+            "theme_key": "光模块/CPO",
+            "root_id": "C0CD",
+            "root_name": "共封装光学(CPO)",
+            "branch_count": 1,
+            "leaf_count": 1,
+            "tree": {
+                "id": "C0CD",
+                "name": "共封装光学(CPO)",
+                "node_type": "branch",
+                "block_type": "hot-theme",
+                "children": [
+                    {
+                        "id": "B097",
+                        "name": "光模块",
+                        "node_type": "leaf",
+                        "block_type": "concept-subdivision",
+                        "stock_count": 2,
+                    },
+                ],
+            },
+        }
+
+    def fake_theme_stocks(**kwargs):
+        assert kwargs.get("block_code") == "B097"
+        assert kwargs.get("scope") == "leaf"
+        return {
+            "ok": True,
+            "action": "stocks",
+            "block_name": "光模块",
+            "count": 2,
+            "stocks": [
+                {"market_id": "17", "code": "600103", "symbol": "600103.SH", "name": "青山纸业"},
+                {"market_id": "33", "code": "000001", "symbol": "000001.SZ", "name": "平安银行"},
+            ],
+        }
+
+    monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: "/tmp/ths")
+    monkeypatch.setattr("ths_block.linker.fetch_theme_list", fake_theme_list)
+    monkeypatch.setattr("ths_block.linker.fetch_theme_tree", fake_theme_tree)
+    monkeypatch.setattr("ths_block.linker.fetch_theme_stocks", fake_theme_stocks)
+
+    snap = block_service.refresh_kind(kind="theme", force=True)
+    entry = snap["kinds"]["theme"]
+    assert entry["tree_mode"] == "tree"
+    assert entry["root_id"] == "__theme_root__"
+    assert entry.get("fetched_date")
+    assert any(r["id"] == "C0CD" and r["node_type"] == "branch" for r in entry["rows"])
+    leaf = next(r for r in entry["rows"] if r["id"] == "B097")
+    assert leaf["node_type"] == "leaf"
+    assert leaf["theme_key"] == "光模块/CPO"
+    assert leaf["root_id"] == "C0CD"
+    assert leaf["parent_id"] == "C0CD"
+
+    detail = block_service.get_block_stocks(kind="theme", block_id="B097")
+    assert detail["count"] == 2
+    assert detail["stocks"][0]["code"] == "600103"
+    assert detail["stocks"][0]["market"] == "17"
+    assert detail["stocks"][0]["name"] == "青山纸业"
+
+
+def test_theme_daily_limit_reuses_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """热点主题非 force 时复用当日落盘，不重复请求 ths-linker。"""
+    from ths_block import theme_daily
+
+    cache_dir = tmp_path / "ths_theme"
+    cache_dir.mkdir()
+    monkeypatch.setattr(theme_daily, "_CACHE_DIR", str(cache_dir))
+    theme_daily.clear_mem()
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+
+    calls = {"list": 0}
+
+    def fake_theme_list(**_kw):
+        calls["list"] += 1
+        return {
+            "ok": True,
+            "action": "list",
+            "source": "local",
+            "blocks": {
+                "C0CD": {"name": "共封装光学(CPO)", "block_type": "hot-theme"},
+            },
+        }
+
+    def fake_theme_tree(**_kw):
+        return {
+            "ok": True,
+            "action": "tree",
+            "source": "local",
+            "theme_key": "光模块/CPO",
+            "root_id": "C0CD",
+            "root_name": "共封装光学(CPO)",
+            "branch_count": 1,
+            "leaf_count": 1,
+            "tree": {
+                "id": "C0CD",
+                "name": "共封装光学(CPO)",
+                "node_type": "branch",
+                "block_type": "hot-theme",
+                "children": [
+                    {"id": "B097", "name": "光模块", "node_type": "leaf", "block_type": "concept-subdivision"},
+                ],
+            },
+        }
+
+    monkeypatch.setattr(block_service, "_resolve_ths_dir", lambda explicit=None: "/tmp/ths")
+    monkeypatch.setattr("ths_block.linker.fetch_theme_list", fake_theme_list)
+    monkeypatch.setattr("ths_block.linker.fetch_theme_tree", fake_theme_tree)
+
+    block_service.refresh_kind(kind="theme", force=True)
+    assert calls["list"] >= 1
+    first_calls = calls["list"]
+
+    block_cache.set_snapshot({"updated_at": None, "kinds": {}, "empty": True})
+    theme_daily.clear_mem()  # 仅清内存，落盘仍在
+    snap2 = block_service.refresh_kind(kind="theme", force=False)
+    assert calls["list"] == first_calls
+    assert snap2["kinds"]["theme"]["rows"]
+    assert snap2["kinds"]["theme"].get("from_cache") is True
+
+    block_service.refresh_kind(kind="theme", force=True)
+    assert calls["list"] > first_calls
 

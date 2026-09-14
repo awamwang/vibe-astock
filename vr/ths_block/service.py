@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import cache, linker, persist, stocks, tree as block_tree
+from . import cache, linker, persist, stocks, theme_daily, tree as block_tree
 
 _BEIJING = timezone(timedelta(hours=8))
 _TREE_KINDS = set(linker.tree_kinds())
+_THEME_KIND = linker.theme_kind()
+_THEME_ROOT_ID = "__theme_root__"
+_BLOCK_CODE_RE = re.compile(r"^[A-Za-z0-9]{3,8}$")
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_BUSY = 0
 _LINKER_MSG = "依赖于第三方工具，目前无法请求"
@@ -149,7 +154,22 @@ def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
     code = meta.get("code")
     if code not in (None, ""):
         out["code"] = str(code).strip()
-    for key in ("query_key", "hex_id", "stock_count"):
+    for key in ("query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type"):
+        if key in meta and meta[key] is not None:
+            out[key] = meta[key]
+    return out
+
+
+def _is_block_code(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text or not _BLOCK_CODE_RE.fullmatch(text):
+        return False
+    return not any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _theme_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
+    out = _custom_row_fields(meta)
+    for key in ("sort_value", "latest_event_time", "rise_pct", "limit_up_count", "up_count", "down_count"):
         if key in meta and meta[key] is not None:
             out[key] = meta[key]
     return out
@@ -182,6 +202,8 @@ def _flatten_tree(
     blocks_names: dict[str, str] | None = None,
     blocks_meta: dict[str, dict[str, Any]] | None = None,
     order_counter: list[int] | None = None,
+    theme_key: str | None = None,
+    root_id: str | None = None,
 ) -> list[dict[str, Any]]:
     parts = list(path_parts or [])
     name = str(node.get("name") or "").strip()
@@ -203,6 +225,15 @@ def _flatten_tree(
         "tree_order": order_counter[0],
     }
     order_counter[0] += 1
+    if theme_key:
+        row["theme_key"] = theme_key
+    if root_id:
+        row["root_id"] = root_id
+    block_type = node.get("block_type")
+    if block_type:
+        row["block_type"] = str(block_type)
+    if node.get("stock_count") is not None:
+        row["stock_count"] = node.get("stock_count")
     _enrich_leaf_row(row, blocks_names=blocks_names, blocks_meta=blocks_meta)
     rows = [row]
     if node_type == "branch":
@@ -219,6 +250,8 @@ def _flatten_tree(
                         blocks_names=blocks_names,
                         blocks_meta=blocks_meta,
                         order_counter=order_counter,
+                        theme_key=theme_key,
+                        root_id=root_id,
                     )
                 )
     return rows
@@ -248,8 +281,309 @@ def _rows_from_list(
     return rows
 
 
+def _resolve_theme_identity(
+    key: str,
+    raw: Any,
+    *,
+    list_source: str,
+) -> tuple[str | None, str | None, str, dict[str, Any]]:
+    """从主题 list 条目解析 (theme_key, root_id, name, meta)。"""
+    meta: dict[str, Any] = dict(raw) if isinstance(raw, dict) else {"name": str(raw or key)}
+    name = str(meta.get("name") or key).strip() or key
+    root_id = str(meta.get("root_id") or "").strip().upper() or None
+    theme_key = str(meta.get("theme_key") or "").strip() or None
+    if _is_block_code(key):
+        root_id = root_id or key.strip().upper()
+    elif not theme_key:
+        theme_key = key
+    # 在线列表以 theme_key 为键；本地列表以 root_id 为键
+    if list_source in ("online", "auto") and not theme_key and not _is_block_code(key):
+        theme_key = key
+    if not theme_key and name and not _is_block_code(name):
+        theme_key = name
+    meta.setdefault("name", name)
+    meta.setdefault("block_type", "hot-theme")
+    if theme_key:
+        meta["theme_key"] = theme_key
+    if root_id:
+        meta["root_id"] = root_id
+    return theme_key, root_id, name, meta
+
+
+def _fetch_one_theme_tree(
+    ths_dir: str,
+    *,
+    theme_key: str | None,
+    root_id: str | None,
+) -> dict[str, Any]:
+    """优先本地 root_id，失败再按 theme_key。"""
+    errors: list[str] = []
+    if root_id:
+        try:
+            return linker.fetch_theme_tree(
+                ths_dir=ths_dir, root_id=root_id, source="local",
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"local:{exc}")
+        try:
+            return linker.fetch_theme_tree(
+                ths_dir=ths_dir, root_id=root_id, source="auto",
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"auto/root:{exc}")
+    if theme_key:
+        try:
+            return linker.fetch_theme_tree(
+                ths_dir=ths_dir, theme_key=theme_key, source="auto",
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"auto/key:{exc}")
+    raise RuntimeError("；".join(errors) or "主题树不可用")
+
+
+def _fetch_theme_kind_entry(ths_dir: str) -> tuple[dict[str, Any], list[str]]:
+    """拉取热点主题森林：主题根为 branch，细分为 leaf。"""
+    warnings: list[str] = []
+    try:
+        list_payload = linker.fetch_theme_list(ths_dir=ths_dir, source="local")
+    except Exception:  # noqa: BLE001
+        list_payload = linker.fetch_theme_list(ths_dir=ths_dir, source="auto")
+
+    list_source = str(list_payload.get("source") or "auto")
+    themes_raw = dict(list_payload.get("blocks") or {})
+    identities: list[tuple[str | None, str | None, str, dict[str, Any]]] = []
+    for key, raw in themes_raw.items():
+        identities.append(
+            _resolve_theme_identity(str(key), raw, list_source=list_source)
+        )
+
+    # 在线热点列表更贴近盘面；本地有 ID 时用 root_id 补全
+    if list_source.startswith("local") and identities:
+        try:
+            online = linker.fetch_theme_list(ths_dir=ths_dir, source="online")
+            online_blocks = dict(online.get("blocks") or {})
+            if online_blocks:
+                # 以在线顺序为主，匹配本地 root
+                merged: list[tuple[str | None, str | None, str, dict[str, Any]]] = []
+                used_roots: set[str] = set()
+                for key, raw in online_blocks.items():
+                    tk, rid, name, meta = _resolve_theme_identity(
+                        str(key), raw, list_source="online",
+                    )
+                    # 按名称或 theme_key 对齐本地 root_id
+                    hit = None
+                    for cand_tk, cand_rid, cand_name, cand_meta in identities:
+                        if cand_rid and cand_rid in used_roots:
+                            continue
+                        if cand_tk and tk and cand_tk == tk:
+                            hit = (cand_tk, cand_rid, cand_name, cand_meta)
+                            break
+                        if cand_name and name and cand_name == name:
+                            hit = (cand_tk, cand_rid, cand_name, cand_meta)
+                            break
+                    if hit and hit[1]:
+                        rid = hit[1]
+                        used_roots.add(rid)
+                        meta = {**hit[3], **meta}
+                        meta["root_id"] = rid
+                        if tk:
+                            meta["theme_key"] = tk
+                        merged.append((tk or hit[0], rid, name or hit[2], meta))
+                    else:
+                        merged.append((tk, rid, name, meta))
+                for item in identities:
+                    if item[1] and item[1] not in used_roots:
+                        merged.append(item)
+                identities = merged
+                list_source = str(online.get("source") or "online")
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"theme: 在线热点列表不可用（{exc}），已使用本地主题")
+
+    blocks_names: dict[str, str] = {}
+    blocks_meta: dict[str, dict[str, Any]] = {}
+    tree_children: list[dict[str, Any]] = []
+    branch_count = 0
+    leaf_count = 0
+    order_counter = [0]
+    rows: list[dict[str, Any]] = []
+
+    # 森林虚拟根
+    forest_root = {
+        "id": _THEME_ROOT_ID,
+        "name": "热点主题",
+        "node_type": "branch",
+        "block_type": "hot-theme",
+        "children": tree_children,
+    }
+    rows.extend(
+        _flatten_tree(
+            {
+                "id": _THEME_ROOT_ID,
+                "name": "热点主题",
+                "node_type": "branch",
+                "block_type": "hot-theme",
+                "children": [],
+            },
+            kind=_THEME_KIND,
+            kind_label="热点主题",
+            order_counter=order_counter,
+        )
+    )
+
+    def _job(item: tuple[str | None, str | None, str, dict[str, Any]]) -> tuple[
+        str | None, str | None, str, dict[str, Any], dict[str, Any] | None, str | None
+    ]:
+        theme_key, root_id, name, meta = item
+        try:
+            payload = _fetch_one_theme_tree(
+                ths_dir, theme_key=theme_key, root_id=root_id,
+            )
+            return theme_key, root_id, name, meta, payload, None
+        except Exception as exc:  # noqa: BLE001
+            return theme_key, root_id, name, meta, None, str(exc)
+
+    results: list[
+        tuple[str | None, str | None, str, dict[str, Any], dict[str, Any] | None, str | None]
+    ] = []
+    workers = min(6, max(1, len(identities)))
+    if identities:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_job, item) for item in identities]
+            for fut in as_completed(futures):
+                results.append(fut.result())
+
+    # 保持 identities 原顺序
+    by_key = {
+        (r[0] or "", r[1] or "", r[2]): r for r in results
+    }
+    ordered_results = []
+    for item in identities:
+        key = (item[0] or "", item[1] or "", item[2])
+        ordered_results.append(by_key.get(key) or (*item, None, "未返回"))
+
+    for theme_key, root_id, name, meta, payload, err in ordered_results:
+        node_id = root_id or theme_key or name
+        if not node_id:
+            continue
+        theme_meta = _theme_row_fields(meta)
+        theme_meta["theme_key"] = theme_key or theme_meta.get("theme_key")
+        theme_meta["root_id"] = root_id or theme_meta.get("root_id")
+        theme_meta["block_type"] = "hot-theme"
+        blocks_names[node_id] = name
+        blocks_meta[node_id] = theme_meta
+
+        if err or not payload:
+            warnings.append(f"theme/{name}: {err or '主题树为空'}")
+            # 无树时仍保留主题为 flat，便于列表浏览
+            flat_row = {
+                "kind": _THEME_KIND,
+                "kind_label": "热点主题",
+                "id": node_id,
+                "name": name,
+                "node_type": "flat",
+                "tree_path": f"热点主题 › {name}",
+                "depth": 1,
+                "parent_id": _THEME_ROOT_ID,
+                "tree_order": order_counter[0],
+                **theme_meta,
+            }
+            order_counter[0] += 1
+            rows.append(flat_row)
+            tree_children.append({
+                "id": node_id,
+                "name": name,
+                "node_type": "leaf",
+                "block_type": "hot-theme",
+                "is_ths_block": True,
+                "stock_count": theme_meta.get("stock_count") or 0,
+            })
+            leaf_count += 1
+            continue
+
+        tree = payload.get("tree")
+        if not isinstance(tree, dict) or not tree:
+            warnings.append(f"theme/{name}: 主题树为空")
+            continue
+
+        # 统一根节点身份：优先本地 root_id
+        resolved_root = str(payload.get("root_id") or root_id or "").strip().upper()
+        resolved_key = (
+            str(payload.get("theme_key") or theme_key or "").strip()
+            or name
+        )
+        resolved_name = str(payload.get("root_name") or tree.get("name") or name).strip()
+        tree = dict(tree)
+        if resolved_root:
+            tree["id"] = resolved_root
+        elif not tree.get("id"):
+            tree["id"] = resolved_key
+        tree["name"] = resolved_name
+        tree["node_type"] = "branch"
+        tree["block_type"] = "hot-theme"
+        tree_children.append(tree)
+
+        branch_count += int(payload.get("branch_count") or 0) + 1
+        leaf_count += int(payload.get("leaf_count") or 0)
+
+        sub_blocks = payload.get("blocks")
+        if isinstance(sub_blocks, dict):
+            for bid, brow in sub_blocks.items():
+                if not isinstance(brow, dict):
+                    continue
+                bmeta = _theme_row_fields(brow)
+                bmeta["theme_key"] = resolved_key
+                if resolved_root:
+                    bmeta["root_id"] = resolved_root
+                bmeta.setdefault("block_type", "concept-subdivision")
+                blocks_names[str(bid)] = str(brow.get("name") or bid)
+                blocks_meta[str(bid)] = bmeta
+
+        theme_meta["theme_key"] = resolved_key
+        if resolved_root:
+            theme_meta["root_id"] = resolved_root
+        blocks_names[str(tree.get("id"))] = resolved_name
+        blocks_meta[str(tree.get("id"))] = theme_meta
+
+        rows.extend(
+            _flatten_tree(
+                tree,
+                kind=_THEME_KIND,
+                kind_label="热点主题",
+                path_parts=["热点主题"],
+                depth=1,
+                parent_id=_THEME_ROOT_ID,
+                blocks_names=blocks_names,
+                blocks_meta=blocks_meta,
+                order_counter=order_counter,
+                theme_key=resolved_key,
+                root_id=resolved_root or None,
+            )
+        )
+
+    forest_root["children"] = tree_children
+    entry: dict[str, Any] = {
+        "kind": _THEME_KIND,
+        "kind_label": "热点主题",
+        "count": len(blocks_names),
+        "blocks": blocks_names,
+        "blocks_meta": blocks_meta,
+        "root_id": _THEME_ROOT_ID,
+        "root_name": "热点主题",
+        "branch_count": branch_count + 1,
+        "leaf_count": leaf_count,
+        "tree": forest_root,
+        "tree_mode": "tree",
+        "rows": rows,
+        "source": list_source,
+    }
+    return entry, warnings
+
+
 def _fetch_kind_entry(ths_dir: str, kind: str) -> tuple[dict[str, Any], list[str]]:
     """拉取单个板块类型；树不可用时回退为 flat 列表。"""
+    if kind == _THEME_KIND:
+        return _fetch_theme_kind_entry(ths_dir)
+
     warnings: list[str] = []
     list_payload = linker.fetch_list(kind, ths_dir=ths_dir)
     blocks_raw = dict(list_payload.get("blocks") or {})
@@ -354,19 +688,68 @@ def _apply_kind_refresh(
     kind: str,
     *,
     ths_dir: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
-    resolved = _resolve_ths_dir(ths_dir or snap.get("ths_dir"))
     kinds_data: dict[str, Any] = dict(snap.get("kinds") or {})
     errors: list[str] = list(snap.get("errors") or [])
 
+    # 热点主题：日限（与开盘啦一致）；非 force 时优先内存今日 / 当日落盘
+    if kind == _THEME_KIND and not force:
+        existing = kinds_data.get(kind)
+        if theme_daily.entry_is_today(existing):
+            return {
+                "updated_at": snap.get("updated_at") or _now(),
+                "ths_dir": snap.get("ths_dir") or ths_dir,
+                "kinds": kinds_data,
+                "errors": errors,
+            }
+        archived = theme_daily.load_today()
+        if archived and isinstance(archived.get("entry"), dict):
+            entry = dict(archived["entry"])
+            entry["from_cache"] = True
+            entry["fetched_date"] = archived.get("fetched_date")
+            kinds_data[kind] = entry
+            warnings = [str(w) for w in (archived.get("warnings") or []) if w]
+            errors = _merge_errors(errors, kind=kind, new_items=warnings)
+            return {
+                "updated_at": snap.get("updated_at") or archived.get("updated_at") or _now(),
+                "ths_dir": ths_dir or snap.get("ths_dir") or archived.get("ths_dir"),
+                "kinds": kinds_data,
+                "errors": errors,
+            }
+
+    resolved = _resolve_ths_dir(ths_dir or snap.get("ths_dir"))
+
     try:
         entry, warnings = _fetch_kind_entry(resolved, kind)
+        if kind == _THEME_KIND:
+            entry = theme_daily.save_today(
+                entry, ths_dir=resolved, warnings=warnings,
+            )
         kinds_data[kind] = entry
         _maybe_persist_custom_dynamic(
             kind=kind, ths_dir=resolved, entry=entry, warnings=warnings
         )
         errors = _merge_errors(errors, kind=kind, new_items=warnings)
     except Exception as exc:  # noqa: BLE001
+        # 主题拉取失败时，若有今日可用日限缓存则降级复用
+        if kind == _THEME_KIND:
+            archived = theme_daily.load_today()
+            if archived and isinstance(archived.get("entry"), dict):
+                entry = dict(archived["entry"])
+                entry["from_cache"] = True
+                kinds_data[kind] = entry
+                errors = _merge_errors(
+                    errors,
+                    kind=kind,
+                    new_items=[f"{kind}: {exc}（已使用今日缓存）"],
+                )
+                return {
+                    "updated_at": snap.get("updated_at") or _now(),
+                    "ths_dir": resolved,
+                    "kinds": kinds_data,
+                    "errors": errors,
+                }
         errors = _merge_errors(errors, kind=kind, new_items=[f"{kind}: {exc}"])
 
     return {
@@ -377,8 +760,16 @@ def _apply_kind_refresh(
     }
 
 
-def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
-    """刷新单个板块类型并合并进全局缓存；失败时保留该类型旧数据。"""
+def refresh_kind(
+    *,
+    kind: str,
+    ths_dir: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """刷新单个板块类型并合并进全局缓存；失败时保留该类型旧数据。
+
+    ``force``：热点主题为 True 时忽略日限强制重拉；其它类型忽略该参数。
+    """
     global _REFRESH_BUSY
     kind_norm = kind.strip()
     if kind_norm not in linker.list_kinds():
@@ -388,7 +779,9 @@ def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
         _REFRESH_BUSY += 1
         try:
             snap = cache.get() or {}
-            snapshot = _apply_kind_refresh(snap, kind_norm, ths_dir=ths_dir)
+            snapshot = _apply_kind_refresh(
+                snap, kind_norm, ths_dir=ths_dir, force=force,
+            )
             snapshot = _apply_linker_status(snapshot)
             snapshot = cache.set_snapshot(snapshot)
         finally:
@@ -403,8 +796,15 @@ def refresh_kind(*, kind: str, ths_dir: str | None = None) -> dict[str, Any]:
     return snapshot
 
 
-def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
-    """从 ths-linker 逐类型拉取板块并写入内存缓存；部分失败不影响其它类型。"""
+def refresh_cache(
+    *,
+    ths_dir: str | None = None,
+    force_theme: bool = False,
+) -> dict[str, Any]:
+    """从 ths-linker 逐类型拉取板块并写入内存缓存；部分失败不影响其它类型。
+
+    ``force_theme``：手动全量刷新时为 True，忽略热点主题日限。
+    """
     global _REFRESH_BUSY
     with _REFRESH_LOCK:
         _REFRESH_BUSY += 1
@@ -416,6 +816,21 @@ def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
 
             for kind in linker.list_kinds():
                 try:
+                    if kind == _THEME_KIND:
+                        partial = _apply_kind_refresh(
+                            {
+                                "updated_at": snap.get("updated_at"),
+                                "ths_dir": resolved,
+                                "kinds": kinds_data,
+                                "errors": errors,
+                            },
+                            kind,
+                            ths_dir=resolved,
+                            force=force_theme,
+                        )
+                        kinds_data = dict(partial.get("kinds") or kinds_data)
+                        errors = list(partial.get("errors") or errors)
+                        continue
                     entry, warnings = _fetch_kind_entry(resolved, kind)
                     kinds_data[kind] = entry
                     _maybe_persist_custom_dynamic(
@@ -446,18 +861,65 @@ def refresh_cache(*, ths_dir: str | None = None) -> dict[str, Any]:
     return snapshot
 
 
+def _hydrate_theme_from_daily(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """若内存无今日主题，尝试从日限落盘补齐。"""
+    kinds = dict(snapshot.get("kinds") or {})
+    existing = kinds.get(_THEME_KIND)
+    if theme_daily.entry_is_today(existing):
+        return snapshot
+    if _kind_has_data(existing) and not theme_daily.entry_is_today(existing):
+        # 有旧数据但非今日：仍尝试用今日落盘覆盖
+        pass
+    archived = theme_daily.load_today()
+    if not archived or not isinstance(archived.get("entry"), dict):
+        return snapshot
+    entry = dict(archived["entry"])
+    entry["from_cache"] = True
+    kinds[_THEME_KIND] = entry
+    out = dict(snapshot)
+    out["kinds"] = kinds
+    if not out.get("ths_dir") and archived.get("ths_dir"):
+        out["ths_dir"] = archived.get("ths_dir")
+    return out
+
+
 def get_snapshot() -> dict[str, Any]:
     data = cache.get()
     if data:
-        return data
-    return {
-        "updated_at": None,
-        "ths_dir": None,
-        "kinds": {},
-        "errors": [],
-        "empty": True,
-        "linker_unavailable": False,
-    }
+        return _hydrate_theme_from_daily(data)
+    hydrated = _hydrate_theme_from_daily(
+        {
+            "updated_at": None,
+            "ths_dir": None,
+            "kinds": {},
+            "errors": [],
+            "empty": True,
+            "linker_unavailable": False,
+        }
+    )
+    if _kind_has_data((hydrated.get("kinds") or {}).get(_THEME_KIND)):
+        hydrated["empty"] = False
+        cache.set_snapshot(hydrated)
+    return hydrated
+
+
+def _map_theme_stocks(raw_stocks: list[Any]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_stocks or []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        market = str(item.get("market_id") or item.get("market") or "").strip()
+        name = str(item.get("name") or "").strip()
+        row: dict[str, str] = {"code": code, "market": market}
+        if name:
+            row["name"] = name
+        items.append(row)
+    return items
 
 
 def get_block_stocks(*, kind: str, block_id: str) -> dict[str, Any]:
@@ -475,21 +937,81 @@ def get_block_stocks(*, kind: str, block_id: str) -> dict[str, Any]:
     name = str((kind_entry.get("blocks") or {}).get(block_id_norm) or "")
     code = ""
     meta = (kind_entry.get("blocks_meta") or {}).get(block_id_norm)
+    if not isinstance(meta, dict):
+        meta = {}
     if isinstance(meta, dict):
         code = str(meta.get("code") or "").strip()
         if not name:
             name = str(meta.get("name") or "").strip()
-    if not name or not code:
-        for row in kind_entry.get("rows") or []:
-            if isinstance(row, dict) and str(row.get("id")) == block_id_norm:
-                if not name:
-                    name = str(row.get("name") or "")
-                if not code:
-                    code = str(row.get("code") or "").strip()
-                break
+    theme_key = str(meta.get("theme_key") or "").strip() or None
+    root_id = str(meta.get("root_id") or "").strip().upper() or None
+    block_type = str(meta.get("block_type") or "").strip()
+    row_hit: dict[str, Any] | None = None
+    for row in kind_entry.get("rows") or []:
+        if isinstance(row, dict) and str(row.get("id")) == block_id_norm:
+            row_hit = row
+            if not name:
+                name = str(row.get("name") or "")
+            if not code:
+                code = str(row.get("code") or "").strip()
+            if not theme_key:
+                theme_key = str(row.get("theme_key") or "").strip() or None
+            if not root_id:
+                root_id = str(row.get("root_id") or "").strip().upper() or None
+            if not block_type:
+                block_type = str(row.get("block_type") or "").strip()
+            break
+
+    if kind_norm == _THEME_KIND:
+        if block_id_norm == _THEME_ROOT_ID:
+            raise ValueError("请选择具体热点主题或细分板块")
+        # 主题根：整主题成分；细分叶子：单板块
+        parent_id = str((row_hit or {}).get("parent_id") or "").strip()
+        is_theme_root = block_type == "hot-theme" or (
+            parent_id == _THEME_ROOT_ID
+            and str((row_hit or {}).get("node_type") or "") in ("branch", "flat")
+        )
+        if not root_id and _is_block_code(block_id_norm) and is_theme_root:
+            root_id = block_id_norm.upper()
+        if not theme_key and not is_theme_root:
+            # 叶子可能只用 block_code；用 root_id / 父级 theme_key
+            parent_meta = (kind_entry.get("blocks_meta") or {}).get(parent_id) or {}
+            if isinstance(parent_meta, dict):
+                theme_key = str(parent_meta.get("theme_key") or "").strip() or theme_key
+                root_id = str(parent_meta.get("root_id") or "").strip().upper() or root_id
+        if not theme_key and not root_id:
+            raise RuntimeError(f"主题板块缺少 theme_key/root_id: {block_id_norm}")
+        scope = "theme" if is_theme_root else "leaf"
+        payload = linker.fetch_theme_stocks(
+            ths_dir=ths_dir,
+            theme_key=theme_key,
+            root_id=root_id,
+            block_code=None if scope == "theme" else block_id_norm,
+            scope=scope,
+            source="auto",
+        )
+        items = _map_theme_stocks(list(payload.get("stocks") or []))
+        if not name:
+            name = str(
+                payload.get("block_name")
+                or payload.get("root_name")
+                or payload.get("theme_key")
+                or block_id_norm
+            )
+        out: dict[str, Any] = {
+            "kind": kind_norm,
+            "kind_label": kind_entry.get("kind_label") or kind_norm,
+            "block_id": block_id_norm,
+            "name": name,
+            "count": len(items),
+            "stocks": items,
+        }
+        if code:
+            out["code"] = code
+        return out
 
     items = stocks.list_block_stocks(Path(ths_dir), kind=kind_norm, block_id=block_id_norm)
-    out: dict[str, Any] = {
+    out = {
         "kind": kind_norm,
         "kind_label": kind_entry.get("kind_label") or kind_norm,
         "block_id": block_id_norm,

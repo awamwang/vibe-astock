@@ -8,6 +8,7 @@ export const THS_BLOCK_KINDS = [
   { value: "region", label: "地域" },
   { value: "custom", label: "自定义" },
   { value: "daily", label: "每日动态" },
+  { value: "theme", label: "热点主题" },
 ] as const;
 
 /** 板块管理：跨源融合类型（概念/行业/地域）+ 单源类型 */
@@ -17,6 +18,7 @@ export const BLOCK_MANAGE_KINDS = [
   { value: "region", label: "地域", thsKind: "region" as const, kplKind: "region" as const, fused: true as const },
   { value: "custom", label: "自定义", thsKind: "custom" as const, fused: false as const },
   { value: "daily", label: "每日动态", thsKind: "daily" as const, fused: false as const },
+  { value: "theme", label: "热点主题", thsKind: "theme" as const, fused: false as const },
   { value: "hot", label: "人气", kplKind: "hot" as const, fused: false as const },
 ] as const;
 

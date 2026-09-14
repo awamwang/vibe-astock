@@ -167,10 +167,17 @@ export function BlockDetailPanel({
 
   const stocksKind = row ? thsStocksKind(row) : kind;
   const stocksId = row ? (row.id || "") : blockId;
+  /** 热点主题根（非森林虚拟根）可按整主题取成分股 */
+  const isThemeRootStocks = !!row
+    && row.block_type === "hot-theme"
+    && row.id !== "__theme_root__"
+    && !!row.has_ths
+    && !!stocksId
+    && !!stocksKind;
   const canLoadStocks = row
-    ? row.node_type !== "branch" && !!row.has_ths && !!stocksId && !!stocksKind
+    ? (row.node_type !== "branch" || isThemeRootStocks) && !!row.has_ths && !!stocksId && !!stocksKind
     : !!stocksKind && !!stocksId;
-  const isBranch = row?.node_type === "branch";
+  const isBranch = row?.node_type === "branch" && !isThemeRootStocks;
   const isKplOnly = !!row && (!row.has_ths || !row.id || !stocksKind);
 
   useEffect(() => {
@@ -667,7 +674,9 @@ export function BlockDetailPanel({
         <DetailSection label="成分股">
           {row && (
             <p className="mb-2 text-xs text-muted-foreground">
-              口径：按同花顺板块成分股（本地 INI），不以开盘啦成分为准。
+              {row.kind === "theme" || row.ths_kind === "theme"
+                ? "口径：按同花顺热点主题成分股（ths-theme），不以开盘啦成分为准。"
+                : "口径：按同花顺板块成分股（本地 INI），不以开盘啦成分为准。"}
             </p>
           )}
           {loading ? (
