@@ -2,7 +2,7 @@
 
 数据源对齐 awam-stock `Environment` 合并逻辑：
   · 选股宝 Flash `market_indicator/line` → 情绪温度 / 涨跌家数 / 炸板率 / 涨停溢价
-  · 开盘啦 `ZhangFuDetail` → 实际涨跌停、上证/A 股预测量能（拿不到则降级）
+  · 开盘啦 `ZhangFuDetail` → 实际涨跌停、上证/A 股量能（盘中预测、定稿真实；拿不到则降级）
   · 东财 push2 → 主力净流入
   · 腾讯行情 → 上证/深证成交额兜底（拼两市近似 A 股成交额；无昨日此时则无法外推）
   · 趣财经 qiniugu `/qng/api/v1/market` → 情绪分 / 阶段 / 涨跌停家数 / 龙头 / 主线题材
@@ -10,13 +10,14 @@
 「今日 / 昨日」对比按**数据场次**，不是日历今天：
   · 左侧 = as_of（行情所属场次 / 最近已收盘日）；右侧 = as_of 的前一交易日。
   · 周末 / 盘前：展示「周五 vs 周四」，不会拿同一场跟自己比。
-  · 归档只在 as_of == 日历今天且处于收盘落盘窗（收盘前 5 秒至收盘后）时写入。
+  · 归档：收盘窗可写盘中快照；定稿后若仍是盘中数据则补一次真实快照并打 settled。
 无归档时前端右侧显示 `-`。主力净流入 / 成交额无归档时仍可用东财日 K、开盘啦 zr 字段补。
 趣财经昨日报文优先直接取 API 历史序列中上一交易日条目。
-上证 / A 股量能：按开盘啦「今日累计 ÷ 昨日此时 × 昨日全天」外推全日预测量能，
-与昨日全天成交额对照；缺昨日此时则回退为今日累计。
-5 日 / 20 日量比：当日 A 股成交额（预测量能口径）÷ 此前 N 个交易日均额；
+上证 / A 股量能：盘中按开盘啦「今日累计 ÷ 昨日此时 × 昨日全天」外推全日预测量能；
+定稿后改为当日累计额（真实量能），不再外推。缺昨日此时则盘中也回退为今日累计。
+5 日 / 20 日量比：当日 A 股成交额（与展示口径一致：盘中预测 / 定稿真实）÷ 此前 N 个交易日均额；
 历史额优先 short_board 落盘，不足时用 market_series 两市成交额序列补齐。
+收盘后若归档仍是盘中快照，补一次定稿并打 ``settled``，之后不再打上游。
 """
 
 from __future__ import annotations
@@ -246,8 +247,11 @@ def _predict_full_day_amount(
     return float(current)
 
 
-def _fetch_longtou() -> dict:
-    """开盘啦涨跌统计。errcode=0 但 info 空时返回 {}。"""
+def _fetch_longtou(*, actual_volume: bool = False) -> dict:
+    """开盘啦涨跌统计。errcode=0 但 info 空时返回 {}。
+
+    ``actual_volume``：定稿后用今日累计（真实全日额），不再按昨日此时外推。
+    """
     try:
         raw = _http_get_json(_LONGTOU, longtou=True)
         info = raw.get("info")
@@ -260,6 +264,11 @@ def _fetch_longtou() -> dict:
         v_ca_zrcs = _wan_to_yuan(info.get("q_zrcs"))
         v_sh_zr = _wan_to_yuan(info.get("s_zrtj"))
         v_ca_zr = _wan_to_yuan(info.get("q_zrtj"))
+        if actual_volume:
+            v_sh, v_ca = v_sh_cur, v_ca_cur
+        else:
+            v_sh = _predict_full_day_amount(v_sh_cur, v_sh_zrcs, v_sh_zr)
+            v_ca = _predict_full_day_amount(v_ca_cur, v_ca_zrcs, v_ca_zr)
         return {
             "n_sjzt": int(_num(info.get("SJZT"), 0) or 0),
             "n_sjdt": int(_num(info.get("SJDT"), 0) or 0),
@@ -267,8 +276,8 @@ def _fetch_longtou() -> dict:
             "n_dt": int(_num(info.get("DT"), 0) or 0),
             "n_up": int(_num(info.get("SZJS"), 0) or 0) or None,
             "n_down": int(_num(info.get("XDJS"), 0) or 0) or None,
-            "v_sh": _predict_full_day_amount(v_sh_cur, v_sh_zrcs, v_sh_zr),
-            "v_ca": _predict_full_day_amount(v_ca_cur, v_ca_zrcs, v_ca_zr),
+            "v_sh": v_sh,
+            "v_ca": v_ca,
             "v_sh_zr": v_sh_zr,
             "v_ca_zr": v_ca_zr,
         }
@@ -468,11 +477,11 @@ def _save_archive(date: str, env: dict) -> None:
         pass
 
 
-def _merge_today(as_of: str, prev: str | None) -> dict:
+def _merge_today(as_of: str, prev: str | None, *, actual_volume: bool = False) -> dict:
     """并行拉取各源；开盘啦已有实际涨跌停时不再嵌套 live_emotion。"""
     with ThreadPoolExecutor(max_workers=5) as pool:
         f_baoer = pool.submit(_fetch_baoer)
-        f_lt = pool.submit(_fetch_longtou)
+        f_lt = pool.submit(_fetch_longtou, actual_volume=actual_volume)
         f_main = pool.submit(_fetch_main_fund)
         f_amounts = pool.submit(_fetch_index_amounts)
         f_qcj = pool.submit(_fetch_qcj, as_of, prev)
@@ -527,7 +536,10 @@ def _build_yesterday(prev: str | None, today_raw: dict) -> dict:
 
 
 def _strip_meta(env: dict) -> dict:
-    return {k: v for k, v in env.items() if not k.startswith("_") and k != "date"}
+    return {
+        k: v for k, v in env.items()
+        if not k.startswith("_") and k not in ("date", "settled")
+    }
 
 
 def _collect_amount_yi_by_date() -> dict[str, float]:
@@ -648,6 +660,8 @@ def _snapshot_from_archive(
     is_live: bool,
     today: dict,
     yesterday: dict,
+    *,
+    settled: bool = False,
 ) -> dict:
     _attach_volume_ratios(as_of, prev, today, yesterday)
     available = _archive_displayable(today)
@@ -657,6 +671,7 @@ def _snapshot_from_archive(
         "date": as_of,
         "prev_date": prev,
         "is_live": is_live,
+        "settled": settled,
         "today": today,
         "yesterday": yesterday,
         "updated": china_now().strftime("%Y-%m-%d %H:%M"),
@@ -702,63 +717,94 @@ def zt_dt_for(date: str) -> dict:
     }
 
 
+def _pack_live_snapshot(
+    as_of: str,
+    prev: str | None,
+    is_live: bool,
+    today: dict,
+    yesterday: dict,
+    *,
+    settled: bool,
+) -> dict:
+    _attach_volume_ratios(as_of, prev, today, yesterday)
+    available = _archive_displayable(today)
+    return {
+        "available": available,
+        "reason": None if available else "环境指标暂不可用（各指标均未取到）",
+        "date": as_of,
+        "prev_date": prev,
+        "is_live": is_live,
+        "settled": settled,
+        "today": today,
+        "yesterday": yesterday,
+        "updated": china_now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 def snapshot() -> dict:
     """短线盘面环境指标。至少有一项温度/涨跌家数才算 available。
 
     `date` = 左侧对照场次（周末为周五），`prev_date` = 其前一交易日（周末为周四）。
     盘中走 SWR：有缓存立刻返回，过期后台单飞刷新，避免 10s 轮询叠压慢请求。
+    定稿后若归档仍是盘中快照则补一次真实数据；已打 ``settled`` 则只读盘。
     """
 
     calendar_today = china_now().strftime("%Y-%m-%d")
     as_of, prev, is_live = trade_calendar.resolve_as_of(calendar_today)
-    ttl = _TTL if is_live else _OFFSESSION_TTL
+    settled = trade_calendar.is_settled(as_of)
+    archived = _load_archive(as_of)
+    need_settle = settled and not trade_calendar.archive_close_settled(archived)
+
+    if _archive_displayable(archived) and not need_settle:
+        if settled or not is_live:
+            today = _strip_meta(archived)
+            yesterday = _strip_meta(_build_yesterday(prev, {})) if prev else {}
+            return _snapshot_from_archive(
+                as_of, prev, is_live, today, yesterday, settled=settled)
+
+    ttl = _TTL if (is_live and not settled) else _OFFSESSION_TTL
+    cache_key = f"short_board:{as_of}:{'S' if settled else 'L'}"
 
     def build():
-        if not is_live:
-            archived = _load_archive(as_of)
-            if _archive_displayable(archived):
-                today = _strip_meta(archived)
-                yesterday = _strip_meta(_build_yesterday(prev, {})) if prev else {}
-                return _snapshot_from_archive(as_of, prev, is_live, today, yesterday)
-        raw = _merge_today(as_of, prev)
-        today = _strip_meta(raw)
-        yesterday = _strip_meta(_build_yesterday(prev, raw)) if prev else {}
-        # 只有「日历今天就是这场」且在收盘落盘窗内才写归档
+        disk = _load_archive(as_of)
         if (
-            is_live
-            and trade_calendar.should_write_daily_cache(as_of)
-            and (
-                today.get("temperature") is not None
-                or today.get("n_up")
-                or today.get("qcj_temp") is not None
-            )
+            _archive_displayable(disk)
+            and not (settled and not trade_calendar.archive_close_settled(disk))
+            and (settled or not is_live)
         ):
-            _save_archive(as_of, today)
-        _attach_volume_ratios(as_of, prev, today, yesterday)
-        available = bool(
-            today.get("temperature") is not None
-            or today.get("n_up")
-            or today.get("n_sjzt") is not None
-            or today.get("m_net") is not None
-            or today.get("qcj_temp") is not None
-        )
-        return {
-            "available": available,
-            "reason": None if available else "环境指标暂不可用（各指标均未取到）",
-            "date": as_of,
-            "prev_date": prev,
-            "is_live": is_live,
-            "today": today,
-            "yesterday": yesterday,
-            "updated": china_now().strftime("%Y-%m-%d %H:%M"),
-        }
+            today = _strip_meta(disk)
+            yesterday = _strip_meta(_build_yesterday(prev, {})) if prev else {}
+            return _snapshot_from_archive(
+                as_of, prev, is_live, today, yesterday, settled=settled)
+        raw = _merge_today(as_of, prev, actual_volume=settled)
+        today = _strip_meta(raw)
+        today["volume_kind"] = "actual" if settled else "predicted"
+        yesterday = _strip_meta(_build_yesterday(prev, raw)) if prev else {}
+        if not _archive_displayable(today) and _archive_displayable(disk):
+            today = _strip_meta(disk)
+            yesterday = _strip_meta(_build_yesterday(prev, {})) if prev else {}
+            return _snapshot_from_archive(
+                as_of, prev, is_live, today, yesterday, settled=False)
+        # 收盘窗可写盘中快照；定稿成功后打 settled，之后不再打上游
+        if (
+            trade_calendar.should_write_daily_cache(as_of)
+            and (is_live or settled)
+            and _archive_displayable(today)
+        ):
+            to_save = dict(today)
+            if settled:
+                to_save["settled"] = True
+            _save_archive(as_of, to_save)
+        return _pack_live_snapshot(
+            as_of, prev, is_live, today, yesterday, settled=settled)
 
-    return _swr_cached(f"short_board:{as_of}", ttl, build) or {
+    return _swr_cached(cache_key, ttl, build) or {
         "available": False,
         "reason": "环境指标取数失败",
         "date": as_of,
         "prev_date": prev,
         "is_live": is_live,
+        "settled": settled,
         "today": {},
         "yesterday": {},
         "updated": china_now().strftime("%Y-%m-%d %H:%M"),

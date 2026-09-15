@@ -15,7 +15,7 @@
   · 有今日涨停池 → 左侧=今天，右侧=前一交易日归档；
   · 无今日池（周末 / 盘前）→ 回退到行情所属场次（如周五），对照其前一交易日（周四），
     仍展示「最近两场」对比，而不是空卡或自己比自己。
-  · 归档只在「日历今天 == 场次」且处于收盘落盘窗时写入。
+  · 归档：收盘窗可写盘中快照；定稿后若仍是盘中数据则补一次并打 settled。
 晋级率一并归档，便于与封板率 / 炸板率等同屏对照。
 """
 
@@ -122,13 +122,15 @@ def _load_archive(date: str | None) -> dict:
 
 
 def _save_archive(date: str, env: dict) -> None:
-    """收盘窗内写入；收盘后最后一次覆盖即为「昨日」对照。失败静默。"""
+    """收盘窗内写入；定稿成功后打 settled，之后不再打上游。失败静默。"""
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = _archive_path(date)
         tmp = f"{path}.{os.getpid()}.tmp"
         payload = {k: env.get(k) for k in _ARCHIVE_KEYS if env.get(k) is not None}
         payload["date"] = date
+        if env.get("settled"):
+            payload["settled"] = True
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
             f.flush()
@@ -195,34 +197,53 @@ def snapshot(as_of: str | None = None) -> dict:
             prev_day = None
         is_live = as_of == calendar_today
 
-    # 非实时场次：有归档则直接读盘，避免周末东财仍返回上一场池子而反复打四个池
-    if not is_live:
-        archived = _load_archive(as_of)
-        if archived and any(k in archived for k in _ARCHIVE_KEYS):
-            out = {
-                "available": True,
-                "date": as_of,
-                "as_of": china_now().strftime("%H:%M"),
-                "phase": "非交易日",
-                "is_live": False,
-                "prev_date": prev_day,
-                "promotion_base_date": prev_day,
-                "yesterday": _yesterday_slice(prev_day),
-                "from_archive": True,
-            }
-            for k in _ARCHIVE_KEYS:
-                if k in archived:
-                    out[k] = archived[k]
-            ttl = _OFFSESSION_TTL
-            return _cached(f"live_emo:arch:{as_of}", ttl, lambda: out)
+    archived = _load_archive(as_of)
+    settled = _cached(
+        f"settled:{as_of}", _CAL_TTL,
+        lambda: ("Y" if trade_calendar.is_settled(as_of) else "N"),
+    ) == "Y"
+
+    def _from_archive(phase: str) -> dict:
+        out = {
+            "available": True,
+            "date": as_of,
+            "as_of": china_now().strftime("%H:%M"),
+            "phase": phase,
+            "is_live": is_live,
+            "prev_date": prev_day,
+            "promotion_base_date": prev_day,
+            "yesterday": _yesterday_slice(prev_day),
+            "from_archive": True,
+            "settled": bool(archived.get("settled")),
+        }
+        for k in _ARCHIVE_KEYS:
+            if k in archived:
+                out[k] = archived[k]
+        return out
+
+    archive_ok = bool(archived) and any(k in archived for k in _ARCHIVE_KEYS)
+    need_settle = settled and not trade_calendar.archive_close_settled(archived)
+    # 已有收盘定稿，或非实时且无需补收盘：只读盘，避免周末反复打四个池
+    if archive_ok and not need_settle:
+        if settled or not is_live:
+            phase = "已收盘" if (is_live and settled) else "非交易日"
+            return _cached(
+                f"live_emo:arch:{as_of}:{'S' if settled else 'O'}",
+                _OFFSESSION_TTL,
+                lambda: _from_archive(phase),
+            )
 
     # 取池：live 用日历今天；否则强制按 as_of 取（忽略「周末请求日仍非空」的假今日池）
     pool_day = calendar_today if is_live else as_of
     pool_ymd = pool_day.replace("-", "")
-    pool_ttl = _TODAY_TTL if is_live else _PREV_TTL
+    tag = "S" if settled else ("L" if is_live else "O")
+    pool_ttl = _OFFSESSION_TTL if settled else (_TODAY_TTL if is_live else _PREV_TTL)
 
-    zt = _cached(f"zt:{pool_ymd}", pool_ttl, lambda: _pool("getTopicZTPool", pool_ymd))
+    zt = _cached(f"zt:{pool_ymd}:{tag}", pool_ttl, lambda: _pool("getTopicZTPool", pool_ymd))
     if zt is None:
+        if archive_ok:
+            phase = "已收盘" if (is_live and settled) else "非交易日"
+            return _from_archive(phase)
         return {"available": False, "reason": "涨停池取数失败",
                 "date": as_of, "prev_date": prev_day,
                 "is_live": is_live, "yesterday": _yesterday_slice(prev_day)}
@@ -234,32 +255,15 @@ def snapshot(as_of: str | None = None) -> dict:
                     "prev_date": prev_day, "is_live": False,
                     "yesterday": _yesterday_slice(prev_day)}
         # 非 live 且 as_of 池空 → 试本地归档撑左侧
-        archived = _load_archive(as_of)
-        if not archived:
+        if not archive_ok:
             return {"available": False, "date": as_of,
                     "reason": "最近场次无涨停池也无归档",
                     "prev_date": prev_day, "is_live": False,
                     "yesterday": _yesterday_slice(prev_day)}
-        out = {
-            "available": True,
-            "date": as_of,
-            "as_of": china_now().strftime("%H:%M"),
-            "phase": "非交易日",
-            "is_live": False,
-            "prev_date": prev_day,
-            "promotion_base_date": prev_day,
-            "yesterday": _yesterday_slice(prev_day),
-        }
-        for k in _ARCHIVE_KEYS:
-            if k in archived:
-                out[k] = archived[k]
-        return out
+        return _from_archive("非交易日")
 
-    settled = _cached(f"settled:{as_of}", _CAL_TTL,
-                      lambda: ("Y" if trade_calendar.is_settled(as_of) else "N")) == "Y"
-
-    zb = _cached(f"zb:{pool_ymd}", pool_ttl, lambda: _pool("getTopicZBPool", pool_ymd))
-    dt = _cached(f"dt:{pool_ymd}", pool_ttl, lambda: _pool("getTopicDTPool", pool_ymd))
+    zb = _cached(f"zb:{pool_ymd}:{tag}", pool_ttl, lambda: _pool("getTopicZBPool", pool_ymd))
+    dt = _cached(f"dt:{pool_ymd}:{tag}", pool_ttl, lambda: _pool("getTopicDTPool", pool_ymd))
     prev_zt = (_cached(f"zt:{prev_day}", _PREV_TTL,
                        lambda: _pool("getTopicZTPool", prev_day.replace("-", "")))
                if prev_day else None)
@@ -285,7 +289,8 @@ def snapshot(as_of: str | None = None) -> dict:
         "prev_date": prev_day,
         "yesterday": _yesterday_slice(prev_day),
     }
-    # 只有日历今天这场且在收盘落盘窗内才写归档
-    if is_live and trade_calendar.should_write_daily_cache(as_of):
+    if trade_calendar.should_write_daily_cache(as_of) and (is_live or settled):
+        if settled:
+            out["settled"] = True
         _save_archive(as_of, out)
     return out

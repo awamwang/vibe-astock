@@ -97,6 +97,8 @@ def _save_archive(date: str, env: dict) -> None:
         tmp = f"{path}.{os.getpid()}.tmp"
         payload = {k: env.get(k) for k in _ARCHIVE_KEYS if env.get(k) is not None}
         payload["date"] = date
+        if env.get("settled"):
+            payload["settled"] = True
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
             f.flush()
@@ -231,35 +233,45 @@ def snapshot(as_of: str | None = None) -> dict:
         is_live = as_of == calendar_today
 
     yesterday = _yesterday_slice(prev_day)
-
-    # 非实时场次：有归档则直接返回，避免周末反复打东财 / 腾讯
-    if not is_live:
-        archived = _load_archive(as_of)
-        if archived and any(k in archived for k in _ARCHIVE_KEYS):
-            out = {
-                "available": True,
-                "date": as_of,
-                "as_of": china_now().strftime("%H:%M"),
-                "phase": "非交易日",
-                "is_live": False,
-                "prev_date": prev_day,
-                "yesterday": yesterday,
-                "from_archive": True,
-                "source": "archive",
-            }
-            for k in _ARCHIVE_KEYS:
-                if k in archived:
-                    out[k] = archived[k]
-            return _cached(f"zt_effect:arch:{as_of}", _OFFSESSION_TTL, lambda: out)
-
+    archived = _load_archive(as_of)
     settled = _cached(
         f"settled:{as_of}", _CAL_TTL,
         lambda: ("Y" if trade_calendar.is_settled(as_of) else "N"),
     ) == "Y"
+
+    def _from_archive(phase: str) -> dict:
+        out = {
+            "available": True,
+            "date": as_of,
+            "as_of": china_now().strftime("%H:%M"),
+            "phase": phase,
+            "is_live": is_live,
+            "prev_date": prev_day,
+            "yesterday": yesterday,
+            "from_archive": True,
+            "source": "archive",
+            "settled": bool(archived.get("settled")),
+        }
+        for k in _ARCHIVE_KEYS:
+            if k in archived:
+                out[k] = archived[k]
+        return out
+
+    archive_ok = bool(archived) and any(k in archived for k in _ARCHIVE_KEYS)
+    need_settle = settled and not trade_calendar.archive_close_settled(archived)
+    if archive_ok and not need_settle and (settled or not is_live):
+        phase = "已收盘" if (is_live and settled) else "非交易日"
+        return _cached(
+            f"zt_effect:arch:{as_of}:{'S' if settled else 'O'}",
+            _OFFSESSION_TTL,
+            lambda: _from_archive(phase),
+        )
+
     static_ttl = _OFFSESSION_TTL if (settled or not is_live) else _STATIC_TTL
     dyn_ttl = _OFFSESSION_TTL if (settled or not is_live) else _DYNAMIC_TTL
+    tag = "S" if settled else ("L" if is_live else "O")
 
-    static = _cached(f"static:{as_of}", static_ttl, lambda: _build_static(as_of))
+    static = _cached(f"static:{as_of}:{tag}", static_ttl, lambda: _build_static(as_of))
     if static is None:
         return {
             "available": False,
@@ -278,7 +290,7 @@ def snapshot(as_of: str | None = None) -> dict:
         rets = seed
     else:
         rets = _cached(
-            f"rets:{as_of}", dyn_ttl,
+            f"rets:{as_of}:{tag}", dyn_ttl,
             lambda: _fetch_rets(codes, seed),
         ) or {}
 
@@ -308,6 +320,8 @@ def snapshot(as_of: str | None = None) -> dict:
         "yesterday": yesterday,
     }
 
-    if is_live and trade_calendar.should_write_daily_cache(as_of) and available:
+    if trade_calendar.should_write_daily_cache(as_of) and (is_live or settled) and available:
+        if settled:
+            out["settled"] = True
         _save_archive(as_of, out)
     return out

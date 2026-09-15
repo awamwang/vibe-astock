@@ -188,7 +188,9 @@ class TestLiveEmotionArchive:
         assert snap["zt_count"] == 2
         assert snap["yesterday"]["zt_count"] == 40
         assert not (tmp_path / "2026-08-22.json").exists()
-        assert not (tmp_path / "2026-08-21.json").exists()  # 非 live 不覆盖写
+        friday = tmp_path / "2026-08-21.json"
+        assert friday.is_file()
+        assert le._load_archive("2026-08-21").get("settled") is True
 
     def test_snapshot_as_of_overrides_calendar(self, monkeypatch):
         """传入 as_of 时按指定场次取池，不跟日历今天走。"""
@@ -230,3 +232,27 @@ class TestLiveEmotionArchive:
         assert snap["zt_count"] == 1
         assert snap["promotion_rate"] == 0.5
         assert snap["max_boards"] == 3
+
+    def test_settled_archive_skips_pools(self, tmp_path, monkeypatch):
+        from duanxian import live_emotion as le
+
+        le._save_archive("2026-08-21", {
+            "zt_count": 12, "seal_rate": 0.8, "settled": True,
+        })
+        monkeypatch.setattr(
+            le, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 21, 20, 0))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", True))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: True)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.prev_trade_date", lambda d: "2026-08-20")
+        monkeypatch.setattr(
+            le, "_pool",
+            lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应打池")))
+        snap = le.snapshot()
+        assert snap["from_archive"] is True
+        assert snap["zt_count"] == 12
+        assert snap["phase"] == "已收盘"

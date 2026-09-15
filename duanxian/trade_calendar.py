@@ -229,6 +229,23 @@ def is_settled(date: str) -> bool:
     return date < china_today() or date == latest_session()
 
 
+def archive_close_settled(payload: dict | None) -> bool:
+    """归档是否已带上收盘定稿标记。盘中落盘或旧文件缺字段都算未定稿。"""
+    return isinstance(payload, dict) and payload.get("settled") is True
+
+
+def needs_close_settle(as_of: str | None, payload: dict | None) -> bool:
+    """场次已定稿、但磁盘上仍是盘中快照 → 需要补一次收盘真实数据。
+
+    成功写入 ``settled: true`` 之后不再打上游。取数失败不打标，下次请求可再补。
+    """
+    if not as_of:
+        return False
+    if not is_settled(as_of):
+        return False
+    return not archive_close_settled(payload)
+
+
 def is_latest_closed_session(date: str) -> bool:
     """date 是否就是最近一个已收盘交易日"""
     return date == latest_session()

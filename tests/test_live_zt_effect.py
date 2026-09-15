@@ -94,10 +94,10 @@ class TestLiveZtEffectCache:
             "duanxian.emotion_metrics.batch_pct",
             lambda codes: pct_calls.append(1) or {},
         )
-        monkeypatch.setattr(lze.trade_calendar, "is_settled", lambda d: True)
         monkeypatch.setattr(
-            lze.trade_calendar, "should_write_daily_cache", lambda d: False,
-        )
+            "duanxian.trade_calendar.is_settled", lambda d: True)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.should_write_daily_cache", lambda d: False)
 
         r = lze.snapshot("2026-07-29")
         assert r["available"]

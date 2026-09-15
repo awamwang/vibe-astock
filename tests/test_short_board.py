@@ -78,6 +78,7 @@ class TestShortBoardArchive:
 
         sb._save_archive("2026-08-21", {
             "temperature": 48, "n_up": 2505, "qcj_temp": 31,
+            "settled": True, "volume_kind": "actual",
         })
         monkeypatch.setattr(
             sb, "china_now",
@@ -87,7 +88,7 @@ class TestShortBoardArchive:
             lambda _t: ("2026-08-21", "2026-08-20", False))
         calls = {"merge": 0}
 
-        def track_merge(as_of, prev):
+        def track_merge(as_of, prev, **_k):
             calls["merge"] += 1
             return {"temperature": 99}
 
@@ -110,7 +111,7 @@ class TestShortBoardArchive:
         monkeypatch.setattr(
             "duanxian.trade_calendar.resolve_as_of",
             lambda _t: ("2026-08-21", "2026-08-20", False))
-        monkeypatch.setattr(sb, "_merge_today", lambda as_of, prev: {
+        monkeypatch.setattr(sb, "_merge_today", lambda as_of, prev, **_k: {
             "temperature": 48, "n_up": 2505, "qcj_temp": 31,
             "_qcj_yesterday": {},
         })
@@ -161,6 +162,25 @@ class TestPredictFullDayAmount:
         assert out["v_ca"] == 8e8
         assert out["v_sh_zr"] == 2e8
         assert out["v_ca_zr"] == 4e8
+
+    def test_longtou_actual_volume_uses_cumulative(self, monkeypatch):
+        from duanxian import short_board as sb
+
+        monkeypatch.setattr(sb, "_http_get_json", lambda *_a, **_k: {
+            "info": {
+                "SJZT": 10, "SJDT": 1, "ZT": 12, "DT": 1,
+                "SZJS": 2000, "XDJS": 1500,
+                "szln": 10000,
+                "qscln": 20000,
+                "s_zrcs": 5000,
+                "q_zrcs": 10000,
+                "s_zrtj": 20000,
+                "q_zrtj": 40000,
+            },
+        })
+        out = sb._fetch_longtou(actual_volume=True)
+        assert out["v_sh"] == 1e8
+        assert out["v_ca"] == 2e8
 
 
 @pytest.mark.unit
@@ -364,6 +384,84 @@ class TestShortBoardSwr:
             t.join(timeout=5.0)
         assert builds["n"] == 1
         assert results == [{"ok": True, "n": 1}] * 3
+
+
+@pytest.mark.unit
+class TestCloseSettleOnce:
+    """收盘后把盘中归档补成定稿，且只打一次上游。"""
+
+    @pytest.fixture(autouse=True)
+    def _iso(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._reset_runtime_state()
+        monkeypatch.setattr(sb, "_CACHE_DIR", str(tmp_path))
+        yield
+        sb._reset_runtime_state()
+
+    def test_intraday_archive_is_refetched_once_after_close(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-21", {
+            "temperature": 40, "n_up": 1800, "v_ca": 3e8, "volume_kind": "predicted",
+        })
+        monkeypatch.setattr(
+            sb, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 21, 16, 0))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", True))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: d == "2026-08-21")
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.should_write_daily_cache", lambda d: True)
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.trade_dates_ending_at",
+            lambda end, n=10: ["2026-08-20", "2026-08-21"][-n:])
+        calls = {"n": 0}
+
+        def merge(as_of, prev, *, actual_volume=False):
+            calls["n"] += 1
+            assert actual_volume is True
+            return {
+                "temperature": 55, "n_up": 2000, "v_ca": 2e8, "v_sh": 1e8,
+                "_qcj_yesterday": {},
+            }
+
+        monkeypatch.setattr(sb, "_merge_today", merge)
+        a = sb.snapshot()
+        b = sb.snapshot()
+        assert calls["n"] == 1
+        assert a["settled"] is True
+        assert a["today"]["volume_kind"] == "actual"
+        assert a["today"]["v_ca"] == 2e8
+        assert b["today"]["v_ca"] == 2e8
+        assert sb._load_archive("2026-08-21").get("settled") is True
+        assert a.get("from_archive") is not True
+        assert b.get("from_archive") is True
+
+    def test_settled_archive_skips_upstream(self, tmp_path, monkeypatch):
+        from duanxian import short_board as sb
+
+        sb._save_archive("2026-08-21", {
+            "temperature": 48, "n_up": 2505, "v_ca": 9e8,
+            "settled": True, "volume_kind": "actual",
+        })
+        monkeypatch.setattr(
+            sb, "china_now",
+            lambda: __import__("datetime").datetime(2026, 8, 21, 20, 0))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.resolve_as_of",
+            lambda _t: ("2026-08-21", "2026-08-20", True))
+        monkeypatch.setattr(
+            "duanxian.trade_calendar.is_settled", lambda d: True)
+        monkeypatch.setattr(
+            sb, "_merge_today",
+            lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应打上游")))
+        snap = sb.snapshot()
+        assert snap.get("from_archive") is True
+        assert snap["today"]["v_ca"] == 9e8
+        assert snap["today"]["volume_kind"] == "actual"
 
 
 @pytest.mark.unit

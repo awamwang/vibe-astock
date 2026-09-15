@@ -273,7 +273,7 @@ def _zt_archive_path(date: str) -> str:
     return os.path.join(_CACHE_DIR, f"{date}_zt.json")
 
 
-def _load_zt_archive(date: str | None) -> dict[str, int]:
+def _load_zt_file(date: str | None) -> dict:
     if not date:
         return {}
     path = _zt_archive_path(date)
@@ -282,29 +282,39 @@ def _load_zt_archive(date: str | None) -> dict[str, int]:
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        raw = data.get("zt") if isinstance(data, dict) else None
-        if not isinstance(raw, dict):
-            return {}
-        out: dict[str, int] = {}
-        for k, v in raw.items():
-            try:
-                out[str(k)] = int(v)
-            except (TypeError, ValueError):
-                continue
-        return out
+        return data if isinstance(data, dict) else {}
     except Exception:  # noqa: BLE001
         return {}
 
 
-def _save_zt_archive(date: str, zt_map: dict[str, int]) -> None:
+def _parse_zt_map(raw) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            out[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _load_zt_archive(date: str | None) -> dict[str, int]:
+    return _parse_zt_map(_load_zt_file(date).get("zt"))
+
+
+def _save_zt_archive(date: str, zt_map: dict[str, int], *, settled: bool = False) -> None:
     if not date or not zt_map or not trade_calendar.should_write_daily_cache(date):
         return
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = _zt_archive_path(date)
         tmp = f"{path}.{os.getpid()}.tmp"
+        body: dict[str, Any] = {"date": date, "zt": zt_map}
+        if settled:
+            body["settled"] = True
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"date": date, "zt": zt_map}, f, ensure_ascii=False)
+            json.dump(body, f, ensure_ascii=False)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
@@ -317,17 +327,23 @@ def zt_map_for_date(date: str | None) -> dict[str, int]:
     date_s = str(date or "").strip()
     if not date_s:
         return {}
-    archived = _load_zt_archive(date_s)
-    if archived:
-        return archived
+    payload = _load_zt_file(date_s)
+    archived = _parse_zt_map(payload.get("zt"))
     latest = trade_calendar.latest_session()
+    need_settle = (
+        date_s == latest
+        and trade_calendar.is_settled(date_s)
+        and not trade_calendar.archive_close_settled(payload)
+    )
+    if archived and not need_settle:
+        return archived
     # 历史接口不稳定；仅对最近场次拉 live PlateAnalysis
     if date_s != latest and date_s != china_now().strftime("%Y-%m-%d"):
-        return {}
+        return archived
     live = fetch_zt_map()
-    if live and date_s == latest:
-        _save_zt_archive(date_s, live)
-    return live
+    if live and (date_s == latest or date_s == china_now().strftime("%Y-%m-%d")):
+        _save_zt_archive(date_s, live, settled=trade_calendar.is_settled(date_s))
+    return live or archived
 
 
 def _archive_path(date: str) -> str:
@@ -383,9 +399,26 @@ def ranking_for_date(date: str, *, force: bool = False) -> dict:
         }
 
     def build():
-        if not force:
-            archived = _load_archive(date_s)
-            blocks = archived.get("blocks")
+        archived = _load_archive(date_s)
+        blocks = archived.get("blocks")
+        latest = trade_calendar.latest_session()
+        need_settle = (
+            date_s == latest
+            and trade_calendar.is_settled(date_s)
+            and not trade_calendar.archive_close_settled(archived)
+        )
+        if not force and isinstance(blocks, list) and blocks and not need_settle:
+            return {
+                "date": date_s,
+                "available": True,
+                "blocks": blocks,
+                "from_archive": True,
+                "api_time": archived.get("api_time"),
+                "reason": None,
+            }
+        try:
+            rows, api_time = _fetch_ranking_pages(date=date_s)
+        except Exception as exc:  # noqa: BLE001
             if isinstance(blocks, list) and blocks:
                 return {
                     "date": date_s,
@@ -395,9 +428,6 @@ def ranking_for_date(date: str, *, force: bool = False) -> dict:
                     "api_time": archived.get("api_time"),
                     "reason": None,
                 }
-        try:
-            rows, api_time = _fetch_ranking_pages(date=date_s)
-        except Exception as exc:  # noqa: BLE001
             return {
                 "date": date_s,
                 "available": False,
@@ -420,8 +450,19 @@ def ranking_for_date(date: str, *, force: bool = False) -> dict:
                 "api_time": api_time,
                 "reason": None,
             }
+            if trade_calendar.is_settled(date_s):
+                out["settled"] = True
             _save_archive(date_s, out)
             return out
+        if isinstance(blocks, list) and blocks:
+            return {
+                "date": date_s,
+                "available": True,
+                "blocks": blocks,
+                "from_archive": True,
+                "api_time": archived.get("api_time"),
+                "reason": None,
+            }
         return {
             "date": date_s,
             "available": False,
@@ -430,9 +471,10 @@ def ranking_for_date(date: str, *, force: bool = False) -> dict:
             "reason": "历史人气榜暂无数据",
         }
 
-    # 定稿日：长 TTL；强制刷新绕过内存缓存但仍可读盘
-    ttl = _OFFSESSION_TTL if trade_calendar.is_settled(date_s) else _TTL
-    key = f"mood_rank:{date_s}:{'f' if force else 'n'}"
+    # 定稿日：长 TTL；强制刷新绕过内存缓存但仍可读盘。S/L 分开以免盘中缓存挡住收盘补取。
+    rank_settled = trade_calendar.is_settled(date_s)
+    ttl = _OFFSESSION_TTL if rank_settled else _TTL
+    key = f"mood_rank:{date_s}:{'S' if rank_settled else 'L'}:{'f' if force else 'n'}"
     return _cached(key, ttl, build) or {
         "date": date_s,
         "available": False,
@@ -501,6 +543,25 @@ def snapshot(limit: int = _LIMIT) -> dict:
     """板块人气排名快照。"""
 
     def build():
+        as_of, _, is_live = trade_calendar.resolve_as_of()
+        as_of = as_of or china_now().strftime("%Y-%m-%d")
+        settled = bool(as_of) and trade_calendar.is_settled(as_of)
+        archived = _load_archive(as_of)
+        blocks = archived.get("blocks") if archived else None
+        if (
+            isinstance(blocks, list) and blocks
+            and not (settled and not trade_calendar.archive_close_settled(archived))
+            and (settled or not is_live)
+        ):
+            return {
+                "available": True,
+                "reason": None,
+                "date": as_of,
+                "api_time": archived.get("api_time"),
+                "blocks": blocks,
+                "updated": china_now().strftime("%Y-%m-%d %H:%M"),
+                "from_archive": True,
+            }
         try:
             rows, api_time = _fetch_ranking(limit=limit)
         except Exception as exc:  # noqa: BLE001
@@ -519,7 +580,6 @@ def snapshot(limit: int = _LIMIT) -> dict:
                     if zt is not None:
                         row["zt"] = zt
         available = bool(rows)
-        as_of = trade_calendar.latest_session() or china_now().strftime("%Y-%m-%d")
         out = {
             "available": available,
             "reason": None if available else "板块人气暂无数据（非交易时段或未返回）",
@@ -542,20 +602,26 @@ def snapshot(limit: int = _LIMIT) -> dict:
                                 row["zt"] = zt
             except Exception:  # noqa: BLE001
                 pass
-            _save_archive(as_of, {
+            payload = {
                 "date": as_of,
                 "available": True,
                 "blocks": archive_blocks,
                 "api_time": api_time,
                 "from_archive": False,
-            })
+            }
+            if settled:
+                payload["settled"] = True
+            _save_archive(as_of, payload)
             if zt_map:
-                _save_zt_archive(as_of, zt_map)
+                _save_zt_archive(as_of, zt_map, settled=settled)
         return out
 
     live = trade_calendar.is_calendar_session_live()
-    ttl = _TTL if live else _OFFSESSION_TTL
-    key = "mood_block:live" if live else f"mood_block:off:{trade_calendar.latest_session() or 'na'}"
+    session_as_of, _, is_live = trade_calendar.resolve_as_of()
+    settled_live = bool(is_live and session_as_of and trade_calendar.is_settled(session_as_of))
+    ttl = _TTL if (live and not settled_live) else _OFFSESSION_TTL
+    tag = "S" if settled_live else ("L" if live else "O")
+    key = f"mood_block:{session_as_of or 'na'}:{tag}"
 
     return _cached(key, ttl, build) or {
         "available": False,

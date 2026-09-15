@@ -155,6 +155,22 @@ class TestIsSettled:
         self._closed_trading_day(monkeypatch)
         assert not tc.is_settled("2026-07-25")
 
+    def test_intraday_archive_needs_close_settle(self, monkeypatch):
+        self._closed_trading_day(monkeypatch)
+        assert tc.archive_close_settled(None) is False
+        assert tc.archive_close_settled({"temperature": 40}) is False
+        assert tc.archive_close_settled({"settled": True}) is True
+        assert tc.needs_close_settle("2026-07-24", {"temperature": 40}) is True
+        assert tc.needs_close_settle("2026-07-24", {"settled": True}) is False
+
+    def test_intraday_session_does_not_need_close_settle(self, monkeypatch):
+        monkeypatch.setattr(tc, "china_today", lambda: "2026-07-24")
+        monkeypatch.setattr(tc, "is_weekend", lambda d: False)
+        monkeypatch.setattr(tc, "is_a_share_closed", lambda: False)
+        monkeypatch.setattr(tc, "quote_trade_day", lambda: "2026-07-24")
+        monkeypatch.setattr(tc, "last_trade_dates", lambda n=5: ["2026-07-23"])
+        assert tc.needs_close_settle("2026-07-24", {"temperature": 40}) is False
+
 
 @pytest.mark.unit
 class TestDailyArchiveWindow:

@@ -360,10 +360,11 @@ def snapshot() -> dict:
             "updated": china_now().strftime("%Y-%m-%d %H:%M"),
         }
 
-    live = trade_calendar.is_calendar_session_live()
-    ttl = _TTL if live else _OFFSESSION_TTL
-    as_of, prev, _ = trade_calendar.resolve_as_of()
-    key = f"focus_blocks:{as_of or 'na'}:{prev or 'na'}:{'L' if live else 'O'}"
+    as_of, prev, is_live = trade_calendar.resolve_as_of()
+    settled = bool(as_of) and trade_calendar.is_settled(as_of)
+    ttl = _TTL if (is_live and not settled) else _OFFSESSION_TTL
+    tag = "S" if settled else ("L" if is_live else "O")
+    key = f"focus_blocks:{as_of or 'na'}:{prev or 'na'}:{tag}"
     return _cached(key, ttl, build) or {
         "available": False,
         "reason": "重点板块取数失败",
