@@ -2,6 +2,7 @@ import { apiUrl } from "@/lib/base";
 import { useEffect, useRef, useState } from "react";
 import {
   Swords, Loader2, AlertTriangle, Target, CheckSquare, Check, X, Minus,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentChat } from "@/components/AgentChat";
@@ -159,6 +160,22 @@ function hasReviewPayload(r: ReviewData | null | undefined): r is ReviewData {
 function todayIsTradeDay(meta: ReviewDatesMeta): boolean {
   if (typeof meta.today_is_trade_day === "boolean") return meta.today_is_trade_day;
   return Boolean(meta.today) && !isWeekendDate(meta.today!);
+}
+
+/** 有复盘存档的相邻日：dir=-1 更早，dir=1 更新。当前日可以不在列表里。 */
+function neighborArchivedDate(archived: string[], current: string, dir: -1 | 1): string | null {
+  const ordered = [...new Set(archived.filter(Boolean))].sort();
+  if (!ordered.length || !current) return null;
+  if (dir < 0) {
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      if (ordered[i] < current) return ordered[i];
+    }
+    return null;
+  }
+  for (const d of ordered) {
+    if (d > current) return d;
+  }
+  return null;
 }
 
 /** 选中日尚无存档、且盘面未到可复盘时间 → 展示上一份（仅交易日；非交易日不推选今天） */
@@ -502,11 +519,16 @@ export function AgentReview() {
     breadth?.down,
     breadth?.flat,
   );
-  // 下部快捷日期：选中日（含推进后的今天）置顶，高亮跟日历 date 走，不跟已展示那份复盘走
-  const chipDates = (date
-    ? [date, ...dates.filter((d) => d !== date)]
-    : dates
-  ).slice(0, 5);
+  const prevArchived = neighborArchivedDate(dates, date, -1);
+  const nextArchived = neighborArchivedDate(dates, date, 1);
+
+  function selectDate(v: string) {
+    if (!v || isWeekendDate(v)) return;
+    setDate(v);
+    setErr("");
+    setNotice("");
+    void loadLatest(v);
+  }
 
   return (
     <div className="space-y-6">
@@ -526,27 +548,32 @@ export function AgentReview() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex flex-col items-start">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="上一份有数据的复盘"
+              title={prevArchived ? `上一份 ${prevArchived}` : "没有更早的复盘"}
+              disabled={!prevArchived}
+              onClick={() => prevArchived && selectDate(prevArchived)}
+              className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
             <TradeDatePicker
               value={date}
               maxDate={calendarToday}
-              onChange={(v) => {
-                if (!v || isWeekendDate(v)) return;
-                setDate(v); setErr(""); setNotice("");
-                void loadLatest(v);
-              }}
+              onChange={selectDate}
             />
-            {/* 跑过的日子直接列出来 —— 不然用户只能靠猜哪天有存档 */}
-            {chipDates.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                {chipDates.filter((d) => !isWeekendDate(d)).map((d) => (
-                  <button key={d} onClick={() => { setDate(d); setErr(""); loadLatest(d); }}
-                    className={`rounded px-1.5 py-0.5 transition-colors hover:text-primary ${
-                      date === d ? "bg-primary/15 text-primary" : "bg-muted/40"
-                    }`}>{d.slice(5)}</button>
-                ))}
-              </div>
-            )}
+            <button
+              type="button"
+              aria-label="下一份有数据的复盘"
+              title={nextArchived ? `下一份 ${nextArchived}` : "没有更新的复盘"}
+              disabled={!nextArchived}
+              onClick={() => nextArchived && selectDate(nextArchived)}
+              className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-foreground"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
           <button onClick={generate} disabled={running}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50">

@@ -2544,7 +2544,8 @@ class TestReviewHistory:
         assert "archived.includes(today)" in s, "今日已有存档时须加载当日缓存，不能一律判 missing"
         assert "showContent" in s and "loadedDay" in s, "选中日与载入日复盘不一致时不展示内容"
         assert "fallback" in s, "fallback 时允许选今天、看上一份"
-        assert "chipDates" in s and "date === d" in s, "下部日期列表高亮跟日历选中日，选中日置顶"
+        assert "neighborArchivedDate" in s and "prevArchived" in s and "nextArchived" in s, "日期框前后箭头只在有数据日期间翻页"
+        assert "chipDates" not in s, "去掉底部最近日期快捷选择"
 
 
 class TestCliBackendPreflight:
