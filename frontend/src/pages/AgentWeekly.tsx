@@ -115,7 +115,7 @@ export function AgentWeekly() {
               <ThemeMatrixChart
                 matrix={data.theme_matrix}
                 windowDays={activeDays}
-                fallbackDates={safeArray(data.days).map((d) => d.date).filter(Boolean)}
+                fallbackDates={safeArray<WeeklyData["days"][number]>(data.days).map((d) => d.date).filter(Boolean)}
               />
             </div>
           </section>

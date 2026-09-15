@@ -128,8 +128,16 @@ export function DataBackup() {
   const reload = () =>
     api.backupStatus().then(setStatus).catch(() => setStatus(null)).finally(() => setLoaded(true));
 
-  const reloadStockUni = () =>
-    api.stockUniverseStatus().then(setStockUni).catch(() => setStockUni(null));
+  const reloadStockUni = async (): Promise<StockUniverseStatus | null> => {
+    try {
+      const s = await api.stockUniverseStatus();
+      setStockUni(s);
+      return s;
+    } catch {
+      setStockUni(null);
+      return null;
+    }
+  };
 
   useEffect(() => {
     reload();
@@ -141,7 +149,7 @@ export function DataBackup() {
     if (!stockRefreshing && !stockUni?.refreshing) return;
     const timer = window.setInterval(() => {
       void reloadStockUni().then((s) => {
-        if (!s.refreshing) setStockRefreshing(false);
+        if (s && !s.refreshing) setStockRefreshing(false);
       });
     }, 2000);
     return () => window.clearInterval(timer);

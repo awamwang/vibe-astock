@@ -160,7 +160,7 @@ function DayColumn({
                 }}
               >
                 <div className="flex items-center justify-between gap-1">
-                  <span className={cn("truncate text-[12px] font-bold leading-tight", isLit && "text-primary")}>
+                  <span className={cn("truncate text-[12px] font-bold leading-tight", isActive && "text-primary")}>
                     {t.tag}
                   </span>
                   <span className="shrink-0 text-sm font-extrabold tabular-nums text-primary">{t.limit_up}</span>

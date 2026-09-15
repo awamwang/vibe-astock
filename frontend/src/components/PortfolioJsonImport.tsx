@@ -141,7 +141,11 @@ function collectFields(
   if (disp) out.account_display = disp;
   if (draft.broker?.trim()) out.broker = draft.broker.trim();
 
-  const nums: { key: keyof TradeAccountFields; src: AccountFieldKey }[] = [
+  type NumAccountKey = Exclude<
+    keyof TradeAccountFields,
+    "account_name" | "account_display" | "broker"
+  >;
+  const nums: { key: NumAccountKey; src: AccountFieldKey }[] = [
     { key: "cash_balance", src: "cash_balance" },
     { key: "available", src: "available" },
     { key: "withdrawable", src: "withdrawable" },
