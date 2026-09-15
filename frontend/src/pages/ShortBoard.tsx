@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { pctColor } from "@/lib/colors";
 import {
   Sparkles, Loader2, RefreshCw, TrendingUp, TrendingDown,
@@ -99,9 +100,19 @@ export const SHORT_BOARD_TABS: { key: TabKey; label: string }[] = [
   { key: "rotation", label: "资金轮动" },
 ];
 
+const DEFAULT_TAB: TabKey = "emotion";
+const TAB_KEY_SET = new Set<string>(SHORT_BOARD_TABS.map((t) => t.key));
+
+/** 从 URL ?tab= 解析底部标签；非法或缺省时回落到默认签 */
+function parseTabParam(raw: string | null): TabKey {
+  if (raw && TAB_KEY_SET.has(raw)) return raw as TabKey;
+  return DEFAULT_TAB;
+}
+
 function tabFromPopout(section?: ShortBoardPopoutSection): TabKey | null {
   if (!section?.startsWith("tab-")) return null;
-  return section.slice(4) as TabKey;
+  const key = section.slice(4);
+  return TAB_KEY_SET.has(key) ? (key as TabKey) : null;
 }
 
 function SectionHead({
@@ -313,6 +324,19 @@ function qcjLevelAccent(level?: string | null, prev?: string | null): string | u
 export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopoutSection } = {}) {
   const isPopout = !!popoutSection;
   const popoutTab = tabFromPopout(popoutSection);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = popoutTab ?? parseTabParam(searchParams.get("tab"));
+  /** 底部标签写入 URL（默认签不占参数）；弹窗模式由路由段决定，不改 query */
+  const setTab = (key: TabKey) => {
+    if (isPopout) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (key === DEFAULT_TAB) next.delete("tab");
+      else next.set("tab", key);
+      if (next.toString() === prev.toString()) return prev;
+      return next;
+    }, { replace: true });
+  };
   const [board, setBoard] = useState<ShortBoardSnapshot | null>(null);
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
@@ -323,7 +347,6 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   const [ztEffect, setZtEffect] = useState<LiveZtEffect | null>(null);
   const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
-  const [tab, setTab] = useState<TabKey>(popoutTab ?? "emotion");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
 
@@ -441,7 +464,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     void loadLive();
     // 首屏：顶部区 + 当前标签；其余标签切过去时再拉
     void loadSentiment();
-    void loadTabData(popoutTab ?? tab);
+    void loadTabData(tab);
   }, []);
 
   useEffect(() => {
@@ -451,18 +474,17 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const liveInFlight = useRef(false);
   const heavyInFlight = useRef(false);
   const tabBootstrapped = useRef(false);
-  const activeTabRef = useRef<TabKey>(popoutTab ?? tab);
-  activeTabRef.current = popoutTab ?? tab;
+  const activeTabRef = useRef<TabKey>(tab);
+  activeTabRef.current = tab;
 
   // 切到某标签时拉一次（首屏已由上面的 mount effect 加载，跳过第一次）
   useEffect(() => {
-    const key = popoutTab ?? tab;
     if (!tabBootstrapped.current) {
       tabBootstrapped.current = true;
       return;
     }
-    void loadTabData(key);
-  }, [popoutTab, tab]);
+    void loadTabData(tab);
+  }, [tab]);
 
   useEffect(() => {
     const live = session?.phase === "盘中" || session?.phase === "集合竞价";
@@ -570,7 +592,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const ratioFmt = (v: number) => `${v.toFixed(2)}x`;
 
   const tabs = SHORT_BOARD_TABS;
-  const activeTab = popoutTab ?? tab;
+  const activeTab = tab;
 
   const refreshTab = () => { void loadTabData(activeTab); };
   const tabBusy =
