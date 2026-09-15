@@ -9,7 +9,7 @@ import { pctColor, countColor, strengthColor } from "@/lib/colors";
 import { finite, safeArray, safeRecord } from "@/lib/agent";
 import type {
   BoardStat, ByBoard, EventLedger, FeedbackCell, FeedbackMatrix,
-  DayChange, DayDiff, FeedbackDetail, LossEffect, SealQuality,
+  DayChange, DayDiff, FeedbackDetail, LedgerRestGroup, LossEffect, SealQuality,
   StatItem, StatsContext, ThemeNode, ThemeStructure, ThemeTree,
 } from "@/lib/agent";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -417,11 +417,38 @@ const TAG_TONE: Record<string, string> = {
   最高标: "bg-primary/15 text-primary",
   反复开板: "bg-warning/15 text-warning",
   题材首封: "bg-info/15 text-info",
+  高位断板: "bg-danger/15 text-danger",
+  连板断板: "bg-danger/15 text-danger",
   炸板: "bg-danger/15 text-danger",
   // 跌停走「跌」色（绿）—— 全站红涨绿跌，见 lib/colors.ts。
   // 「炸板」上面那条保持 danger 不动：它是"由强转弱"的**事件警示**，不是涨跌方向。
+  高标跌停: "bg-success/20 text-success",
   跌停: "bg-success/20 text-success",
 };
+
+function RestNames({ groups }: { groups?: LedgerRestGroup[] }) {
+  const rows = safeArray<LedgerRestGroup>(groups).filter((g) => safeArray(g.names).length > 0);
+  if (!rows.length) return null;
+  return (
+    <div className="mt-1.5 space-y-0.5">
+      {rows.map((g) => {
+        const names = safeArray(g.names);
+        return (
+          <div key={g.tag} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px]">
+            <span className={cn("shrink-0 rounded px-1 py-px text-[10px] font-bold",
+              TAG_TONE[g.tag] || "bg-muted text-muted-foreground")}>{g.tag}</span>
+            {names.map((s, i) => (
+              <span key={`${s.code}-${i}`} className="text-muted-foreground">
+                <StockLabel code={s.code} name={s.name} variant="nameOnly" nameClassName="text-[11px]" />
+                {i < names.length - 1 ? "、" : ""}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function Ledger({ el }: { el?: EventLedger }) {
   type Ev = NonNullable<EventLedger["events"]>[number];
@@ -451,8 +478,9 @@ export function Ledger({ el }: { el?: EventLedger }) {
     </div>
   );
 
-  const Group = ({ title, note, list, total }: {
+  const Group = ({ title, note, list, total, rest, scroll }: {
     title: string; note: string; list: Ev[]; total?: number;
+    rest?: LedgerRestGroup[]; scroll?: boolean;
   }) => (
     <div>
       <div className="mb-1 flex items-baseline gap-2">
@@ -462,10 +490,11 @@ export function Ledger({ el }: { el?: EventLedger }) {
           {countLabel(list.length, total)}
         </span>
       </div>
-      <div className="max-h-56 space-y-1 overflow-y-auto">
+      <div className={cn("space-y-1", scroll && "max-h-56 overflow-y-auto pr-1")}>
         {list.length ? list.map((e, i) => <Row key={`${e.code}-${e.tag}-${i}`} e={e} />)
           : <p className="text-[12px] text-muted-foreground/70">无</p>}
       </div>
+      <RestNames groups={rest} />
     </div>
   );
 
@@ -478,19 +507,22 @@ export function Ledger({ el }: { el?: EventLedger }) {
         "昨日板位最高的断板股（最多 6 只）、跌得最狠的（最多 5 只）。\n" +
         "「今天钱亏在哪」记的是**打板资金吃面的地方**，不是这些票都收跌 ——\n" +
         "炸板的票当天照样可能收红（冲板又掉下来、收盘还涨 7%），埋的是打板那一下。\n" +
-        "「N 起」= 这一堆里挑出来的条数；有截断时写成「展示/全量」。\n" +
+        "「N 起」= 这一堆里挑出来的条数；有截断时写成「展示/全量」，截断后的名字按类型列在下方。\n" +
+        "「今天钱赚在哪」的题材首封不再截断，列表超出高度可滚动。\n" +
         "⚠️ **按方向分三堆，堆内不排序。**\n" +
         "⚠️ 断板按**昨日板位**排，不按炸板次数：一只普通首板炸十次，信息量远不如「昨日 5 板断了」。"}
       available={el?.available}
       reason={el?.reason}
     >
-      {}
       <div className="space-y-3">
-        <Group title="今天钱亏在哪" note="断板 · 炸板 · 跌停" list={loss} total={el?.loss_total} />
-        {split.length > 0 && (
-          <Group title="分歧最大的" note="反复开板后回封" list={split} total={el?.split_total} />
+        <Group title="今天钱亏在哪" note="断板 · 炸板 · 跌停" list={loss}
+          total={el?.loss_total} rest={el?.loss_rest} />
+        {(split.length > 0 || safeArray(el?.split_rest).length > 0) && (
+          <Group title="分歧最大的" note="反复开板后回封" list={split}
+            total={el?.split_total} rest={el?.split_rest} />
         )}
-        <Group title="今天钱赚在哪" note="最高标 · 题材首封" list={gain} total={el?.gain_total} />
+        <Group title="今天钱赚在哪" note="最高标 · 题材首封" list={gain}
+          total={el?.gain_total} scroll />
       </div>
     </Section>
   );

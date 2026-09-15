@@ -150,13 +150,40 @@ def _with_theme_tree(env: dict | None) -> dict | None:
     return {**env, "market_facts": {**facts, "theme_tree": rebuilt}}
 
 
+def _with_event_ledger(env: dict | None) -> dict | None:
+    """账本截断名单是派生视图；三池缓存在就当场重算，不必为改展示重跑 AI。"""
+    if not isinstance(env, dict):
+        return env
+    date = env.get("target_date") or env.get("trade_date")
+    facts = env.get("market_facts")
+    if not date or not isinstance(facts, dict):
+        return env
+    try:
+        from . import market_facts as mf
+        from . import trade_calendar
+
+        date_s = str(date)
+        cache_dir = mf._CACHE_DIR
+        if not cache_dir or not os.path.isfile(os.path.join(cache_dir, f"{date_s}.json")):
+            return env
+        prev = trade_calendar.prev_trade_date(date_s)
+        if prev and not os.path.isfile(os.path.join(cache_dir, f"{prev}.json")):
+            return env
+        rebuilt = mf.event_ledger(date_s)
+    except Exception:  # noqa: BLE001
+        return env
+    if not rebuilt.get("available"):
+        return env
+    return {**env, "market_facts": {**facts, "event_ledger": rebuilt}}
+
+
 def load(date: str | None = None) -> dict | None:
     """读某天的复盘；`date=None` 读 latest。文件损坏当不存在处理（不抛）。"""
     name = "latest.json" if date is None else f"{date}.json"
     path = safe_join(DIR, name)
     if not os.path.exists(path):
         return None
-    return _with_theme_tree(_with_baselines(_read(path)))
+    return _with_event_ledger(_with_theme_tree(_with_baselines(_read(path))))
 
 
 def dates() -> list[str]:

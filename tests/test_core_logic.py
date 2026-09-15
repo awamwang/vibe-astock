@@ -3002,9 +3002,56 @@ class TestEventLedgerTotals:
         assert r["loss_total"] == 18        # 10 + 8
         assert len(r["split_events"]) == 3
         assert r["split_total"] == 7        # 2 高标(broken=3) + 5 分歧
-        assert len(r["gain_events"]) == 6   # 最高标 2 + 题材首封 4
+        assert len(r["gain_events"]) == 11  # 最高标 2 + 题材首封全量 9
         # 最高标 2 + 有首封的方向：方向0/1、题材0-5、公用
         assert r["gain_total"] == 11
+        assert [g["tag"] for g in r["loss_rest"]] == ["炸板", "跌停"]
+        assert [n["name"] for n in r["loss_rest"][0]["names"]] == ["炸6", "炸7", "炸8", "炸9"]
+        assert [n["name"] for n in r["loss_rest"][1]["names"]] == ["跌5", "跌6", "跌7"]
+        assert [g["tag"] for g in r["split_rest"]] == ["反复开板"]
+        assert [n["name"] for n in r["split_rest"][0]["names"]] == [
+            "高标0", "高标1", "分歧1", "分歧0"]
+
+    def test_rest_names_follow_break_and_limit_down_sort(self, monkeypatch):
+        """剩余名单按原池排序，再按类型（高位/连板/炸板、高标跌停/跌停）换行。"""
+        from duanxian import market_facts as mf
+
+        def row(code, name, boards=1, sector="x", broken=1, first_seal="093000",
+                ret=5.0, consec_dt=1):
+            return {
+                "code": code, "name": name, "boards": boards, "sector": sector,
+                "broken_times": broken, "first_seal": first_seal, "last_seal": first_seal,
+                "ret": ret, "board": "主板", "turnover": None, "consec_dt": consec_dt,
+            }
+
+        zt = [row("000001", "标", boards=3, sector="方向A", first_seal="093000")]
+        zb = [row(f"30000{i}", f"炸{i}", broken=1) for i in range(8)]
+        dt = [row(f"40000{i}", f"跌{i}", ret=-10.0, consec_dt=1) for i in range(7)]
+        prev_boards = {
+            "300000": 5, "300001": 4, "300002": 3,
+            "300003": 2, "300004": 2,
+            "400000": 4, "400001": 2,
+        }
+        monkeypatch.setattr(mf, "pools", lambda date: {"zt": zt, "zb": zb, "dt": dt})
+        monkeypatch.setattr(mf, "_prev_boards_map", lambda prev: prev_boards)
+        monkeypatch.setattr(mf.trade_calendar, "prev_trade_date", lambda date: "2026-07-28")
+
+        r = mf.event_ledger("2026-07-29")
+        # 炸板池按昨日板位：高位3 + 连板2 + 炸板3；明细取前 6，剩 炸6、炸7
+        assert [e["tag"] for e in r["loss_events"][:6]] == [
+            "高位断板", "高位断板", "高位断板", "连板断板", "连板断板", "炸板"]
+        assert [g["tag"] for g in r["loss_rest"]] == ["炸板", "跌停"]
+        assert [n["name"] for n in r["loss_rest"][0]["names"]] == ["炸6", "炸7"]
+        assert [n["name"] for n in r["loss_rest"][1]["names"]] == ["跌5", "跌6"]
+
+    def test_frontend_lists_rest_names_and_gain_scroll(self):
+        import pathlib
+
+        s = pathlib.Path("frontend/src/components/MarketFactsPanel.tsx").read_text(encoding="utf-8")
+        assert "loss_rest" in s and "split_rest" in s
+        assert "RestNames" in s
+        assert 'title="今天钱赚在哪"' in s and "scroll" in s
+        assert "max-h-56 overflow-y-auto" in s
 
 
 @pytest.mark.unit
@@ -4250,6 +4297,44 @@ class TestVerificationItemsCarryBaseline:
         assert out["market_facts"]["theme_tree"]["available"] is False
         assert rs._with_theme_tree(None) is None
         assert rs._with_theme_tree({}) == {}
+
+    def test_load_rebuilds_event_ledger_from_pool_cache(self, monkeypatch, tmp_path):
+        """账本展示改了截断规则：有三池缓存就当场重算，别逼用户重跑 AI。"""
+        from duanxian import review_store as rs, market_facts as mf
+
+        env = {
+            "target_date": "2026-08-18",
+            "market_facts": {
+                "event_ledger": {"available": True, "loss_events": []},
+                "seal_quality": {"available": True},
+            },
+        }
+        cache = tmp_path / "mf"
+        cache.mkdir()
+        (cache / "2026-08-18.json").write_text("{}", encoding="utf-8")
+        (cache / "2026-08-17.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(mf, "_CACHE_DIR", str(cache))
+        monkeypatch.setattr("duanxian.trade_calendar.prev_trade_date", lambda d: "2026-08-17")
+        monkeypatch.setattr(mf, "event_ledger", lambda d: {
+            "available": True, "loss_rest": [{"tag": "炸板", "names": [{"code": "300001", "name": "甲"}]}],
+        })
+        out = rs._with_event_ledger(env)
+        assert out["market_facts"]["event_ledger"]["loss_rest"][0]["tag"] == "炸板"
+        assert out["market_facts"]["seal_quality"]["available"] is True
+
+    def test_event_ledger_backfill_skips_without_pool_cache(self, monkeypatch):
+        from duanxian import review_store as rs, market_facts as mf
+
+        env = {"target_date": "2026-08-18", "market_facts": {"event_ledger": {"available": True}}}
+
+        def _boom(*_a, **_k):
+            raise AssertionError("没有三池缓存不该现算账本")
+
+        monkeypatch.setattr(mf, "_CACHE_DIR", "")
+        monkeypatch.setattr(mf, "event_ledger", _boom)
+        assert rs._with_event_ledger(env) is env
+        assert rs._with_event_ledger(None) is None
+        assert rs._with_event_ledger({}) == {}
 
 
 @pytest.mark.unit

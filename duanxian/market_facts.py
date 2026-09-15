@@ -548,18 +548,20 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
     highest_n = 0
     split_total = 0
     theme_first_total = 0
+    split_sorted: list[dict] = []
     if zt:
         top = max(int(r.get("boards") or 1) for r in zt)
         for r in zt:
             if int(r.get("boards") or 1) == top:
                 highest_n += 1
                 add("最高标", r, f"今日最高 {top} 板")
-        # 反复炸板又回封 —— 分歧最大的票（只挑炸得最多的 3 只，总数另记）
+        # 反复炸板又回封 —— 分歧最大的票（明细只挑炸得最多的 3 只，其余只留名字）
         split_cands = [r for r in zt if (r.get("broken_times") or 0) >= 2]
         split_total = len(split_cands)
-        for r in sorted(split_cands, key=lambda x: -(x.get("broken_times") or 0))[:3]:
+        split_sorted = sorted(split_cands, key=lambda x: -(x.get("broken_times") or 0))
+        for r in split_sorted[:3]:
             add("反复开板", r, f"炸板 {r['broken_times']} 次后回封")
-        # 每个题材最早封板的那只 = 该方向的发起者（最多列 4 个方向）
+        # 每个题材最早封板的那只 = 该方向的发起者（全部列出，前端限制高度滚动）
         theme_first: list[dict] = []
         seen: set[str] = set()
         for r in sorted(zt, key=lambda x: _hhmmss(x.get("first_seal")) or "999999"):
@@ -568,7 +570,7 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
                 seen.add(s)
                 theme_first.append(r)
         theme_first_total = len(theme_first)
-        for r in theme_first[:4]:
+        for r in theme_first:
             add("题材首封", r, f"{(r.get('sector') or '').strip()} 当日最早封板")
     zb_sorted = sorted(zb, key=lambda x: (-(prev_boards.get(x["code"]) or 0),
                                           -(x.get("broken_times") or 0)))
@@ -590,6 +592,30 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
         add("高标跌停" if (pb and pb >= 2) else "跌停", r,
             note + (f"｜昨日 {pb} 板" if pb else ""))
 
+    def _zb_tag(r: dict) -> str:
+        pb = prev_boards.get(r["code"])
+        if pb and pb >= 3:
+            return "高位断板"
+        if pb and pb >= 2:
+            return "连板断板"
+        return "炸板"
+
+    def _dt_tag(r: dict) -> str:
+        pb = prev_boards.get(r["code"])
+        return "高标跌停" if (pb and pb >= 2) else "跌停"
+
+    def _name_groups(rows: list[dict], tag_of) -> list[dict]:
+        """截断后的名字按类型分组；组内顺序 = 原池排序。"""
+        order: list[str] = []
+        buckets: dict[str, list] = {}
+        for r in rows:
+            t = tag_of(r)
+            if t not in buckets:
+                order.append(t)
+                buckets[t] = []
+            buckets[t].append({"code": r["code"], "name": r["name"]})
+        return [{"tag": t, "names": buckets[t]} for t in order]
+
     _LOSS = {"高位断板", "连板断板", "炸板", "高标跌停", "跌停"}
     _GAIN = {"最高标", "题材首封"}
     loss_events = [e for e in events if e["tag"] in _LOSS]
@@ -605,6 +631,9 @@ def event_ledger(date: str, prev: Optional[str] = None) -> dict:
         "loss_total": len(zb) + len(dt),
         "split_total": split_total,
         "gain_total": highest_n + theme_first_total,
+        # 截断后只留名称，按类型换行；排序与明细同一套规则
+        "loss_rest": _name_groups(zb_sorted[6:], _zb_tag) + _name_groups(dt_sorted[5:], _dt_tag),
+        "split_rest": _name_groups(split_sorted[3:], lambda _r: "反复开板"),
     }
 
 

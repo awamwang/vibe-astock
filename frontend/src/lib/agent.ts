@@ -253,6 +253,8 @@ export interface LedgerEvent {
   sector: string; ret: number; first_seal: string | null; last_seal: string | null;
   broken_times: number; turnover?: number | null; note: string;
 }
+export interface LedgerRestName { code: string; name: string; }
+export interface LedgerRestGroup { tag: string; names: LedgerRestName[]; }
 export interface EventLedger extends FactBase {
   events?: LedgerEvent[]; count?: number;
   loss_events?: LedgerEvent[];    // 断板 / 炸板 / 跌停 —— 今天钱亏在哪
@@ -261,6 +263,8 @@ export interface EventLedger extends FactBase {
   loss_total?: number;            // 炸板池 + 跌停池全量（未截断）
   split_total?: number;           // 炸板≥2 次又回封的全量
   gain_total?: number;            // 最高标全量 + 有首封时间的题材方向数
+  loss_rest?: LedgerRestGroup[];  // 截断后的名字，按类型
+  split_rest?: LedgerRestGroup[];
 }
 export interface BoardStat {
   limit_up: number; highest: number; broken?: number; limit_down?: number;
