@@ -6,24 +6,47 @@
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import statistics
 import threading
 import time
 from typing import Any, Optional
 
+from . import paths as _paths
 from . import trade_calendar
-from .util import china_now
+from .util import atomic_write_json, china_now
 
-_SNAP_TTL = 20.0
-_gather_cache: dict[str, tuple[float, dict]] = {}
+# 随盘 15s：短线盘面 10s 一刷，比间隔长才挡得住叠请求（同 live_emotion）。
+# 定稿场次对照窗不会变，缓存到进程内一天。
+_LIVE_TTL = 15.0
+_SETTLED_TTL = 86400.0
+_CAL_TTL = 3600.0
+_INFLIGHT_WAIT = 120.0
+
+_gather_cache: dict[str, tuple[float, dict, float]] = {}
+_day_mem: dict[str, tuple[float, dict, float]] = {}
+_cal_cache: dict[str, tuple[float, object]] = {}
+_inflight: dict[str, threading.Event] = {}
 _snap_lock = threading.Lock()
+
+_CACHE_DIR = ""
+
+
+@_paths.register_rebind
+def _rebind_paths() -> None:
+    global _CACHE_DIR
+    _CACHE_DIR = str(_paths.agents_dir() / "cache" / "board_emotion_resonance")
 
 
 def _reset_runtime_state() -> None:
-    """测试用：丢掉取数缓存。"""
+    """测试用：丢掉内存缓存；磁盘归档由测试 monkeypatch 目录。"""
     with _snap_lock:
         _gather_cache.clear()
+        _day_mem.clear()
+        _cal_cache.clear()
+        _inflight.clear()
 
 LOOKBACK = 10
 MIN_BASELINE_N = 5
@@ -38,12 +61,77 @@ LAYERS: tuple[dict[str, Any], ...] = (
     {"key": "promotion_rate", "label": "晋级率", "invert": False, "unit": "ratio"},
     {"key": "break_rate", "label": "炸板率", "invert": True, "unit": "ratio"},
     {"key": "zt_minus_dt", "label": "涨停相对跌停", "invert": False, "unit": "count"},
-    {"key": "money_median", "label": "赚钱效应中位", "invert": False, "unit": "pct"},
+    {"key": "money_avg", "label": "赚钱效应均", "invert": False, "unit": "pct"},
     {"key": "deep_loss_5_rate", "label": "深亏占比", "invert": True, "unit": "ratio"},
 )
 
 LAYER_KEYS: tuple[str, ...] = tuple(s["key"] for s in LAYERS)
 _LAYER_BY_KEY = {s["key"]: s for s in LAYERS}
+
+
+def _cached(key: str, ttl: float, build):
+    """失败（None）不缓存；空列表等假值要缓存。锁外 build。"""
+    now = time.monotonic()
+    with _snap_lock:
+        hit = _cal_cache.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    val = build()
+    if val is not None:
+        with _snap_lock:
+            _cal_cache[key] = (now, val)
+    return val
+
+
+def _today() -> str:
+    return china_now().strftime("%Y-%m-%d")
+
+
+def _date_is_settled(date: str) -> bool:
+    today = _today()
+    if date < today:
+        return True
+    if date > today:
+        return False
+    return _cached(
+        f"settled:{date}", _CAL_TTL,
+        lambda: "Y" if trade_calendar.is_settled(date) else "N",
+    ) == "Y"
+
+
+def _archive_path(date: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date}.json")
+
+
+def _load_day(date: str) -> dict:
+    path = _archive_path(date)
+    if not _CACHE_DIR or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _save_day(date: str, payload: dict) -> None:
+    if not _CACHE_DIR:
+        return
+    atomic_write_json(_archive_path(date), payload)
+
+
+def _day_complete(arch: dict) -> bool:
+    return all(k in arch for k in LAYER_KEYS)
+
+
+def _layers_from_arch(arch: dict) -> dict[str, Optional[float]]:
+    return {k: _f(arch.get(k)) for k in LAYER_KEYS}
+
+
+def _remember_day(date: str, readings: dict[str, Optional[float]], ttl: float) -> None:
+    with _snap_lock:
+        _day_mem[date] = (time.monotonic(), dict(readings), ttl)
 
 
 def _f(v: Any) -> Optional[float]:
@@ -198,7 +286,16 @@ def score_board_emotion(
 
 
 def baseline_dates(as_of: str, n: int = LOOKBACK) -> list[str]:
-    """近 n 个已定稿场次，不含本场。"""
+    """近 n 个已定稿场次，不含本场。日历查询进程内缓存。"""
+    cached = _cached(
+        f"baseline:{as_of}:{n}",
+        _CAL_TTL,
+        lambda: _baseline_dates_uncached(as_of, n),
+    )
+    return list(cached or [])
+
+
+def _baseline_dates_uncached(as_of: str, n: int) -> list[str]:
     raw = trade_calendar.trade_dates_ending_at(as_of, n + 2)
     return [d for d in raw if d < as_of][-n:]
 
@@ -264,7 +361,7 @@ def _day_money_loss(date: str) -> dict[str, Optional[float]]:
     money = em.money_effect(date)
     loss = mf.loss_effect(date)
     return {
-        "money_median": _f(money.get("median")) if money.get("available") else None,
+        "money_avg": _f(money.get("avg")) if money.get("available") else None,
         "deep_loss_5_rate": (
             _f(loss.get("deep_loss_5_rate")) if loss.get("available") else None
         ),
@@ -272,38 +369,98 @@ def _day_money_loss(date: str) -> dict[str, Optional[float]]:
 
 
 def day_readings(date: str, live_snap: Optional[dict] = None) -> dict[str, Optional[float]]:
+    """一场次六层原值。已定稿且落盘完整则只读盘，不再打上游。"""
+    live_hit = bool(
+        live_snap and live_snap.get("available") and live_snap.get("date") == date
+    )
+    if not live_hit:
+        now = time.monotonic()
+        with _snap_lock:
+            mem = _day_mem.get(date)
+            if mem and now - mem[0] < mem[2]:
+                return dict(mem[1])
+        arch = _load_day(date)
+        if arch.get("settled") and _day_complete(arch):
+            out = _layers_from_arch(arch)
+            _remember_day(date, out, _SETTLED_TTL)
+            return out
+
     out = {k: None for k in LAYER_KEYS}
-    out.update(_day_board_emotion(date, live_snap))
+    out.update(_day_board_emotion(date, live_snap if live_hit else None))
     out.update(_day_money_loss(date))
+
+    settled = _date_is_settled(date)
+    ttl = _LIVE_TTL if live_hit or not settled else _SETTLED_TTL
+    if any(v is not None for v in out.values()) and trade_calendar.should_write_daily_cache(date):
+        payload: dict[str, Any] = {k: out.get(k) for k in LAYER_KEYS}
+        payload["date"] = date
+        if settled:
+            payload["settled"] = True
+        _save_day(date, payload)
+        if settled:
+            ttl = _SETTLED_TTL
+    _remember_day(date, out, ttl)
     return out
 
 
-def _packed_for(as_of: str) -> dict[str, Any]:
-    """一场次的当场读数 + 对照窗。缺数不补。锁外取数。"""
-    now = time.monotonic()
-    with _snap_lock:
-        hit = _gather_cache.get(as_of)
-        if hit and now - hit[0] < _SNAP_TTL:
-            return hit[1]
+def _gather_now(as_of: str) -> dict[str, Any]:
+    calendar_today = _today()
+    is_live = as_of == calendar_today
+    live_snap: Optional[dict] = None
+    if is_live:
+        from . import live_emotion as le
+        live_snap = le.snapshot(as_of)
+        phase = live_snap.get("phase") if live_snap else None
+        current = day_readings(as_of, live_snap)
+    else:
+        current = day_readings(as_of)
+        phase = "已收盘" if _date_is_settled(as_of) else "非交易日"
 
-    from . import live_emotion as le
-
-    live_snap = le.snapshot(as_of)
-    current = day_readings(as_of, live_snap)
     dates = baseline_dates(as_of)
     hist_by_day = {d: day_readings(d) for d in dates}
     window: dict[str, list[Optional[float]]] = {
         k: [hist_by_day[d].get(k) for d in dates] for k in LAYER_KEYS
     }
-    packed = {
+    return {
         "current": current,
         "window": window,
         "dates": dates,
-        "phase": live_snap.get("phase") if live_snap else None,
+        "phase": phase,
+        "is_live": bool(is_live),
     }
+
+
+def _packed_for(as_of: str) -> dict[str, Any]:
+    """一场次的当场读数 + 对照窗。锁外取数；同场次并发只跑一次。"""
+    now = time.monotonic()
     with _snap_lock:
-        _gather_cache[as_of] = (time.monotonic(), packed)
-    return packed
+        hit = _gather_cache.get(as_of)
+        if hit and now - hit[0] < hit[2]:
+            return hit[1]
+        waiter = _inflight.get(as_of)
+        leader = waiter is None
+        if leader:
+            waiter = threading.Event()
+            _inflight[as_of] = waiter
+    if not leader:
+        waiter.wait(timeout=_INFLIGHT_WAIT)
+        with _snap_lock:
+            hit = _gather_cache.get(as_of)
+        if hit:
+            return hit[1]
+        return _gather_now(as_of)
+
+    try:
+        packed = _gather_now(as_of)
+        ttl = _LIVE_TTL if packed.get("is_live") else _SETTLED_TTL
+        with _snap_lock:
+            _gather_cache[as_of] = (time.monotonic(), packed, ttl)
+        return packed
+    finally:
+        waiter.set()
+        with _snap_lock:
+            if _inflight.get(as_of) is waiter:
+                _inflight.pop(as_of, None)
 
 
 def snapshot(
@@ -313,12 +470,12 @@ def snapshot(
     weights: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """一场次的打板情绪共振：默认分必有；传入基线/权重时另给试算。"""
-    calendar_today = china_now().strftime("%Y-%m-%d")
+    calendar_today = _today()
     if as_of is None:
-        as_of, _prev, is_live = trade_calendar.resolve_as_of(calendar_today)
-    else:
-        is_live = as_of == calendar_today
-
+        as_of, _prev, _is_live = _cached(
+            f"asof:{calendar_today}", _CAL_TTL,
+            lambda: trade_calendar.resolve_as_of(calendar_today),
+        )
     packed = _packed_for(as_of)
     current = packed["current"]
     window = packed["window"]
@@ -335,7 +492,7 @@ def snapshot(
     return {
         "available": True,
         "date": as_of,
-        "is_live": bool(is_live),
+        "is_live": bool(packed.get("is_live")),
         "phase": packed.get("phase"),
         "window_dates": dates,
         "note": "东财四池混算 10cm / 20cm / 北交所 / ST，家数同向不是同一制度内的同向。",
