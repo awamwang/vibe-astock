@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useRef, Fragment, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { pctColor } from "@/lib/colors";
 import {
   Sparkles, Loader2, RefreshCw, TrendingUp, TrendingDown,
-  Flame, BarChart3,
+  Flame, BarChart3, Waves,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -32,6 +32,12 @@ import {
   type ShortBoardSnapshot,
   type ShortTermEmotion,
 } from "@/lib/liveBoard";
+import {
+  fetchBoardEmotionResonance,
+  formatResonanceScore,
+  resonanceLabelClass,
+  type BoardEmotionResonanceSnapshot,
+} from "@/lib/boardEmotionResonance";
 import { useDeepDive, DeepDivePanel, RunAllButton, type DiveItem } from "@/components/ui/DeepDive";
 import { cn } from "@/lib/utils";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -346,6 +352,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const [session, setSession] = useState<MarketSession | null>(null);
   const [liveEmo, setLiveEmo] = useState<LiveEmotion | null>(null);
   const [ztEffect, setZtEffect] = useState<LiveZtEffect | null>(null);
+  const [resonance, setResonance] = useState<BoardEmotionResonanceSnapshot | null>(null);
   const [lianbanQuotes, setLianbanQuotes] = useState<Record<string, Quote>>({});
   const [autoRefresh, setAutoRefresh] = useState<boolean>(
     () => localStorage.getItem(AUTO_KEY) === "1");
@@ -416,6 +423,11 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     return fetchLiveZtEffect().then(setZtEffect).catch(() => {})
       .finally(() => mark("ztEffect", false));
   };
+  const loadResonance = () => {
+    mark("resonance", true);
+    return fetchBoardEmotionResonance().then(setResonance).catch(() => {})
+      .finally(() => mark("resonance", false));
+  };
   const loadEmotion = () => {
     mark("emotion", true);
     return fetchLianbanEmotion().then(setEmotion).catch(() => {})
@@ -447,6 +459,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     loadBoard(),
     loadLiveEmo(),
     loadZtEffect(),
+    loadResonance(),
     loadSession(),
     Promise.resolve(refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code))),
   ]);
@@ -629,6 +642,10 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
   const showMarket = !isPopout || popoutSection === "market";
   const showEmotion = !isPopout || popoutSection === "emotion";
   const showTabs = !isPopout || !!popoutTab;
+  const resonanceHref = resonance?.date
+    ? `/short-resonance?date=${encodeURIComponent(resonance.date)}#board-emotion`
+    : "/short-resonance#board-emotion";
+  const resonanceDefault = resonance?.default;
 
   const blockNames = useMemo(() => {
     const names: string[] = [];
@@ -800,8 +817,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             {board?.updated && <> · 更新于 {board.updated}</>}
           </span>
         }
-        onRefresh={() => { loadBoard(); loadLiveEmo(); loadZtEffect(); }}
-        refreshing={busy.board || busy.liveEmo || busy.ztEffect}
+        onRefresh={() => { loadBoard(); loadLiveEmo(); loadZtEffect(); loadResonance(); }}
+        refreshing={busy.board || busy.liveEmo || busy.ztEffect || busy.resonance}
         extra={!isPopout ? (
           <SectionPopupButton
             compact
@@ -922,6 +939,21 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
             </EnvGroup>
           </div>
         )}
+        <Link
+          to={resonanceHref}
+          className="mt-2.5 flex flex-wrap items-center gap-3 rounded-lg border border-border/40 bg-muted/15 px-3 py-2.5 transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
+            <Waves className="h-3.5 w-3.5" /> 打板情绪共振
+          </span>
+          <span className={cn("font-mono text-lg font-bold tabular-nums", pctColor(resonanceDefault?.score ?? null))}>
+            {formatResonanceScore(resonanceDefault?.score ?? null)}
+          </span>
+          <span className={cn("text-sm font-semibold", resonanceLabelClass(resonanceDefault?.label || "不足"))}>
+            {resonanceDefault?.label || (busy.resonance ? "…" : "不足")}
+          </span>
+          <span className="ml-auto text-[11px] text-primary/80">查看中间过程 →</span>
+        </Link>
       </GlassCard>
       </>)}
 

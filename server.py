@@ -32,9 +32,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from duanxian import (
-    block_manage, focus_blocks, kpl_blocks, live_emotion, live_zt_effect, mood_block, overseas,
-    preflight, reflection, review_store, screenshot_parse, risk_stance, short_board,
-    trade_calendar, trade_budget, trade_store,
+    block_manage, board_emotion_resonance, focus_blocks, kpl_blocks, live_emotion, live_zt_effect,
+    mood_block, overseas, preflight, reflection, review_store, screenshot_parse, risk_stance,
+    short_board, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -430,6 +430,32 @@ def api_market_live_zt_effect():
     out = live_zt_effect.snapshot()
     _maybe_emit_live_snapshot()
     return out
+
+
+@app.get("/api/market/board-emotion-resonance")
+def api_board_emotion_resonance_get(date: str | None = None):
+    """打板情绪共振默认分（短线盘面只读这条）。"""
+    try:
+        as_of = validate_trade_date(date) if date else None
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return board_emotion_resonance.snapshot(as_of)
+
+
+@app.post("/api/market/board-emotion-resonance")
+def api_board_emotion_resonance_trial(request: Request, body: dict | None = Body(None)):
+    """打板情绪共振试算：改十日基线或层权重，不写归档。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    payload = body or {}
+    date = payload.get("date")
+    try:
+        as_of = validate_trade_date(date) if date else None
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    baselines = payload.get("baselines") if isinstance(payload.get("baselines"), dict) else None
+    weights = payload.get("weights") if isinstance(payload.get("weights"), dict) else None
+    return board_emotion_resonance.snapshot(as_of, baselines=baselines, weights=weights)
 
 
 @app.get("/api/market/short-board")

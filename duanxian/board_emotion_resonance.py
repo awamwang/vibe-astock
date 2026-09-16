@@ -16,8 +16,14 @@ from . import trade_calendar
 from .util import china_now
 
 _SNAP_TTL = 20.0
-_snap_cache: dict[str, tuple[float, dict]] = {}
+_gather_cache: dict[str, tuple[float, dict]] = {}
 _snap_lock = threading.Lock()
+
+
+def _reset_runtime_state() -> None:
+    """测试用：丢掉取数缓存。"""
+    with _snap_lock:
+        _gather_cache.clear()
 
 LOOKBACK = 10
 MIN_BASELINE_N = 5
@@ -272,6 +278,34 @@ def day_readings(date: str, live_snap: Optional[dict] = None) -> dict[str, Optio
     return out
 
 
+def _packed_for(as_of: str) -> dict[str, Any]:
+    """一场次的当场读数 + 对照窗。缺数不补。锁外取数。"""
+    now = time.monotonic()
+    with _snap_lock:
+        hit = _gather_cache.get(as_of)
+        if hit and now - hit[0] < _SNAP_TTL:
+            return hit[1]
+
+    from . import live_emotion as le
+
+    live_snap = le.snapshot(as_of)
+    current = day_readings(as_of, live_snap)
+    dates = baseline_dates(as_of)
+    hist_by_day = {d: day_readings(d) for d in dates}
+    window: dict[str, list[Optional[float]]] = {
+        k: [hist_by_day[d].get(k) for d in dates] for k in LAYER_KEYS
+    }
+    packed = {
+        "current": current,
+        "window": window,
+        "dates": dates,
+        "phase": live_snap.get("phase") if live_snap else None,
+    }
+    with _snap_lock:
+        _gather_cache[as_of] = (time.monotonic(), packed)
+    return packed
+
+
 def snapshot(
     as_of: str | None = None,
     *,
@@ -285,44 +319,26 @@ def snapshot(
     else:
         is_live = as_of == calendar_today
 
-    has_trial = bool(baselines) or bool(weights)
-    if not has_trial:
-        now = time.monotonic()
-        with _snap_lock:
-            hit = _snap_cache.get(as_of)
-            if hit and now - hit[0] < _SNAP_TTL:
-                return hit[1]
-
-    from . import live_emotion as le
-
-    live_snap = le.snapshot(as_of)
-    current = day_readings(as_of, live_snap)
-    dates = baseline_dates(as_of)
-    hist_by_day = {d: day_readings(d) for d in dates}
-    window: dict[str, list[Optional[float]]] = {
-        k: [hist_by_day[d].get(k) for d in dates] for k in LAYER_KEYS
-    }
+    packed = _packed_for(as_of)
+    current = packed["current"]
+    window = packed["window"]
+    dates = packed["dates"]
 
     default = score_board_emotion(current, window, dates)
     trial = None
-    if has_trial:
+    if baselines or weights:
         trial = score_board_emotion(
             current, window, dates,
             weights=weights, baselines=baselines, trial=True,
         )
 
-    phase = live_snap.get("phase") if live_snap else None
-    out = {
+    return {
         "available": True,
         "date": as_of,
         "is_live": bool(is_live),
-        "phase": phase,
+        "phase": packed.get("phase"),
         "window_dates": dates,
         "note": "东财四池混算 10cm / 20cm / 北交所 / ST，家数同向不是同一制度内的同向。",
         "default": default,
         "trial": trial,
     }
-    if not has_trial:
-        with _snap_lock:
-            _snap_cache[as_of] = (time.monotonic(), out)
-    return out
