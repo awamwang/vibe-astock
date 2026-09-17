@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { PaginationBar, usePagedList } from "@/components/ui/PaginationBar";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
@@ -27,6 +28,7 @@ export function Articles() {
   const [root, setRoot] = useState("");
   const [articles, setArticles] = useState<ArticleMeta[]>([]);
   const [listQuery, setListQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
   const [edit, setEdit] = useState<ArticleEditState | null>(null);
   const [editBaseline, setEditBaseline] = useState<ArticleEditState | null>(null);
@@ -50,6 +52,7 @@ export function Articles() {
   const [qaErr, setQaErr] = useState<string | null>(null);
   const qaScrollRef = useRef<HTMLDivElement>(null);
   const qaAbortRef = useRef<AbortController | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -267,7 +270,10 @@ export function Articles() {
       // 写入后选中刚添加的文章（多篇时选列表中最新的一篇）
       const prefer = (res.articles || []).find((a) => writtenNames.includes(a.filename));
       const pick = prefer?.filename || writtenNames[0] || null;
-      if (pick) setSelected(pick);
+      if (pick) {
+        setSelected(pick);
+        setPage(1);
+      }
       const n = writtenNames.length;
 
       let converted = 0;
@@ -365,6 +371,17 @@ export function Articles() {
       return hay.includes(q);
     });
   }, [articles, listQuery]);
+
+  const { page: listPage, paged: pagedArticles } = usePagedList(
+    filteredArticles,
+    page,
+    setPage,
+    listQuery,
+  );
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [listPage]);
 
   const updateDraft = (patch: Partial<ArticleDraftFile>) => {
     setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, ...patch } : f)) ?? null);
@@ -620,36 +637,44 @@ export function Articles() {
             <p className="text-sm text-muted-foreground">没有匹配「{listQuery.trim()}」的文章。</p>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              <ul className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
-                {filteredArticles.map((t) => (
-                  <li key={t.filename}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (editDirty && selected !== t.filename) {
-                          toast.error("请先保存或撤销当前编辑");
-                          return;
-                        }
-                        setSelected(t.filename);
-                      }}
-                      className={cn(
-                        "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                        selected === t.filename
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border/60 hover:border-primary/30",
-                      )}
-                    >
-                      <div className="font-medium">{t.title}</div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
-                      {t.added_at && (
-                        <div className="mt-1 text-[10px] text-muted-foreground/80">
-                          添加于 {t.added_at}
-                        </div>
-                      )}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div className="min-w-0">
+                <ul ref={listRef} className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
+                  {pagedArticles.map((t) => (
+                    <li key={t.filename}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editDirty && selected !== t.filename) {
+                            toast.error("请先保存或撤销当前编辑");
+                            return;
+                          }
+                          setSelected(t.filename);
+                        }}
+                        className={cn(
+                          "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                          selected === t.filename
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border/60 hover:border-primary/30",
+                        )}
+                      >
+                        <div className="font-medium">{t.title}</div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
+                        {t.added_at && (
+                          <div className="mt-1 text-[10px] text-muted-foreground/80">
+                            添加于 {t.added_at}
+                          </div>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <PaginationBar
+                  page={listPage}
+                  total={filteredArticles.length}
+                  onPageChange={setPage}
+                  className="mt-3"
+                />
+              </div>
               <div className="flex min-h-0 flex-col gap-2">
                 {!selected ? (
                   <p className="text-sm text-muted-foreground">点击左侧文章查看并编辑</p>

@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { PaginationBar, usePagedList } from "@/components/ui/PaginationBar";
 import { cn } from "@/lib/utils";
 import {
   api, ApiError,
@@ -37,6 +38,7 @@ export function ExperienceMemory() {
   const [contentQuery, setContentQuery] = useState("");
   const [targetQuery, setTargetQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [page, setPage] = useState(1);
 
   const [qaOpen, setQaOpen] = useState(false);
   const [qaConfigured, setQaConfigured] = useState(false);
@@ -46,6 +48,7 @@ export function ExperienceMemory() {
   const [qaErr, setQaErr] = useState<string | null>(null);
   const qaScrollRef = useRef<HTMLDivElement>(null);
   const qaAbortRef = useRef<AbortController | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -151,7 +154,10 @@ export function ExperienceMemory() {
       setDrafts(null);
       setNote("");
       const pick = res.written?.[0]?.filename || res.topics?.[0]?.filename;
-      if (pick) setSelected(pick);
+      if (pick) {
+        setSelected(pick);
+        setPage(1);
+      }
       toast.success(`已写入 ${res.written?.length || 0} 个主题（已解析个股/板块）`);
       await refresh();
     } catch (e) {
@@ -249,6 +255,17 @@ export function ExperienceMemory() {
     () => filterExperienceTopics(categoryCounts.scoped, { category: categoryFilter }),
     [categoryCounts.scoped, categoryFilter],
   );
+
+  const { page: listPage, paged: pagedTopics } = usePagedList(
+    filteredTopics,
+    page,
+    setPage,
+    `${contentQuery}\0${targetQuery}\0${categoryFilter}`,
+  );
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+  }, [listPage]);
 
   const filtersActive = Boolean(contentQuery.trim() || targetQuery.trim() || categoryFilter);
 
@@ -506,36 +523,44 @@ export function ExperienceMemory() {
             <p className="text-sm text-muted-foreground">没有匹配当前搜索/筛选的主题。</p>
           ) : (
             <div className="grid gap-3 lg:grid-cols-[minmax(0,22rem)_1fr] xl:grid-cols-[minmax(0,28rem)_1fr]">
-              <ul className="max-h-[36rem] space-y-1.5 overflow-y-auto pr-1">
-                {filteredTopics.map((t) => (
-                  <li key={t.filename}>
-                    <button
-                      type="button"
-                      onClick={() => setSelected(t.filename)}
-                      className={cn(
-                        "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                        selected === t.filename
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border/60 hover:border-primary/30",
-                      )}
-                    >
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {t.category && (
-                          <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                            {t.category}
-                          </span>
+              <div className="min-w-0">
+                <ul ref={listRef} className="max-h-[36rem] space-y-1.5 overflow-y-auto pr-1">
+                  {pagedTopics.map((t) => (
+                    <li key={t.filename}>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(t.filename)}
+                        className={cn(
+                          "w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                          selected === t.filename
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border/60 hover:border-primary/30",
                         )}
-                        {t.date && (
-                          <span className="text-[10px] text-muted-foreground">{t.date}</span>
-                        )}
-                      </div>
-                      <div className="mt-0.5 font-medium">{t.title}</div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
-                      <StockBlockTagRows stocks={t.stocks} sectors={t.sectors} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {t.category && (
+                            <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              {t.category}
+                            </span>
+                          )}
+                          {t.date && (
+                            <span className="text-[10px] text-muted-foreground">{t.date}</span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 font-medium">{t.title}</div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
+                        <StockBlockTagRows stocks={t.stocks} sectors={t.sectors} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <PaginationBar
+                  page={listPage}
+                  total={filteredTopics.length}
+                  onPageChange={setPage}
+                  className="mt-3"
+                />
+              </div>
               <div className="min-h-0">
                 {selected && selectedMeta && (
                   <div className="mb-2 rounded-lg border border-border/50 bg-black/20 px-3 py-2">
