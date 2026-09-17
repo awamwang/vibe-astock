@@ -4,6 +4,7 @@ import { AgentReview } from "@/pages/AgentReview";
 import { DailyReview } from "@/pages/DailyReview";
 import { ShortBoard } from "@/pages/ShortBoard";
 import { ShortResonance } from "@/pages/ShortResonance";
+import { ShortStyle } from "@/pages/ShortStyle";
 import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: "/agent/review", element: <AgentReview /> },
       { path: "/short-board", element: <ShortBoard /> },
       { path: "/short-resonance", element: <ShortResonance /> },
+      { path: "/short-style", element: <ShortStyle /> },
       { path: "/daily-review", element: <DailyReview /> },
       { path: "/first-board", element: <FirstBoard /> },
       { path: "/heat", element: <AgentWeekly /> },

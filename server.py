@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from duanxian import (
     block_manage, board_emotion_resonance, focus_blocks, kpl_blocks, live_emotion, live_zt_effect,
     mood_block, overseas, preflight, reflection, review_store, screenshot_parse, risk_stance,
-    short_board, trade_calendar, trade_budget, trade_store,
+    short_board, style_indices, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -456,6 +456,18 @@ def api_board_emotion_resonance_trial(request: Request, body: dict | None = Body
     baselines = payload.get("baselines") if isinstance(payload.get("baselines"), dict) else None
     weights = payload.get("weights") if isinstance(payload.get("weights"), dict) else None
     return board_emotion_resonance.snapshot(as_of, baselines=baselines, weights=weights)
+
+
+@app.get("/api/market/style-indices")
+def api_market_style_indices():
+    """短线风格指数：东财风格/行业板块 + 公开宽基/外围当场涨幅。
+
+    同花顺专有指数（情绪/全A/热股/平均股价/短期期货恐慌）公开源没有，放在 unavailable。
+    不是打板情绪。
+    """
+    out = style_indices.snapshot()
+    _maybe_emit_live_snapshot()
+    return out
 
 
 @app.get("/api/market/short-board")
