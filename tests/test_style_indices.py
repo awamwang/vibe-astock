@@ -183,10 +183,29 @@ class TestHttpAndFrontend:
         assert "风格偏好" not in resonance
         assert "风格热点" not in resonance
         assert "大小盘价差" not in resonance
+        assert "AskAiButton" in page
+        assert "风格热点是哪些" in page
+        assert "大小盘价差怎么读" in page
+        assert "打板风格组和中证全指是否同向" in page
+        assert "风格热点：" in page
+        assert "大小盘价差（东财小盘 − 大盘）" in page
+        assert "打板风格组相对中证全指" in page
+        assert "change_pct -" not in page
+        assert "small - large" not in page
         server_src = pathlib.Path("server.py").read_text(encoding="utf-8")
         assert server_src.count('@app.get("/api/market/style-indices")') == 1
         assert "/api/market/style-preference" not in server_src
         assert "style-preference" not in router
+        for rel in (
+            "duanxian/trade_budget.py",
+            "duanxian/risk_stance.py",
+            "duanxian/sentiment_score.py",
+            "frontend/src/pages/TradeBudgetPage.tsx",
+        ):
+            text = pathlib.Path(rel).read_text(encoding="utf-8")
+            assert "风格偏好" not in text
+            assert "风格热点" not in text
+            assert "大小盘价差" not in text
 
 
 @pytest.mark.unit
@@ -297,6 +316,7 @@ class TestPreference:
             "large": _q(0.4),
             "yzt_yz": _q(0.8),
             "mid": _q(0.1),
+            "sh": _q(9.0),
         })
         pref = out["preference"]
         assert pref["status"] == "partial"
@@ -307,6 +327,7 @@ class TestPreference:
         lead_keys = {x["key"] for x in pref["group_leads"]}
         assert "yzt_yz" in lead_keys
         assert "small" in lead_keys
+        assert "sh" in lead_keys
 
     def test_missing_small_size_spread_insufficient(self):
         pref = assemble({
@@ -316,6 +337,16 @@ class TestPreference:
         })["preference"]
         assert pref["size_spread"] == {"value": None, "status": "不足"}
         assert pref["hotspots"][0]["key"] == "micro"
+
+    def test_micro_does_not_rewrite_size_spread(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "small": _q(1.0),
+            "large": _q(0.2),
+            "micro": _q(9.0),
+        })["preference"]
+        assert pref["size_spread"]["status"] == "ok"
+        assert pref["size_spread"]["value"] == pytest.approx(0.8)
 
     def test_cnindex_spread_is_separate(self):
         pref = assemble({
@@ -374,6 +405,7 @@ class TestPreference:
             "ylb_yz": _q(3.0),
             "ylb": _q(2.5),
             "small": _q(2.0),
+            "mid": _q(1.5),
             "large": _q(0.1),
         })
         pref = out["preference"]
@@ -381,6 +413,7 @@ class TestPreference:
         assert "large" not in {h["key"] for h in pref["hotspots"]}
         size_lead = next((x for x in pref["group_leads"] if x["group"] == "size"), None)
         assert size_lead is None
+        assert "mid" not in {x["key"] for x in pref["group_leads"]}
 
     def test_high_turnover_can_be_hotspot(self):
         pref = assemble({
@@ -390,4 +423,25 @@ class TestPreference:
         })["preference"]
         assert pref["hotspots"][0]["key"] == "y_high_to"
         assert pref["hotspots"][0]["excess"] == pytest.approx(3.0)
+
+    def test_no_breadth_hotspot_uses_excess_only(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "div_csi": _q(2.0),
+            "yzt_yz": _q(1.5, up=10, down=90),
+            "small": _q(0.2, up=80, down=20),
+        })["preference"]
+        keys = [h["key"] for h in pref["hotspots"]]
+        assert keys[0] == "div_csi"
+        assert pref["hotspots"][0]["excess"] == pytest.approx(2.0)
+        assert "yzt_yz" not in keys
+
+    def test_csi2000_can_be_hotspot(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "csi2000": _q(1.2),
+            "small": _q(0.1),
+        })["preference"]
+        assert pref["hotspots"][0]["key"] == "csi2000"
+        assert pref["hotspots"][0]["excess"] == pytest.approx(1.2)
 
