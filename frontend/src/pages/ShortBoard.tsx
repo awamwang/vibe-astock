@@ -941,6 +941,8 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
         )}
         <Link
           to={resonanceHref}
+          target="_blank"
+          rel="noreferrer"
           className="mt-2.5 flex flex-wrap items-center gap-3 rounded-lg border border-border/40 bg-muted/15 px-3 py-2.5 transition-colors hover:border-primary/40 hover:bg-primary/5"
         >
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted-foreground">

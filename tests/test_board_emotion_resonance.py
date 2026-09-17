@@ -381,6 +381,8 @@ class TestFrontendSurfaces:
         assert "恢复默认" not in src
         assert "/short-resonance" in src
         assert "#board-emotion" in src
+        assert 'target="_blank"' in src
+        assert 'rel="noreferrer"' in src
 
     def test_resonance_page_has_trial_and_no_cycle_machine(self):
         import pathlib
