@@ -5058,38 +5058,53 @@ class TestDataBackup:
 class TestExperienceMemory:
     """经验记忆库：主题落盘、index、关键词检索。"""
 
-    def test_sanitize_and_commit_updates_index(self, tmp_path):
+    def test_sanitize_and_commit_updates_index(self, tmp_path, monkeypatch):
         from duanxian import experience as exp
 
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: ([], []))
         root = str(tmp_path / "experience")
         out = exp.commit_files(
             [{
                 "title": "情绪周期",
+                "date": "2026-09-17",
+                "category": "方法论",
                 "summary": "低吸优于追高",
                 "content": "# 情绪周期\n\n低吸优于追高，忌接力。\n",
             }],
             root,
         )
         assert out["ok"]
-        assert out["written"][0]["filename"] == "情绪周期.md"
+        assert out["written"][0]["filename"] == "情绪周期-2026-09-17.md"
+        assert out["written"][0]["title"] == "情绪周期-2026-09-17"
+        assert out["written"][0]["category"] == "方法论"
+        assert out["written"][0]["date"] == "2026-09-17"
+        body = (tmp_path / "experience" / "情绪周期-2026-09-17.md").read_text(encoding="utf-8")
+        assert "- 日期：2026-09-17" in body
+        assert "- 分类：方法论" in body
+        assert "## 正文" in body
+        assert "低吸优于追高" in body
         idx = (tmp_path / "experience" / "index.md").read_text(encoding="utf-8")
-        assert "情绪周期.md" in idx
+        assert "情绪周期-2026-09-17.md" in idx
         assert "低吸优于追高" in idx
         meta = exp.get_meta(root)
         assert meta["root"] == str((tmp_path / "experience").resolve()) or meta["root"].endswith("experience")
-        assert any(t["filename"] == "情绪周期.md" for t in meta["topics"])
+        assert "方法论" in meta["categories"]
+        row = next(t for t in meta["topics"] if t["filename"] == "情绪周期-2026-09-17.md")
+        assert row["date"] == "2026-09-17"
+        assert row["category"] == "方法论"
 
-    def test_retrieve_keyword_topk(self, tmp_path):
+    def test_retrieve_keyword_topk(self, tmp_path, monkeypatch):
         from duanxian import experience as exp
 
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: ([], []))
         root = str(tmp_path / "experience")
         exp.commit_files([
-            {"title": "情绪周期", "summary": "低吸", "content": "低吸优于追高\n"},
-            {"title": "仓位管理", "summary": "半仓", "content": "单笔不超过半仓\n"},
+            {"title": "情绪周期", "date": "2026-09-17", "summary": "低吸", "content": "低吸优于追高\n"},
+            {"title": "仓位管理", "date": "2026-09-17", "summary": "半仓", "content": "单笔不超过半仓\n"},
         ], root)
         hits = exp.retrieve("追高怎么办", k=3, root=root)
         assert hits
-        assert hits[0]["filename"] == "情绪周期.md"
+        assert hits[0]["filename"] == "情绪周期-2026-09-17.md"
         ctx = exp.format_context(hits)
         assert "经验记忆" in ctx
         assert "情绪周期" in ctx
@@ -5101,25 +5116,26 @@ class TestExperienceMemory:
         with pytest.raises((ValueError, FileNotFoundError)):
             exp.read_topic("index.md", root)
 
-    def test_delete_topic_removes_file_and_index(self, tmp_path):
+    def test_delete_topic_removes_file_and_index(self, tmp_path, monkeypatch):
         from duanxian import experience as exp
 
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: ([], []))
         root = str(tmp_path / "experience")
         exp.commit_files([
-            {"title": "情绪周期", "summary": "低吸", "content": "低吸优于追高\n"},
-            {"title": "仓位管理", "summary": "半仓", "content": "单笔不超过半仓\n"},
+            {"title": "情绪周期", "date": "2026-09-17", "summary": "低吸", "content": "低吸优于追高\n"},
+            {"title": "仓位管理", "date": "2026-09-17", "summary": "半仓", "content": "单笔不超过半仓\n"},
         ], root)
-        out = exp.delete_topic("情绪周期.md", root)
+        out = exp.delete_topic("情绪周期-2026-09-17.md", root)
         assert out["ok"]
-        assert out["deleted"] == "情绪周期.md"
-        assert not (tmp_path / "experience" / "情绪周期.md").exists()
-        assert (tmp_path / "experience" / "仓位管理.md").is_file()
+        assert out["deleted"] == "情绪周期-2026-09-17.md"
+        assert not (tmp_path / "experience" / "情绪周期-2026-09-17.md").exists()
+        assert (tmp_path / "experience" / "仓位管理-2026-09-17.md").is_file()
         idx = (tmp_path / "experience" / "index.md").read_text(encoding="utf-8")
-        assert "情绪周期.md" not in idx
-        assert "仓位管理.md" in idx
-        assert all(t["filename"] != "情绪周期.md" for t in out["topics"])
+        assert "情绪周期-2026-09-17.md" not in idx
+        assert "仓位管理-2026-09-17.md" in idx
+        assert all(t["filename"] != "情绪周期-2026-09-17.md" for t in out["topics"])
         with pytest.raises(FileNotFoundError):
-            exp.delete_topic("情绪周期.md", root)
+            exp.delete_topic("情绪周期-2026-09-17.md", root)
 
     def test_parse_index_lines(self):
         from duanxian import experience as exp
@@ -5127,6 +5143,87 @@ class TestExperienceMemory:
         text = "# 索引\n\n- **仓位** | `仓位管理.md` — 半仓纪律\n"
         topics = exp.parse_index(text)
         assert topics == [{"filename": "仓位管理.md", "title": "仓位", "summary": "半仓纪律"}]
+
+    def test_commit_resolves_stocks_sectors_and_category(self, tmp_path, monkeypatch):
+        from duanxian import experience as exp
+
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: (
+            [{"code": "000001", "name": "平安银行"}],
+            [{"name": "连板"}],
+        ))
+        root = str(tmp_path / "experience")
+        out = exp.commit_files([{
+            "title": "连板掉下来宁可等二波",
+            "date": "2026-09-17",
+            "category": "踩坑",
+            "summary": "高度掉了不要硬核接力",
+            "content": "连板高度掉下来后硬核接力容易亏。\n",
+            "stocks": [{"code": "000001", "name": "平安银行"}],
+            "sectors": [{"name": "连板"}],
+        }], root)
+        assert out["written"][0]["filename"] == "连板掉下来宁可等二波-2026-09-17.md"
+        body = (tmp_path / "experience" / "连板掉下来宁可等二波-2026-09-17.md").read_text(encoding="utf-8")
+        assert "- 分类：踩坑" in body
+        assert "000001" in body
+        assert "平安银行" in body
+        assert "连板" in body
+        topic = exp.read_topic("连板掉下来宁可等二波-2026-09-17.md", root)
+        assert topic["date"] == "2026-09-17"
+        assert topic["category"] == "踩坑"
+        assert any("平安银行" in (s.get("name") or "") for s in topic["stocks"])
+        assert any("连板" in (s.get("name") or "") for s in topic["sectors"])
+        listed = exp.get_meta(root)["topics"][0]
+        assert listed["stocks"]
+        assert listed["sectors"]
+
+    def test_suffix_title_date_and_normalize_category(self):
+        from duanxian import experience as exp
+
+        assert exp.suffix_title_date("情绪周期", "2026-09-17") == "情绪周期-2026-09-17"
+        assert exp.suffix_title_date("情绪周期-2026-01-01", "2026-09-17") == "情绪周期-2026-09-17"
+        assert exp.normalize_category("踩坑") == "踩坑"
+        assert exp.normalize_category("风控教训") == "踩坑"
+        assert exp.normalize_category("未知") == "方法论"
+
+    def test_parse_stock_sector_labels_message_style(self):
+        from duanxian import experience as exp
+
+        assert exp._parse_stock_label("平安银行(000001)") == {"code": "000001", "name": "平安银行"}
+        assert exp._parse_stock_label("000001 平安银行") == {"code": "000001", "name": "平安银行"}
+        assert exp._parse_sector_label("连板（概念）") == {"name": "连板"}
+        assert exp._parse_sector_label("新能源（未匹配）") == {"name": "新能源"}
+
+    def test_ai_targets_merge_then_split(self, monkeypatch):
+        from duanxian import experience as exp
+        from vr.message.schemas import ImpactTarget
+
+        monkeypatch.setattr(exp, "_ensure_vr", lambda: None)
+        monkeypatch.setattr(exp, "_feed_unmatched_targets", lambda _t: None)
+
+        def fake_fill(targets):
+            out = []
+            for t in targets or []:
+                d = t.model_dump() if hasattr(t, "model_dump") else dict(t)
+                out.append({"kind": d.get("kind"), "code": d.get("code"), "name": d.get("name")})
+            return out
+
+        def fake_enrich(text, *, existing=None, feed_unmatched=True, feed_source="message_body"):
+            extra = [ImpactTarget(kind="stock", code="300750", name="宁德时代")]
+            from vr.message.content_targets import merge_targets
+            return merge_targets(existing, extra)
+
+        monkeypatch.setattr("vr.message.content_targets.fill_target_stock_codes", fake_fill)
+        monkeypatch.setattr("vr.message.content_targets.enrich_targets_from_content", fake_enrich)
+        stocks, sectors = exp.resolve_experience_targets(
+            text="宁德时代也容易被带崩",
+            raw_stocks=[{"code": "000001", "name": "平安银行"}],
+            raw_sectors=[{"name": "连板"}],
+            feed=True,
+        )
+        names = {s["name"] for s in stocks}
+        assert "平安银行" in names
+        assert "宁德时代" in names
+        assert any(s["name"] == "连板" for s in sectors)
 
 
 class TestArticles:

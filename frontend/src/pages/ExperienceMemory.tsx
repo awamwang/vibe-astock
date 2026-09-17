@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle, BookMarked, Check, ChevronDown, ChevronUp, Copy, FileText, Trash2,
-  Loader2, Send, Settings, Sparkles,
+  Loader2, Send, Settings, Sparkles, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -13,13 +13,20 @@ import {
   type ExperienceDraftFile, type ExperienceTopicMeta,
 } from "@/lib/api";
 import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
-import { buildOrganizePrompt, parseOrganizeJson } from "@/lib/experience";
+import {
+  buildOrganizePrompt, parseOrganizeJson, suffixTitleDate,
+  EXPERIENCE_CATEGORIES,
+} from "@/lib/experience";
+import { StockResolveScope } from "@/components/stock/StockResolveContext";
+import { BlockResolveScope } from "@/components/block/BlockResolveContext";
+import { StockBlockTagRows } from "@/components/TargetTags";
 
 export function ExperienceMemory() {
   const [root, setRoot] = useState("");
   const [topics, setTopics] = useState<ExperienceTopicMeta[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedBody, setSelectedBody] = useState("");
+  const [selectedMeta, setSelectedMeta] = useState<ExperienceTopicMeta | null>(null);
   const [note, setNote] = useState("");
   const [organizing, setOrganizing] = useState(false);
   const [drafts, setDrafts] = useState<ExperienceDraftFile[] | null>(null);
@@ -53,16 +60,21 @@ export function ExperienceMemory() {
   useEffect(() => {
     if (!selected) {
       setSelectedBody("");
+      setSelectedMeta(null);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
         const t = await api.experienceTopic(selected);
-        if (!cancelled) setSelectedBody(t.content || "");
+        if (!cancelled) {
+          setSelectedBody(t.content || "");
+          setSelectedMeta(t);
+        }
       } catch (e) {
         if (!cancelled) {
           setSelectedBody("");
+          setSelectedMeta(null);
           toast.error(e instanceof ApiError ? e.message : "读取主题失败");
         }
       }
@@ -118,9 +130,9 @@ export function ExperienceMemory() {
       const files = parseOrganizeJson(result.content);
       setDrafts(files);
       setDraftTab(0);
-      toast.success(`已归纳为 ${files.length} 个主题，请预览确认`);
+      toast.success(`已整理为 ${files.length} 个主题，请预览确认`);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : "归纳失败"));
+      toast.error(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : "整理失败"));
     } finally {
       setOrganizing(false);
     }
@@ -135,7 +147,9 @@ export function ExperienceMemory() {
       setRoot(res.root || root);
       setDrafts(null);
       setNote("");
-      toast.success(`已写入 ${res.written?.length || 0} 个主题`);
+      const pick = res.written?.[0]?.filename || res.topics?.[0]?.filename;
+      if (pick) setSelected(pick);
+      toast.success(`已写入 ${res.written?.length || 0} 个主题（已解析个股/板块）`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "写入失败");
@@ -156,6 +170,7 @@ export function ExperienceMemory() {
       setRoot(res.root || root);
       setSelected(null);
       setSelectedBody("");
+      setSelectedMeta(null);
       toast.success("已删除主题");
       await refresh();
     } catch (e) {
@@ -212,12 +227,61 @@ export function ExperienceMemory() {
 
   const draft = drafts?.[draftTab];
 
+  const updateDraft = (patch: Partial<ExperienceDraftFile>) => {
+    setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, ...patch } : f)) ?? null);
+  };
+
+  const applyDate = (date: string) => {
+    if (!draft) return;
+    const title = suffixTitleDate(draft.title || "", date);
+    const filename = `${suffixTitleDate((draft.filename || title).replace(/\.md$/i, ""), date)}.md`;
+    updateDraft({ date, title, filename });
+  };
+
+  const stockQueries = useMemo(() => {
+    const out: { code?: string | null; name?: string | null }[] = [];
+    for (const t of topics) {
+      for (const s of t.stocks || []) {
+        if (s.name || s.code) out.push({ code: s.code, name: s.name });
+      }
+    }
+    for (const s of selectedMeta?.stocks || []) {
+      if (s.name || s.code) out.push({ code: s.code, name: s.name });
+    }
+    for (const d of drafts || []) {
+      for (const s of d.stocks || []) {
+        if (s.name || s.code) out.push({ code: s.code, name: s.name });
+      }
+    }
+    return out;
+  }, [topics, selectedMeta, drafts]);
+
+  const blockNames = useMemo(() => {
+    const names: string[] = [];
+    for (const t of topics) {
+      for (const s of t.sectors || []) {
+        if (s.name) names.push(s.name);
+      }
+    }
+    for (const s of selectedMeta?.sectors || []) {
+      if (s.name) names.push(s.name);
+    }
+    for (const d of drafts || []) {
+      for (const s of d.sectors || []) {
+        if (s.name) names.push(s.name);
+      }
+    }
+    return names;
+  }, [topics, selectedMeta, drafts]);
+
   return (
+    <StockResolveScope queries={stockQueries}>
+    <BlockResolveScope names={blockNames}>
     <div className="-mx-6 -my-6 flex h-[calc(100vh-1rem)] flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
         <PageHeader
           title="经验记忆"
-          subtitle="把交易心得归纳成可检索的主题 Markdown，供本页问答与全局「问 AI」调取"
+          subtitle="把交易心得整理成可检索的主题 Markdown，提取日期、分类与个股/板块，供本页问答与全局「问 AI」调取"
         />
 
         {loadErr && (
@@ -243,96 +307,18 @@ export function ExperienceMemory() {
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
             >
               {organizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              AI 归纳
+              AI 整理
             </button>
             {!hasLlm() && (
               <Link to="/settings" className="text-xs text-muted-foreground hover:text-primary">
                 尚未接入 AI → 去配置
               </Link>
             )}
+            <span className="text-[11px] text-muted-foreground">
+              将提取日期、经验分类、个股与板块，弹出预览后再写入
+            </span>
           </div>
         </GlassCard>
-
-        {drafts && draft && (
-          <GlassCard className="mb-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">预览将写入的主题</h3>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDrafts(null)}
-                  className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void commit()}
-                  disabled={committing}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
-                >
-                  {committing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  确认写入
-                </button>
-              </div>
-            </div>
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {drafts.map((f, i) => (
-                <button
-                  key={`${f.title}-${i}`}
-                  type="button"
-                  onClick={() => setDraftTab(i)}
-                  className={cn(
-                    "rounded-md border px-2.5 py-1 text-xs",
-                    i === draftTab
-                      ? "border-primary/40 bg-primary/15 text-primary"
-                      : "border-border text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {f.title}
-                </button>
-              ))}
-            </div>
-            <label className="mb-1 block text-[11px] text-muted-foreground">主题名 / 文件名</label>
-            <div className="mb-3 flex flex-wrap gap-2">
-              <input
-                value={draft.title}
-                onChange={(e) => {
-                  const title = e.target.value;
-                  setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, title } : f)) ?? null);
-                }}
-                className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
-              />
-              <input
-                value={draft.filename || `${draft.title}.md`}
-                onChange={(e) => {
-                  const filename = e.target.value;
-                  setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, filename } : f)) ?? null);
-                }}
-                className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-1.5 font-mono text-sm outline-none focus:border-primary/50"
-              />
-            </div>
-            <label className="mb-1 block text-[11px] text-muted-foreground">一句话摘要</label>
-            <input
-              value={draft.summary}
-              onChange={(e) => {
-                const summary = e.target.value;
-                setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, summary } : f)) ?? null);
-              }}
-              className="mb-3 w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
-            />
-            <label className="mb-1 block text-[11px] text-muted-foreground">Markdown 正文</label>
-            <textarea
-              value={draft.content}
-              onChange={(e) => {
-                const content = e.target.value;
-                setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, content } : f)) ?? null);
-              }}
-              rows={12}
-              className="w-full resize-y rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-primary/50"
-            />
-          </GlassCard>
-        )}
 
         <GlassCard className="mb-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -371,10 +357,10 @@ export function ExperienceMemory() {
             </button>
           </div>
           {topics.length === 0 ? (
-            <p className="text-sm text-muted-foreground">暂无主题。输入经验后点「AI 归纳」开始沉淀。</p>
+            <p className="text-sm text-muted-foreground">暂无主题。输入经验后点「AI 整理」开始沉淀。</p>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              <ul className="space-y-1">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,22rem)_1fr] xl:grid-cols-[minmax(0,28rem)_1fr]">
+              <ul className="max-h-[36rem] space-y-1.5 overflow-y-auto pr-1">
                 {topics.map((t) => (
                   <li key={t.filename}>
                     <button
@@ -387,19 +373,193 @@ export function ExperienceMemory() {
                           : "border-border/60 hover:border-primary/30",
                       )}
                     >
-                      <div className="font-medium">{t.title}</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {t.category && (
+                          <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            {t.category}
+                          </span>
+                        )}
+                        {t.date && (
+                          <span className="text-[10px] text-muted-foreground">{t.date}</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-medium">{t.title}</div>
                       <div className="mt-0.5 text-[11px] text-muted-foreground">{t.summary || t.filename}</div>
+                      <StockBlockTagRows stocks={t.stocks} sectors={t.sectors} />
                     </button>
                   </li>
                 ))}
               </ul>
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                {selected ? (selectedBody || "加载中…") : "点击左侧主题查看正文"}
-              </pre>
+              <div className="min-h-0">
+                {selected && selectedMeta && (
+                  <div className="mb-2 rounded-lg border border-border/50 bg-black/20 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {selectedMeta.category && (
+                        <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          {selectedMeta.category}
+                        </span>
+                      )}
+                      {selectedMeta.date && (
+                        <span className="text-[11px] text-muted-foreground">{selectedMeta.date}</span>
+                      )}
+                    </div>
+                    <StockBlockTagRows
+                      stocks={selectedMeta.stocks}
+                      sectors={selectedMeta.sectors}
+                      showEmpty
+                    />
+                  </div>
+                )}
+                <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {selected ? (selectedBody || "加载中…") : "点击左侧主题查看正文"}
+                </pre>
+              </div>
             </div>
           )}
         </GlassCard>
       </div>
+
+      {drafts && draft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+          onClick={() => { if (!committing) setDrafts(null); }}
+        >
+          <div
+            className="glass flex max-h-[min(92vh,900px)] w-full max-w-4xl flex-col p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">预览将写入的主题</h2>
+              <button
+                type="button"
+                disabled={committing}
+                onClick={() => setDrafts(null)}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
+              {drafts.length > 1 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {drafts.map((f, i) => (
+                    <button
+                      key={`${f.title}-${i}`}
+                      type="button"
+                      onClick={() => setDraftTab(i)}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1 text-xs",
+                        i === draftTab
+                          ? "border-primary/40 bg-primary/15 text-primary"
+                          : "border-border text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {f.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <label className="mb-1 block text-[11px] text-muted-foreground">标题 / 文件名 / 日期</label>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  value={draft.title}
+                  onChange={(e) => updateDraft({ title: e.target.value })}
+                  className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+                />
+                <input
+                  value={draft.filename || `${draft.title}.md`}
+                  onChange={(e) => updateDraft({ filename: e.target.value })}
+                  className="min-w-[8rem] flex-1 rounded-lg border border-border bg-black/20 px-3 py-1.5 font-mono text-sm outline-none focus:border-primary/50"
+                />
+                <input
+                  value={draft.date || ""}
+                  onChange={(e) => applyDate(e.target.value)}
+                  placeholder="YYYY-MM-DD"
+                  className="w-36 rounded-lg border border-border bg-black/20 px-3 py-1.5 font-mono text-sm outline-none focus:border-primary/50"
+                />
+              </div>
+              <label className="mb-1 block text-[11px] text-muted-foreground">经验分类</label>
+              <select
+                value={draft.category || "方法论"}
+                onChange={(e) => updateDraft({ category: e.target.value })}
+                className="mb-1 w-full max-w-xs rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+              >
+                {EXPERIENCE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <label className="mb-1 block text-[11px] text-muted-foreground">一句话摘要</label>
+              <input
+                value={draft.summary}
+                onChange={(e) => updateDraft({ summary: e.target.value })}
+                className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+              />
+              <label className="mb-1 block text-[11px] text-muted-foreground">
+                个股候选（写入时按消息分析口径扫描正文并匹配）
+              </label>
+              <input
+                value={(draft.stocks || []).map((s) => [s.code, s.name].filter(Boolean).join(" ")).join("；")}
+                onChange={(e) => {
+                  const stocks = e.target.value.split(/[；;、]/).map((part) => {
+                    const t = part.trim();
+                    if (!t) return null;
+                    const m = t.match(/^(\d{6})\s*(.*)$/);
+                    if (m) return { code: m[1], name: m[2].trim() || null };
+                    return { code: null, name: t };
+                  }).filter(Boolean) as NonNullable<ExperienceDraftFile["stocks"]>;
+                  updateDraft({ stocks });
+                }}
+                placeholder="600519 贵州茅台；平安银行"
+                className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+              />
+              <label className="mb-1 block text-[11px] text-muted-foreground">
+                板块候选（写入时按消息分析口径扫描正文并匹配）
+              </label>
+              <input
+                value={(draft.sectors || []).map((s) => s.name).join("；")}
+                onChange={(e) => {
+                  const sectors = e.target.value
+                    .split(/[；;、,，]/)
+                    .map((x) => x.trim())
+                    .filter(Boolean)
+                    .map((name) => ({ name }));
+                  updateDraft({ sectors });
+                }}
+                placeholder="连板；新能源"
+                className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
+              />
+              <StockBlockTagRows stocks={draft.stocks} sectors={draft.sectors} showEmpty />
+              <label className="mb-1 block text-[11px] text-muted-foreground">Markdown 正文</label>
+              <textarea
+                value={draft.content}
+                onChange={(e) => updateDraft({ content: e.target.value })}
+                rows={10}
+                className="w-full resize-y rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-primary/50"
+              />
+            </div>
+            <div className="mt-3 flex shrink-0 justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDrafts(null)}
+                disabled={committing}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void commit()}
+                disabled={committing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-40"
+              >
+                {committing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                确认写入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="shrink-0 border-t border-border/60 bg-background/95 backdrop-blur">
         <button
@@ -429,7 +589,7 @@ export function ExperienceMemory() {
                 <div ref={qaScrollRef} className="min-h-0 flex-1 space-y-2 overflow-auto py-2 text-sm">
                   {qaMsgs.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      基于已归纳的经验主题回答。例如：「连板掉下来怎么处理？」「我总结过哪些情绪周期规律？」
+                      基于已整理的经验主题回答。例如：「连板掉下来怎么处理？」「我总结过哪些情绪周期规律？」
                     </p>
                   )}
                   {qaMsgs.map((m, i) => (
@@ -482,5 +642,7 @@ export function ExperienceMemory() {
         )}
       </div>
     </div>
+    </BlockResolveScope>
+    </StockResolveScope>
   );
 }

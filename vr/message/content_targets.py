@@ -132,7 +132,12 @@ def _sectors_from_scan(rows: list[dict[str, Any]]) -> list[ImpactTarget]:
     return out
 
 
-def resolve_content_targets(text: str) -> list[ImpactTarget]:
+def resolve_content_targets(
+    text: str,
+    *,
+    feed_unmatched: bool = True,
+    feed_source: str = "message_body",
+) -> list[ImpactTarget]:
     """扫描正文中的个股与板块，经对应处理器解析。"""
     body = (text or "").strip()
     if not body:
@@ -149,7 +154,12 @@ def resolve_content_targets(text: str) -> list[ImpactTarget]:
         from ths_block import processor as block_processor  # noqa: PLC0415
 
         # 板块最短 3 字，降低「上海」「北京」等两字地名误命中
-        sector_rows = block_processor.scan_text(body, min_name_len=3)
+        sector_rows = block_processor.scan_text(
+            body,
+            min_name_len=3,
+            feed_unmatched=feed_unmatched,
+            feed_source=feed_source or "message_body",
+        )
     except Exception:  # noqa: BLE001
         sector_rows = []
     return merge_targets(
@@ -163,9 +173,18 @@ def enrich_targets_from_content(
     text: str,
     *,
     existing: Iterable[ImpactTarget | dict[str, Any]] | None = None,
+    feed_unmatched: bool = True,
+    feed_source: str = "message_body",
 ) -> list[ImpactTarget]:
     """已有标的保留在前，正文解析结果去重后增量追加。"""
-    return merge_targets(existing, resolve_content_targets(text))
+    return merge_targets(
+        existing,
+        resolve_content_targets(
+            text,
+            feed_unmatched=feed_unmatched,
+            feed_source=feed_source,
+        ),
+    )
 
 
 def attach_targets_to_draft(draft: Any) -> Any:

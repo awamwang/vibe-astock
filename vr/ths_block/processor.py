@@ -25,6 +25,7 @@ _SOURCE_SORT: dict[str, int] = {
     "firstboard_theme": 70,
     "firstboard_industry": 80,
     "article": 90,
+    "experience": 92,
     "message_body": 95,
     "message_target": 100,
 }
@@ -41,6 +42,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "firstboard_theme": "涨停分析·题材",
     "firstboard_industry": "涨停分析·行业",
     "article": "研报文章",
+    "experience": "经验记忆",
     "message_body": "消息分析·正文",
     "message_target": "消息分析·关联标的",
 }
@@ -555,6 +557,7 @@ def scan_text(
     *,
     min_name_len: int = 2,
     feed_unmatched: bool = True,
+    feed_source: str = "message_body",
 ) -> list[dict[str, Any]]:
     """从正文扫描板块/题材名（含「xx概念股」），经 resolve 返回解析结果。"""
     raw = text or ""
@@ -590,7 +593,7 @@ def scan_text(
         pending_names = [n for n in pending_names if n]
         if pending_names:
             try:
-                feed("message_body", pending_names)
+                feed(feed_source or "message_body", pending_names)
             except Exception:  # noqa: BLE001
                 pass
     return results

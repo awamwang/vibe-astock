@@ -373,7 +373,7 @@ def _resolve_stocks(raw_stocks: list[Any]) -> list[dict[str, Any]]:
         return out
 
 
-def _resolve_sectors(raw_sectors: list[Any]) -> list[dict[str, Any]]:
+def _resolve_sectors(raw_sectors: list[Any], source: str = "article") -> list[dict[str, Any]]:
     """经板块处理器解析文中板块，并喂入待匹配列表。"""
     names: list[str] = []
     seen: set[str] = set()
@@ -397,7 +397,7 @@ def _resolve_sectors(raw_sectors: list[Any]) -> list[dict[str, Any]]:
         results = block_processor.resolve_many(names)
         # 喂入文章来源，便于未匹配项进入待处理队列
         try:
-            block_processor.feed("article", names)
+            block_processor.feed(source or "article", names)
         except Exception:  # noqa: BLE001
             pass
         return results

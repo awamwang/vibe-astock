@@ -1009,6 +1009,10 @@ export interface ExperienceTopicMeta {
   filename: string;
   title: string;
   summary: string;
+  date?: string;
+  category?: string;
+  stocks?: { name?: string; code?: string | null; status?: string }[];
+  sectors?: { name?: string; status?: string }[];
 }
 export interface ZtKeywordConfig {
   schema: number;
@@ -1382,10 +1386,12 @@ export interface ExperienceMeta {
   root: string;
   index_path: string;
   topics: ExperienceTopicMeta[];
+  categories?: string[];
 }
 export interface ExperienceTopic extends ExperienceTopicMeta {
   content: string;
   path: string;
+  body?: string;
 }
 export interface ExperienceHit extends ExperienceTopicMeta {
   content: string;
@@ -1401,6 +1407,10 @@ export interface ExperienceDraftFile {
   title: string;
   summary: string;
   content: string;
+  date?: string;
+  category?: string;
+  stocks?: { code?: string | null; name?: string | null }[];
+  sectors?: { name: string }[];
 }
 export interface ExperienceCommitResult {
   ok: boolean;

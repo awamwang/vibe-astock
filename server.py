@@ -1936,7 +1936,7 @@ def api_experience_retrieve(body: dict = Body(...)):
 
 @app.post("/api/experience/commit")
 def api_experience_commit(request: Request, body: dict = Body(...)):
-    """确认写入归纳后的主题文件，并刷新 index.md。"""
+    """确认写入整理后的主题文件，并刷新 index.md。"""
     if not _origin_ok(request):
         return JSONResponse({"error": "非法来源", "detail": "非法来源"}, status_code=403)
     from duanxian import experience as exp

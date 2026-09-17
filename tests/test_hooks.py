@@ -313,6 +313,7 @@ class TestHookRegistryImport:
 
         root = tmp_path / "experience"
         monkeypatch.setattr(exp, "DIR", str(root))
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: ([], []))
 
         reg = HookRegistry()
         res = reg.import_experience({
