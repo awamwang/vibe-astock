@@ -146,6 +146,10 @@ class TestHttpAndFrontend:
         assert body["available"] is True
         board = next(g for g in body["groups"] if g["id"] == "board")
         assert board["items"][0]["name"] == "昨日涨停表现"
+        pref = body["preference"]
+        assert pref["status"] == "partial"
+        assert pref["hotspots"] == []
+        assert pref["board_group"]["vs"] == "不足"
 
     def test_sidebar_and_route(self):
         import pathlib
@@ -160,3 +164,230 @@ class TestHttpAndFrontend:
         assert "fetchStyleIndices" in page
         assert "打板情绪" not in page or "不是打板情绪" in page
         assert "unavailable" in page
+        assert "风格热点" in page
+        assert "大小盘价差" in page
+        assert "组内领涨" in page
+        assert "价升面窄" in page
+        assert "价跌面宽" in page
+        assert "国证2000" in page
+        assert "沪深300" in page
+        assert "超额 = 当场涨幅 − 中证全指" in page
+        assert "东财小盘" in page
+        assert "不是赚钱效应" in page
+        assert "不是风格轮动" in page
+        assert "短线情绪" not in page
+        assert "市场情绪" not in page
+        assert "情绪共振" not in page
+        assert "主线龙头" not in page
+        resonance = pathlib.Path("frontend/src/pages/ShortResonance.tsx").read_text(encoding="utf-8")
+        assert "风格偏好" not in resonance
+        assert "风格热点" not in resonance
+        assert "大小盘价差" not in resonance
+        server_src = pathlib.Path("server.py").read_text(encoding="utf-8")
+        assert server_src.count('@app.get("/api/market/style-indices")') == 1
+        assert "/api/market/style-preference" not in server_src
+        assert "style-preference" not in router
+
+
+@pytest.mark.unit
+class TestPreference:
+    def test_empty_is_absent(self):
+        out = assemble({})
+        pref = out["preference"]
+        assert pref["status"] == "absent"
+        assert pref["hotspots"] == []
+        assert pref["group_leads"] == []
+        assert pref["size_spread"] == {"value": None, "status": "不足"}
+        assert pref["size_spread_cnindex"] == {"value": None}
+        assert pref["board_group"]["vs"] == "不足"
+        assert pref["board_group"]["mean"] is None
+
+    def test_hotspots_exclude_benchmark_external_and_csi_all(self):
+        out = assemble({
+            "csi_all": _q(0.0),
+            "sh": _q(9.0),
+            "hsi": _q(8.0),
+            "a50": _q(7.0),
+            "small": _q(1.0),
+        })
+        keys = [h["key"] for h in out["preference"]["hotspots"]]
+        assert "sh" not in keys
+        assert "hsi" not in keys
+        assert "a50" not in keys
+        assert "csi_all" not in keys
+        assert keys == ["small"]
+
+    def test_top5_then_width_filter_does_not_backfill(self):
+        out = assemble({
+            "csi_all": _q(0.0),
+            "yzt_yz": _q(5.0, up=80, down=20),
+            "yzt": _q(4.0, up=80, down=20),
+            "ylb_yz": _q(3.0, up=80, down=20),
+            "ylb": _q(2.0, up=80, down=20),
+            "yzb": _q(1.0, up=10, down=90),
+            "new_high": _q(0.9, up=80, down=20),
+        })
+        keys = [h["key"] for h in out["preference"]["hotspots"]]
+        assert keys == ["yzt_yz", "yzt", "ylb_yz", "ylb"]
+        assert "yzb" not in keys
+        assert "new_high" not in keys
+        assert len(keys) == 4
+
+    def test_board_group_mean_excludes_high_turnover(self):
+        quotes = {
+            "csi_all": _q(0.5),
+            "yzt_yz": _q(1.0),
+            "yzt": _q(1.0),
+            "ylb_yz": _q(1.0),
+            "ylb": _q(1.0),
+            "yzb": _q(1.0),
+            "ylb2plus": _q(1.0),
+            "yzt_first": _q(1.0),
+            "y_high_to": _q(100.0),
+            "y_high_amp": _q(50.0),
+            "yzt_touch": _q(40.0),
+        }
+        pref = assemble(quotes)["preference"]
+        assert pref["board_group"]["n_valid"] == 7
+        assert pref["board_group"]["mean"] == pytest.approx(1.0)
+        assert pref["board_group"]["vs"] == "同向"
+
+    def test_board_group_three_valid_is_insufficient(self):
+        pref = assemble({
+            "csi_all": _q(1.0),
+            "yzt_yz": _q(1.0),
+            "yzt": _q(1.0),
+            "ylb_yz": _q(1.0),
+        })["preference"]
+        assert pref["board_group"]["n_valid"] == 3
+        assert pref["board_group"]["mean"] is None
+        assert pref["board_group"]["vs"] == "不足"
+
+    def test_near_flat_when_mean_or_csi_abs_below_0_1(self):
+        a = assemble({
+            "csi_all": _q(1.0),
+            "yzt_yz": _q(0.05),
+            "yzt": _q(0.05),
+            "ylb_yz": _q(0.05),
+            "ylb": _q(0.05),
+        })["preference"]
+        assert a["board_group"]["vs"] == "近平"
+        b = assemble({
+            "csi_all": _q(0.05),
+            "yzt_yz": _q(1.0),
+            "yzt": _q(1.0),
+            "ylb_yz": _q(1.0),
+            "ylb": _q(1.0),
+        })["preference"]
+        assert b["board_group"]["vs"] == "近平"
+
+    def test_board_group_opposite_sign(self):
+        pref = assemble({
+            "csi_all": _q(-0.5),
+            "yzt_yz": _q(1.0),
+            "yzt": _q(1.0),
+            "ylb_yz": _q(1.0),
+            "ylb": _q(1.0),
+        })["preference"]
+        assert pref["board_group"]["vs"] == "反向"
+
+    def test_missing_csi_all_partial_keeps_spread_and_leads(self):
+        out = assemble({
+            "small": _q(1.2),
+            "large": _q(0.4),
+            "yzt_yz": _q(0.8),
+            "mid": _q(0.1),
+        })
+        pref = out["preference"]
+        assert pref["status"] == "partial"
+        assert pref["hotspots"] == []
+        assert pref["board_group"]["vs"] == "不足"
+        assert pref["size_spread"]["status"] == "ok"
+        assert pref["size_spread"]["value"] == pytest.approx(0.8)
+        lead_keys = {x["key"] for x in pref["group_leads"]}
+        assert "yzt_yz" in lead_keys
+        assert "small" in lead_keys
+
+    def test_missing_small_size_spread_insufficient(self):
+        pref = assemble({
+            "csi_all": _q(0.2),
+            "large": _q(0.4),
+            "micro": _q(3.0),
+        })["preference"]
+        assert pref["size_spread"] == {"value": None, "status": "不足"}
+        assert pref["hotspots"][0]["key"] == "micro"
+
+    def test_cnindex_spread_is_separate(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "small": _q(1.0),
+            "large": _q(0.2),
+            "csi2000": _q(0.7),
+            "hs300": _q(0.1),
+        })["preference"]
+        assert pref["size_spread"]["value"] == pytest.approx(0.8)
+        assert pref["size_spread"]["status"] == "ok"
+        assert pref["size_spread_cnindex"]["value"] == pytest.approx(0.6)
+
+    def test_cnindex_missing_side_hidden(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "small": _q(1.0),
+            "large": _q(0.2),
+            "csi2000": _q(0.7),
+        })["preference"]
+        assert pref["size_spread"]["status"] == "ok"
+        assert pref["size_spread_cnindex"]["value"] is None
+
+    def test_excess_tie_uses_catalog_order(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "yzt_yz": _q(1.0),
+            "yzt": _q(1.0),
+            "ylb_yz": _q(1.0),
+            "ylb": _q(1.0),
+            "yzt_first": _q(0.5),
+            "y_high_to": _q(0.5),
+            "new_high": _q(0.2),
+        })["preference"]
+        keys = [h["key"] for h in pref["hotspots"]]
+        assert keys == ["yzt_yz", "yzt", "ylb_yz", "ylb", "yzt_first"]
+        assert "y_high_to" not in keys
+
+    def test_width_flag_on_items(self):
+        out = assemble({
+            "csi_all": _q(0.0),
+            "yzt_yz": _q(1.0, up=10, down=90),
+            "small": _q(-1.0, up=80, down=20),
+            "div_csi": _q(0.5, up=0, down=0),
+        })
+        by_key = {it["key"]: it for g in out["groups"] for it in g["items"]}
+        assert by_key["yzt_yz"]["width_flag"] == "价升面窄"
+        assert by_key["small"]["width_flag"] == "价跌面宽"
+        assert by_key["div_csi"]["width_flag"] is None
+
+    def test_group_lead_skips_hotspot(self):
+        out = assemble({
+            "csi_all": _q(0.0),
+            "yzt_yz": _q(5.0),
+            "yzt": _q(4.0),
+            "ylb_yz": _q(3.0),
+            "ylb": _q(2.5),
+            "small": _q(2.0),
+            "large": _q(0.1),
+        })
+        pref = out["preference"]
+        assert "small" in {h["key"] for h in pref["hotspots"]}
+        assert "large" not in {h["key"] for h in pref["hotspots"]}
+        size_lead = next((x for x in pref["group_leads"] if x["group"] == "size"), None)
+        assert size_lead is None
+
+    def test_high_turnover_can_be_hotspot(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "y_high_to": _q(3.0),
+            "small": _q(0.2),
+        })["preference"]
+        assert pref["hotspots"][0]["key"] == "y_high_to"
+        assert pref["hotspots"][0]["excess"] == pytest.approx(3.0)
+

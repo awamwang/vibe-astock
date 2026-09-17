@@ -5,6 +5,7 @@ import { DailyReview } from "@/pages/DailyReview";
 import { ShortBoard } from "@/pages/ShortBoard";
 import { ShortResonance } from "@/pages/ShortResonance";
 import { ShortStyle } from "@/pages/ShortStyle";
+import { ShortSprite } from "@/pages/ShortSprite";
 import { FirstBoard } from "@/pages/FirstBoard";
 import { AgentWeekly } from "@/pages/AgentWeekly";
 import { TradeBudgetPage } from "@/pages/TradeBudgetPage";
@@ -15,6 +16,7 @@ import { MessageStockPopup } from "@/pages/MessageStockPopup";
 import { MessageDiaryPopup } from "@/pages/MessageDiaryPopup";
 import { TradeBudgetPopout, VerificationPopout } from "@/pages/popout/AgentReviewPopouts";
 import { ShortBoardPopout } from "@/pages/popout/ShortBoardPopout";
+import { ShortSpritePopout } from "@/pages/popout/ShortSpritePopout";
 import { ThsBlocks } from "@/pages/ThsBlocks";
 import { Settings } from "@/pages/Settings";
 import { DataBackup } from "@/pages/DataBackup";
@@ -34,6 +36,7 @@ export const router = createBrowserRouter([
   { path: "/popout/agent/trade-budget", element: <TradeBudgetPopout /> },
   { path: "/popout/agent/verification", element: <VerificationPopout /> },
   { path: "/popout/short-board/:section", element: <ShortBoardPopout /> },
+  { path: "/popout/short-sprite", element: <ShortSpritePopout /> },
   {
     element: <Layout />,
     children: [
@@ -42,6 +45,7 @@ export const router = createBrowserRouter([
       { path: "/short-board", element: <ShortBoard /> },
       { path: "/short-resonance", element: <ShortResonance /> },
       { path: "/short-style", element: <ShortStyle /> },
+      { path: "/short-sprite", element: <ShortSprite /> },
       { path: "/daily-review", element: <DailyReview /> },
       { path: "/first-board", element: <FirstBoard /> },
       { path: "/heat", element: <AgentWeekly /> },

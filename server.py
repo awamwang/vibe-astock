@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from duanxian import (
     block_manage, board_emotion_resonance, focus_blocks, kpl_blocks, live_emotion, live_zt_effect,
     mood_block, overseas, preflight, reflection, review_store, screenshot_parse, risk_stance,
-    short_board, style_indices, trade_calendar, trade_budget, trade_store,
+    short_board, short_sprite, style_indices, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -468,6 +468,19 @@ def api_market_style_indices():
     out = style_indices.snapshot()
     _maybe_emit_live_snapshot()
     return out
+
+
+@app.get("/api/market/short-sprite")
+def api_market_short_sprite():
+    """短线精灵 snapshot（随带 tick）。只读现有盘面/风格快照，不新开上游。"""
+    return short_sprite.snapshot()
+
+
+@app.post("/api/market/short-sprite/enabled")
+def api_market_short_sprite_enabled(body: dict | None = Body(None)):
+    """短线精灵全局启停。停止不删除已有命中。"""
+    payload = body or {}
+    return short_sprite.set_enabled(bool(payload.get("enabled")))
 
 
 @app.get("/api/market/short-board")
@@ -1802,6 +1815,34 @@ def api_trade_threshold_config_reset():
     except OSError as exc:
         return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
     return {"data": ttc.export_config()}
+
+
+@app.get("/api/config/short-sprite")
+def api_short_sprite_config_get():
+    """读取短线精灵阈值、监控与语音开关。"""
+    return {"data": short_sprite.export_config()}
+
+
+@app.post("/api/config/short-sprite")
+def api_short_sprite_config_save(body: dict = Body(...)):
+    """保存短线精灵规则。提交 rules 对象，可只改部分序列。"""
+    try:
+        short_sprite.save_rules((body or {}).get("rules"))
+    except short_sprite.ShortSpriteConfigError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": short_sprite.export_config()}
+
+
+@app.post("/api/config/short-sprite/reset")
+def api_short_sprite_config_reset():
+    """恢复短线精灵出厂阈值与开关。"""
+    try:
+        short_sprite.reset_rules()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    return {"data": short_sprite.export_config()}
 
 
 @app.get("/api/config/proxy")

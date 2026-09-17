@@ -285,9 +285,35 @@ def _load_quotes() -> dict[str, dict]:
     return keyed
 
 
+HOTSPOT_GROUP_IDS = frozenset({"board", "size", "attribute", "dividend", "finance"})
+BOARD_GROUP_KEYS = (
+    "yzt_yz", "yzt", "ylb_yz", "ylb", "ylb2plus", "yzt_first", "yzb",
+)
+NEAR_FLAT = 0.1
+MIN_BOARD_N = 4
+HOTSPOT_TAKE = 5
+_ITEM_ORDER = {item.key: i for i, item in enumerate(ITEMS)}
+
+
+def _width_flag(pct: Optional[float], up: Optional[int], down: Optional[int]) -> Optional[str]:
+    if pct is None or up is None or down is None:
+        return None
+    total = up + down
+    if total <= 0:
+        return None
+    ratio = up / total
+    if pct > 0 and ratio < 0.5:
+        return "价升面窄"
+    if pct < 0 and ratio > 0.5:
+        return "价跌面宽"
+    return None
+
+
 def _item_view(item: StyleItem, quote: Optional[dict]) -> dict:
     q = quote or {}
     pct = q.get("change_pct")
+    up = q.get("up")
+    down = q.get("down")
     return {
         "key": item.key,
         "name": item.name,
@@ -295,15 +321,136 @@ def _item_view(item: StyleItem, quote: Optional[dict]) -> dict:
         "code": item.code,
         "change_pct": pct,
         "price": q.get("price"),
-        "up": q.get("up"),
-        "down": q.get("down"),
+        "up": up,
+        "down": down,
         "note": item.note or None,
         "available": pct is not None,
+        "width_flag": _width_flag(pct, up, down),
+    }
+
+
+def _pct(item: Optional[dict]) -> Optional[float]:
+    if not item or not item.get("available"):
+        return None
+    return item.get("change_pct")
+
+
+def _has_breadth(item: dict) -> bool:
+    up, down = item.get("up"), item.get("down")
+    return up is not None and down is not None and (up + down) > 0
+
+
+def _width_ok_for_hotspot(item: dict) -> bool:
+    if not _has_breadth(item):
+        return True
+    up, down = item["up"], item["down"]
+    return up / (up + down) >= 0.5
+
+
+def _empty_preference(status: str = "absent") -> dict:
+    return {
+        "status": status,
+        "hotspots": [],
+        "group_leads": [],
+        "board_group": {"n_valid": 0, "mean": None, "vs": "不足"},
+        "size_spread": {"value": None, "status": "不足"},
+        "size_spread_cnindex": {"value": None},
+    }
+
+
+def derive_preference(packed: dict) -> dict:
+    """从装配后的分组算出风格偏好。不打网络。"""
+    groups = packed.get("groups") or []
+    by_key: dict[str, dict] = {}
+    for g in groups:
+        for it in g.get("items") or []:
+            by_key[it["key"]] = it
+
+    if not packed.get("available"):
+        return _empty_preference("absent")
+
+    csi = _pct(by_key.get("csi_all"))
+    status = "ok" if csi is not None else "partial"
+
+    small = _pct(by_key.get("small"))
+    large = _pct(by_key.get("large"))
+    if small is None or large is None:
+        size_spread = {"value": None, "status": "不足"}
+    else:
+        size_spread = {"value": small - large, "status": "ok"}
+
+    csi2000 = _pct(by_key.get("csi2000"))
+    hs300 = _pct(by_key.get("hs300"))
+    cn_spread = (
+        {"value": csi2000 - hs300}
+        if csi2000 is not None and hs300 is not None
+        else {"value": None}
+    )
+
+    core = [by_key[k]["change_pct"] for k in BOARD_GROUP_KEYS
+            if _pct(by_key.get(k)) is not None]
+    n_valid = len(core)
+    if n_valid < MIN_BOARD_N:
+        board_group = {"n_valid": n_valid, "mean": None, "vs": "不足"}
+    else:
+        mean = sum(core) / n_valid
+        if csi is None:
+            vs = "不足"
+        elif abs(mean) < NEAR_FLAT or abs(csi) < NEAR_FLAT:
+            vs = "近平"
+        elif (mean > 0) == (csi > 0):
+            vs = "同向"
+        else:
+            vs = "反向"
+        board_group = {"n_valid": n_valid, "mean": mean, "vs": vs}
+
+    hotspots: list[dict] = []
+    hotspot_keys: set[str] = set()
+    if status == "ok":
+        candidates = [
+            it for it in by_key.values()
+            if it.get("available")
+            and it.get("group") in HOTSPOT_GROUP_IDS
+            and it["key"] != "csi_all"
+        ]
+        ranked = sorted(
+            candidates,
+            key=lambda it: (
+                -(it["change_pct"] - csi),
+                _ITEM_ORDER.get(it["key"], 10**6),
+            ),
+        )
+        for it in ranked[:HOTSPOT_TAKE]:
+            if not _width_ok_for_hotspot(it):
+                continue
+            hotspots.append({"key": it["key"], "excess": it["change_pct"] - csi})
+            hotspot_keys.add(it["key"])
+
+    group_leads = []
+    for g in groups:
+        gid = g.get("id")
+        available = [it for it in (g.get("items") or []) if it.get("available")]
+        if not available:
+            continue
+        lead = min(
+            available,
+            key=lambda it: (-it["change_pct"], _ITEM_ORDER.get(it["key"], 10**6)),
+        )
+        if lead["key"] not in hotspot_keys:
+            group_leads.append({"group": gid, "key": lead["key"]})
+
+    return {
+        "status": status,
+        "hotspots": hotspots,
+        "group_leads": group_leads,
+        "board_group": board_group,
+        "size_spread": size_spread,
+        "size_spread_cnindex": cn_spread,
     }
 
 
 def assemble(quotes: dict[str, dict]) -> dict:
-    """把 {key: quote} 收成页面用的分组。不打网络。"""
+    """把 {key: quote} 收成页面用的分组，并挂上风格偏好。不打网络。"""
     groups = []
     hit = 0
     for gid, label in GROUPS:
@@ -316,7 +463,7 @@ def assemble(quotes: dict[str, dict]) -> dict:
                 hit += 1
             items.append(row)
         groups.append({"id": gid, "label": label, "items": items})
-    return {
+    packed = {
         "available": hit > 0,
         "hit": hit,
         "total": len(ITEMS),
@@ -324,6 +471,8 @@ def assemble(quotes: dict[str, dict]) -> dict:
         "unavailable": [dict(x) for x in UNAVAILABLE],
         "reason": None if hit else "风格指数取数失败",
     }
+    packed["preference"] = derive_preference(packed)
+    return packed
 
 
 def snapshot() -> dict:
@@ -360,4 +509,5 @@ def snapshot() -> dict:
         "groups": [],
         "unavailable": [dict(x) for x in UNAVAILABLE],
         "updated": china_now().strftime("%Y-%m-%d %H:%M"),
+        "preference": _empty_preference("absent"),
     }

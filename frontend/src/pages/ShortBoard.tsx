@@ -44,10 +44,12 @@ import { StockLabel } from "@/components/stock/StockLabel";
 import { BlockLabel } from "@/components/block/BlockLabel";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { delayUntilNextUnixSlot, SPRITE_SLOT_MS } from "@/lib/wallClock";
+import { pingShortSprite } from "@/lib/shortSprite";
 import { SortTh, type SortOrder } from "@/components/ui/SortTh";
 
 const AUTO_KEY = "vibe-astock-short-board-auto-refresh";
-const LIVE_MS = 10_000;
+const LIVE_MS = SPRITE_SLOT_MS;
 const HEAVY_MS = 60_000;
 
 type FocusSortKey = "name" | "power" | "pct" | "m_net" | "zt";
@@ -462,7 +464,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     loadResonance(),
     loadSession(),
     Promise.resolve(refreshLianban((emotion?.lianban_stocks ?? []).map((s) => s.code))),
-  ]);
+  ]).then(() => pingShortSprite());
   /** 仅拉取指定底部标签所需数据（自动刷新 / 切签各走这一条） */
   const loadTabData = (key: TabKey) => {
     if (key === "emotion") return loadEmotion();
@@ -507,7 +509,7 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
     let heavyTimer = 0;
 
     const scheduleLive = () => {
-      liveTimer = window.setTimeout(tickLive, LIVE_MS);
+      liveTimer = window.setTimeout(tickLive, delayUntilNextUnixSlot());
     };
     const scheduleHeavy = () => {
       heavyTimer = window.setTimeout(tickHeavy, HEAVY_MS);
@@ -695,6 +697,20 @@ export function ShortBoard({ popoutSection }: { popoutSection?: ShortBoardPopout
               context={`短线盘面：情绪温度 ${t.temperature ?? "—"}，上涨 ${t.n_up ?? "—"}，下跌 ${t.n_down ?? "—"}，实际涨停 ${t.n_sjzt ?? "—"}；情绪分 ${t.qcj_temp != null ? `${t.qcj_temp}°` : "—"}（${t.qcj_level ?? "—"}），龙头 ${t.qcj_leader ?? "—"}，主线 ${(t.qcj_themes || []).join("、") || "—"}`}
               label="问 AI"
               suggestions={["今天短线情绪怎么样", "炸板率和涨停溢价怎么读", "资金面有什么信号"]}
+            />
+            <Link
+              to="/short-sprite"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-primary/80 hover:text-primary"
+            >
+              短线精灵
+            </Link>
+            <SectionPopupButton
+              compact
+              path="/popout/short-sprite"
+              windowName="va-popout-short-sprite"
+              title="短线精灵命中弹窗"
             />
           </div>
         }

@@ -11,6 +11,7 @@ export interface StyleIndexItem {
   down: number | null;
   note: string | null;
   available: boolean;
+  width_flag?: "价升面窄" | "价跌面宽" | null;
 }
 
 export interface StyleIndexGroup {
@@ -25,6 +26,18 @@ export interface StyleIndexUnavailable {
   reason: string;
 }
 
+export type StylePreferenceStatus = "ok" | "partial" | "absent";
+export type BoardGroupVs = "同向" | "反向" | "近平" | "不足";
+
+export interface StylePreference {
+  status: StylePreferenceStatus;
+  hotspots: { key: string; excess: number }[];
+  group_leads: { group: string; key: string }[];
+  board_group: { n_valid: number; mean: number | null; vs: BoardGroupVs };
+  size_spread: { value: number | null; status: "ok" | "不足" };
+  size_spread_cnindex: { value: number | null };
+}
+
 export interface StyleIndicesSnapshot {
   available: boolean;
   reason?: string | null;
@@ -35,6 +48,7 @@ export interface StyleIndicesSnapshot {
   total: number;
   groups: StyleIndexGroup[];
   unavailable: StyleIndexUnavailable[];
+  preference?: StylePreference;
 }
 
 export function fetchStyleIndices() {

@@ -6,6 +6,7 @@ export const KEYWORDS_SECTION_IDS = [
   "sentiment-s",
   "trade-thresholds",
   "trade-phases",
+  "short-sprite",
 ] as const;
 
 export type KeywordsSectionId = (typeof KEYWORDS_SECTION_IDS)[number];

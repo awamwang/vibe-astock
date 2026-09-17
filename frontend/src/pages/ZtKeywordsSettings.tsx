@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -22,6 +22,12 @@ import {
 } from "@/lib/message-manual-marks";
 import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem } from "@/lib/api";
 import { keywordsSettingsTo, parseKeywordsSection, type KeywordsSectionId } from "@/lib/settingsNav";
+import {
+  fetchShortSpriteConfig,
+  resetShortSpriteConfig,
+  saveShortSpriteConfig,
+  type ShortSpriteRule,
+} from "@/lib/shortSprite";
 
 const CONFIG_SECTIONS: {
   id: KeywordsSectionId;
@@ -36,6 +42,7 @@ const CONFIG_SECTIONS: {
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
   { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
   { id: "trade-phases", label: "仓位预算档位", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
+  { id: "short-sprite", label: "短线精灵", icon: Zap, hint: "涨速/突破/跌破阈值" },
 ];
 
 function sortAliasEntries(entries: ThemeAliasEntry[]): ThemeAliasEntry[] {
@@ -68,6 +75,38 @@ function entriesFromConfig(cfg: { entries?: ThemeAliasEntry[]; aliases?: Record<
       type: types[alias] ?? "",
     })),
   );
+}
+
+type SpriteDraft = {
+  key: string;
+  label: string;
+  unit: string;
+  monitor: boolean;
+  voice: boolean;
+  speed_up: string;
+  speed_down: string;
+  break_up: string;
+  break_down: string;
+  hysteresis: string;
+};
+
+function numDraft(n: number): string {
+  return parseFloat(n.toPrecision(10)).toString();
+}
+
+function spriteDraftsFromRules(rules: ShortSpriteRule[]): SpriteDraft[] {
+  return rules.map((r) => ({
+    key: r.key,
+    label: r.label,
+    unit: r.unit,
+    monitor: r.monitor,
+    voice: r.voice,
+    speed_up: numDraft(r.speed_up),
+    speed_down: numDraft(r.speed_down),
+    break_up: numDraft(r.break_up),
+    break_down: numDraft(r.break_down),
+    hysteresis: numDraft(r.hysteresis),
+  }));
 }
 
 type PhaseDraft = {
@@ -183,6 +222,10 @@ export function ZtKeywordsSettings() {
   const [thDrafts, setThDrafts] = useState<Record<string, string>>({});
   const [thLoading, setThLoading] = useState(true);
   const [thSaving, setThSaving] = useState(false);
+
+  const [spriteDrafts, setSpriteDrafts] = useState<SpriteDraft[]>([]);
+  const [spriteLoading, setSpriteLoading] = useState(true);
+  const [spriteSaving, setSpriteSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,6 +398,23 @@ export function ZtKeywordsSettings() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await fetchShortSpriteConfig();
+        if (!cancelled) setSpriteDrafts(spriteDraftsFromRules(cfg.rules || []));
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取短线精灵配置失败");
+        }
+      } finally {
+        if (!cancelled) setSpriteLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const persistSentimentS = async () => {
     setSSaving(true);
     try {
@@ -450,6 +510,53 @@ export function ZtKeywordsSettings() {
       toast.error(e instanceof Error ? e.message : "恢复失败");
     } finally {
       setThSaving(false);
+    }
+  };
+
+  const persistSprite = async () => {
+    const rules: Record<string, Record<string, number | boolean>> = {};
+    try {
+      for (const row of spriteDrafts) {
+        const nums = ["speed_up", "speed_down", "break_up", "break_down", "hysteresis"] as const;
+        const parsed: Record<string, number> = {};
+        for (const k of nums) {
+          const n = Number(String(row[k]).trim());
+          if (!Number.isFinite(n)) throw new Error(`${row.label}的数字不合法`);
+          parsed[k] = n;
+        }
+        if (parsed.hysteresis < 0) throw new Error(`${row.label}·回差不能为负`);
+        rules[row.key] = {
+          monitor: row.monitor,
+          voice: row.voice,
+          ...parsed,
+        };
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "短线精灵配置不合法");
+      return;
+    }
+    setSpriteSaving(true);
+    try {
+      const cfg = await saveShortSpriteConfig(rules);
+      setSpriteDrafts(spriteDraftsFromRules(cfg.rules || []));
+      toast.success("短线精灵配置已保存");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSpriteSaving(false);
+    }
+  };
+
+  const resetSprite = async () => {
+    setSpriteSaving(true);
+    try {
+      const cfg = await resetShortSpriteConfig();
+      setSpriteDrafts(spriteDraftsFromRules(cfg.rules || []));
+      toast.success("已恢复短线精灵出厂阈值");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setSpriteSaving(false);
     }
   };
 
@@ -1535,6 +1642,88 @@ export function ZtKeywordsSettings() {
             type="button"
             onClick={() => void resetPhases()}
             disabled={phaseSaving || phaseLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 恢复默认
+          </button>
+        </div>
+      </GlassCard>
+          )}
+
+          {activeSection === "short-sprite" && (
+      <GlassCard className="mb-0">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <Zap className="h-4 w-4 text-primary" /> 短线精灵
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          每条盘面序列单独设监控、语音、四阈和回差。短线风格指数共用一行，命中仍按单条指数。
+          关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
+        </p>
+        {spriteLoading ? (
+          <p className="text-xs text-muted-foreground">正在读取短线精灵配置…</p>
+        ) : (
+          <div className="space-y-3">
+            {spriteDrafts.map((row) => (
+              <div key={row.key} className="rounded-lg border border-border/50 px-3 py-2">
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  <div className="text-sm font-medium">{row.label}</div>
+                  <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={row.monitor}
+                      onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, monitor: e.target.checked } : r))}
+                      disabled={spriteSaving}
+                    />
+                    监控
+                  </label>
+                  <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={row.voice}
+                      onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, voice: e.target.checked } : r))}
+                      disabled={spriteSaving}
+                    />
+                    语音
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {([
+                    ["speed_up", "上速阈"],
+                    ["speed_down", "下速阈"],
+                    ["break_up", "突破上阈"],
+                    ["break_down", "跌破下阈"],
+                    ["hysteresis", "回差"],
+                  ] as const).map(([k, lab]) => (
+                    <label key={k} className="block text-[11px] text-muted-foreground">
+                      {lab}
+                      <input
+                        type="number"
+                        step="any"
+                        value={row[k]}
+                        onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, [k]: e.target.value } : r))}
+                        disabled={spriteSaving}
+                        className="mt-1 w-full rounded-lg border border-border bg-black/20 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void persistSprite()}
+            disabled={spriteSaving || spriteLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetSprite()}
+            disabled={spriteSaving || spriteLoading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认

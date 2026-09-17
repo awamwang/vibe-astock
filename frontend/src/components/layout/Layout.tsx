@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Moon, Sun, ChevronsLeft, ChevronsRight, CandlestickChart, Cog, Swords,
-  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Waves, LayoutGrid, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info, Settings2, GripVertical } from "lucide-react";
+  Activity, Flame, CalendarRange, Github, Bot, FolderOpen, Wallet, Star, Radar, Waves, LayoutGrid, Zap, Tags, BookMarked, Plug, Newspaper, Boxes, ScrollText, Info, Settings2, GripVertical } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -42,6 +42,7 @@ const REVIEW_NAV: NavItem[] = [
   { to: "/short-board", icon: Radar, label: "短线盘面" },
   { to: "/short-resonance", icon: Waves, label: "短线共振" },
   { to: "/short-style", icon: LayoutGrid, label: "短线风格" },
+  { to: "/short-sprite", icon: Zap, label: "短线精灵" },
   { to: "/daily-review", icon: Activity, label: "盘面数据" },
   { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/messages", icon: Newspaper, label: "消息分析" },
@@ -79,7 +80,7 @@ function MainShell() {
   const widePage = pathname === "/heat" || pathname === "/messages" || pathname === "/blocks";
   const settingsWidePage =
     pathname === "/settings/keywords" || pathname === "/settings/system";
-  const articlesWidePage = pathname === "/articles" || pathname === "/short-resonance" || pathname === "/short-style" || pathname === "/experience";
+  const articlesWidePage = pathname === "/articles" || pathname === "/short-resonance" || pathname === "/short-style" || pathname === "/short-sprite" || pathname === "/experience";
   const contentMaxWidth = widePage
     ? "max-w-none w-full"
     : settingsWidePage || articlesWidePage
