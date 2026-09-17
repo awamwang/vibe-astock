@@ -1011,6 +1011,7 @@ export interface ExperienceTopicMeta {
   summary: string;
   date?: string;
   category?: string;
+  body?: string;
   stocks?: { name?: string; code?: string | null; status?: string }[];
   sectors?: { name?: string; status?: string }[];
 }

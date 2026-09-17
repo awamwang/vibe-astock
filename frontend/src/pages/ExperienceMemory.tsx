@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle, BookMarked, Check, ChevronDown, ChevronUp, Copy, FileText, Trash2,
-  Loader2, Send, Settings, Sparkles, X,
+  Loader2, Search, Send, Settings, Sparkles, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -15,7 +15,7 @@ import {
 import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
 import {
   buildOrganizePrompt, parseOrganizeJson, suffixTitleDate,
-  EXPERIENCE_CATEGORIES,
+  EXPERIENCE_CATEGORIES, EXPERIENCE_UNCATEGORIZED, filterExperienceTopics,
 } from "@/lib/experience";
 import { StockResolveScope } from "@/components/stock/StockResolveContext";
 import { BlockResolveScope } from "@/components/block/BlockResolveContext";
@@ -34,6 +34,9 @@ export function ExperienceMemory() {
   const [committing, setCommitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [contentQuery, setContentQuery] = useState("");
+  const [targetQuery, setTargetQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   const [qaOpen, setQaOpen] = useState(false);
   const [qaConfigured, setQaConfigured] = useState(false);
@@ -227,6 +230,28 @@ export function ExperienceMemory() {
 
   const draft = drafts?.[draftTab];
 
+  const categoryCounts = useMemo(() => {
+    const scoped = filterExperienceTopics(topics, { contentQuery, targetQuery });
+    const counts = new Map<string, number>();
+    let uncategorized = 0;
+    for (const t of scoped) {
+      const c = (t.category || "").trim();
+      if (!c) {
+        uncategorized += 1;
+        continue;
+      }
+      counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    return { counts, uncategorized, scoped };
+  }, [topics, contentQuery, targetQuery]);
+
+  const filteredTopics = useMemo(
+    () => filterExperienceTopics(categoryCounts.scoped, { category: categoryFilter }),
+    [categoryCounts.scoped, categoryFilter],
+  );
+
+  const filtersActive = Boolean(contentQuery.trim() || targetQuery.trim() || categoryFilter);
+
   const updateDraft = (patch: Partial<ExperienceDraftFile>) => {
     setDrafts((ds) => ds?.map((f, i) => (i === draftTab ? { ...f, ...patch } : f)) ?? null);
   };
@@ -344,24 +369,145 @@ export function ExperienceMemory() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold">
               <FileText className="h-4 w-4 text-primary" /> 主题列表（只读）
+              {topics.length > 0 && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  {filtersActive ? `${filteredTopics.length}/${topics.length}` : topics.length}
+                </span>
+              )}
             </h3>
-            <button
-              type="button"
-              onClick={() => void deleteTopic()}
-              disabled={!selected || deleting}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-40"
-              title="从记忆库删除当前主题"
-            >
-              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-              删除
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {filtersActive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContentQuery("");
+                    setTargetQuery("");
+                    setCategoryFilter("");
+                  }}
+                  className="text-xs text-muted-foreground hover:text-primary"
+                >
+                  清除筛选
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void deleteTopic()}
+                disabled={!selected || deleting}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-40"
+                title="从记忆库删除当前主题"
+              >
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                删除
+              </button>
+            </div>
           </div>
+          {topics.length > 0 && (
+            <div className="mb-3 space-y-2">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="relative block">
+                  <span className="sr-only">搜索内容</span>
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={contentQuery}
+                    onChange={(e) => setContentQuery(e.target.value)}
+                    placeholder="搜索标题、摘要、正文…"
+                    className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-8 text-sm outline-none focus:border-primary/50"
+                  />
+                  {contentQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setContentQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      aria-label="清除内容搜索"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </label>
+                <label className="relative block">
+                  <span className="sr-only">搜索关联个股或板块</span>
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={targetQuery}
+                    onChange={(e) => setTargetQuery(e.target.value)}
+                    placeholder="搜索关联个股代码/名称、板块…"
+                    className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-8 text-sm outline-none focus:border-primary/50"
+                  />
+                  {targetQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setTargetQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      aria-label="清除个股板块搜索"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground">类型</span>
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilter("")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                    !categoryFilter
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "border border-border/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  全部
+                </button>
+                {EXPERIENCE_CATEGORIES.map((c) => {
+                  const n = categoryCounts.counts.get(c) || 0;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCategoryFilter((cur) => (cur === c ? "" : c))}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                        categoryFilter === c
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "border border-border/60 text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {c}
+                      <span className={cn("ml-1 tabular-nums", categoryFilter === c ? "opacity-80" : "opacity-60")}>
+                        {n}
+                      </span>
+                    </button>
+                  );
+                })}
+                {(categoryCounts.uncategorized > 0 || categoryFilter === EXPERIENCE_UNCATEGORIZED) && (
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter((cur) => (cur === EXPERIENCE_UNCATEGORIZED ? "" : EXPERIENCE_UNCATEGORIZED))}
+                    className={cn(
+                      "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                      categoryFilter === EXPERIENCE_UNCATEGORIZED
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "border border-border/60 text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    未分类
+                    <span className={cn("ml-1 tabular-nums", categoryFilter === EXPERIENCE_UNCATEGORIZED ? "opacity-80" : "opacity-60")}>
+                      {categoryCounts.uncategorized}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {topics.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无主题。输入经验后点「AI 整理」开始沉淀。</p>
+          ) : filteredTopics.length === 0 ? (
+            <p className="text-sm text-muted-foreground">没有匹配当前搜索/筛选的主题。</p>
           ) : (
             <div className="grid gap-3 lg:grid-cols-[minmax(0,22rem)_1fr] xl:grid-cols-[minmax(0,28rem)_1fr]">
               <ul className="max-h-[36rem] space-y-1.5 overflow-y-auto pr-1">
-                {topics.map((t) => (
+                {filteredTopics.map((t) => (
                   <li key={t.filename}>
                     <button
                       type="button"

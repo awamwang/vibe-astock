@@ -76,6 +76,71 @@ export function suffixTitleDate(title: string, date: string): string {
   return `${base}-${date}`;
 }
 
+export type ExperienceTopicFilterable = {
+  filename: string;
+  title: string;
+  summary: string;
+  category?: string;
+  body?: string;
+  content?: string;
+  stocks?: { name?: string | null; code?: string | null }[];
+  sectors?: { name?: string }[];
+};
+
+/** 列表筛「未分类」时使用的哨兵值。 */
+export const EXPERIENCE_UNCATEGORIZED = "__none__";
+
+export interface ExperienceListFilters {
+  contentQuery?: string;
+  targetQuery?: string;
+  category?: string;
+}
+
+function includesQuery(hay: string, query: string): boolean {
+  if (!query) return true;
+  return hay.toLowerCase().includes(query);
+}
+
+function topicContentHaystack(topic: ExperienceTopicFilterable): string {
+  return [topic.title, topic.summary, topic.filename, topic.body || "", topic.content || ""].join("\n");
+}
+
+function topicTargetHaystack(topic: ExperienceTopicFilterable): string {
+  const stocks = (topic.stocks || []).flatMap((s) => [s.name || "", s.code || ""]);
+  const sectors = (topic.sectors || []).map((s) => s.name || "");
+  return [...stocks, ...sectors].join("\n");
+}
+
+/** 主题列表：正文/标题检索、个股板块检索、分类筛选可叠加。 */
+export function matchExperienceTopic(
+  topic: ExperienceTopicFilterable,
+  filters: ExperienceListFilters,
+): boolean {
+  const category = (filters.category || "").trim();
+  const topicCat = (topic.category || "").trim();
+  if (category === EXPERIENCE_UNCATEGORIZED) {
+    if (topicCat) return false;
+  } else if (category && topicCat !== category) {
+    return false;
+  }
+  const contentQ = (filters.contentQuery || "").trim().toLowerCase();
+  if (contentQ && !includesQuery(topicContentHaystack(topic), contentQ)) return false;
+  const targetQ = (filters.targetQuery || "").trim().toLowerCase();
+  if (targetQ && !includesQuery(topicTargetHaystack(topic), targetQ)) return false;
+  return true;
+}
+
+export function filterExperienceTopics<T extends ExperienceTopicFilterable>(
+  topics: T[],
+  filters: ExperienceListFilters,
+): T[] {
+  const category = (filters.category || "").trim();
+  const contentQ = (filters.contentQuery || "").trim();
+  const targetQ = (filters.targetQuery || "").trim();
+  if (!category && !contentQ && !targetQ) return topics;
+  return topics.filter((t) => matchExperienceTopic(t, filters));
+}
+
 export function normalizeExperienceCategory(raw: string): ExperienceCategory {
   const s = (raw || "").trim();
   if (CATEGORY_SET.has(s)) return s as ExperienceCategory;

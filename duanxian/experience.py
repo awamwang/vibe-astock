@@ -536,6 +536,7 @@ def _public_topic(meta: dict[str, str], path: str, content: Optional[str] = None
         "category": parsed.get("category") or "",
         "stocks": stocks,
         "sectors": sectors,
+        "body": parsed.get("body") or "",
     }
 
 

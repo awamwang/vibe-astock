@@ -5092,6 +5092,7 @@ class TestExperienceMemory:
         row = next(t for t in meta["topics"] if t["filename"] == "情绪周期-2026-09-17.md")
         assert row["date"] == "2026-09-17"
         assert row["category"] == "方法论"
+        assert "低吸优于追高" in (row.get("body") or "")
 
     def test_retrieve_keyword_topk(self, tmp_path, monkeypatch):
         from duanxian import experience as exp
@@ -5224,6 +5225,23 @@ class TestExperienceMemory:
         assert "平安银行" in names
         assert "宁德时代" in names
         assert any(s["name"] == "连板" for s in sectors)
+
+    def test_list_topics_exposes_body_for_content_search(self, tmp_path, monkeypatch):
+        from duanxian import experience as exp
+
+        monkeypatch.setattr(exp, "resolve_experience_targets", lambda **_kw: ([], []))
+        root = str(tmp_path / "experience")
+        exp.commit_files([{
+            "title": "硬核接力",
+            "date": "2026-09-17",
+            "category": "踩坑",
+            "summary": "高度掉了别硬上",
+            "content": "连板掉下来后硬核接力容易亏，宁可等二波。\n",
+        }], root)
+        row = exp.get_meta(root)["topics"][0]
+        assert "宁可等二波" in (row.get("body") or "")
+        assert "高度掉了别硬上" not in (row.get("body") or "")
+        assert row["summary"] == "高度掉了别硬上"
 
 
 class TestArticles:
