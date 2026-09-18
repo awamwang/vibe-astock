@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "lark-stock"
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
@@ -68,6 +70,7 @@ def test_home_shows_actions_when_configured():
     ), "abc123")
     assert "拉取今日短线" in html
     assert "推送今日短线盯盘" in html
+    assert "data.hint" in html
     assert "<textarea" in html
     assert "请先配置" not in html
     assert "去配置" not in html
@@ -328,6 +331,45 @@ def test_push_creates_then_updates_by_date():
     assert written[0]["fields"]["温度"] == 80
 
 
+def test_push_surfaces_skipped_column_hint():
+    class Store:
+        def upsert_by_date(self, field_name, day, fields):
+            return {
+                "action": "create",
+                "record_id": "rec1",
+                "matched": 0,
+                "fields": {"交易日": day},
+                "skipped": ["温度"],
+                "hint": "已跳过表里没有的列：「温度」。请把插件配置里的列名改成与表格完全一致（含空格和符号）。",
+            }
+
+    payload = {
+        "date": "2026-09-18",
+        "sources": {
+            "short_board": {"available": True, "data": {"today": {"temperature": 80}}},
+        },
+    }
+    out = handle_push(
+        SimpleNamespace(
+            config=_config(
+                duanxian_bitable_app_token="app",
+                duanxian_bitable_table_id="tbl",
+                duanxian_columns={
+                    "DUANXIAN_DATE_BITABLE_KEY_NAME": "交易日",
+                    "DUANXIAN_TEMPERATURE_BITABLE_KEY_NAME": "温度",
+                },
+            ),
+            duanxian_bitable=Store(),
+        ),
+        "pid",
+        fetch_live=lambda: payload,
+    )
+    assert out["ok"] is True
+    assert "温度" in out["hint"]
+    assert out["skipped"] == ["温度"]
+    assert [row["label"] for row in out["rows"]] == ["日期"]
+
+
 def test_upsert_by_date_updates_existing_date_row():
     from lark_stock.bitable import BitableStore
 
@@ -335,6 +377,11 @@ def test_upsert_by_date_updates_existing_date_row():
         field_name = "日期"
         type = 5
         ui_type = "DateTime"
+
+    class Temp:
+        field_name = "情绪温度"
+        type = 2
+        ui_type = "Number"
 
     class Record:
         def __init__(self, record_id, fields):
@@ -360,7 +407,7 @@ def test_upsert_by_date_updates_existing_date_row():
 
     class FieldApi:
         def list(self, request):
-            return Resp(Data([Field()]))
+            return Resp(Data([Field(), Temp()]))
 
     class RecordApi:
         def search(self, request):
@@ -394,6 +441,115 @@ def test_upsert_by_date_updates_existing_date_row():
     assert created == []
 
 
+def test_upsert_skips_missing_field_names_and_returns_hint():
+    from lark_stock.bitable import BitableStore
+
+    class Field:
+        def __init__(self, name, type_, ui):
+            self.field_name = name
+            self.type = type_
+            self.ui_type = ui
+
+    class Data:
+        def __init__(self, items=None, has_more=False):
+            self.items = items or []
+            self.has_more = has_more
+            self.page_token = None
+
+    class Resp:
+        def __init__(self, data=None):
+            self.data = data
+
+        def success(self):
+            return True
+
+    created: list[dict] = []
+
+    class FieldApi:
+        def list(self, request):
+            return Resp(Data([
+                Field("日期", 5, "DateTime"),
+                Field("炸板个数", 2, "Number"),
+            ]))
+
+    class RecordApi:
+        def search(self, request):
+            return Resp(Data())
+
+        def list(self, request):
+            return Resp(Data())
+
+        def create(self, request):
+            created.append(request.request_body.fields)
+            rec = SimpleNamespace(record_id="rec-new")
+            return Resp(SimpleNamespace(record=rec))
+
+    store = BitableStore(
+        SimpleNamespace(bitable=SimpleNamespace(v1=SimpleNamespace(
+            app_table_field=FieldApi(),
+            app_table_record=RecordApi(),
+        ))),
+        _config(bitable_app_token="app", bitable_table_id="tbl"),
+    )
+    out = store.upsert_by_date("日期", "2026-09-18", {
+        "日期": "2026-09-18",
+        "情绪温度": 66,
+        "炸板家数": 8,
+    })
+    assert out["action"] == "create"
+    assert created[0]["日期"] == shanghai_midnight_ms("2026-09-18")
+    assert "情绪温度" not in created[0]
+    assert "炸板家数" not in created[0]
+    assert out["skipped"] == ["情绪温度", "炸板家数"]
+    assert "已跳过" in out["hint"]
+    assert "情绪温度" in out["hint"]
+    assert "炸板家数" in out["hint"]
+    assert "炸板个数" in out["hint"]
+
+
+def test_create_record_1254045_lists_written_columns():
+    from lark_stock.bitable import BitableStore
+
+    class Data:
+        def __init__(self, items=None, has_more=False):
+            self.items = items or []
+            self.has_more = has_more
+            self.page_token = None
+
+    class Fail:
+        code = 1254045
+        msg = "FieldNameNotFound"
+        data = None
+
+        def success(self):
+            return False
+
+        def get_log_id(self):
+            return "log-field"
+
+    class FieldApi:
+        def list(self, request):
+            raise LarkApiError("列出多维表格字段", 1254001, "fail")
+
+    class RecordApi:
+        def create(self, request):
+            return Fail()
+
+    store = BitableStore(
+        SimpleNamespace(bitable=SimpleNamespace(v1=SimpleNamespace(
+            app_table_field=FieldApi(),
+            app_table_record=RecordApi(),
+        ))),
+        _config(bitable_app_token="app", bitable_table_id="tbl"),
+    )
+    with pytest.raises(LarkApiError, match="情绪温度") as caught:
+        store.create_record({"日期": "2026-09-18", "情绪温度": 66})
+    text = str(caught.value)
+    assert "1254045" in text
+    assert "日期" in text
+    assert "本次写入" in text
+
+
 def test_91403_explains_how_to_grant_edit():
     from lark_stock.errors import LarkApiError
 
@@ -402,6 +558,13 @@ def test_91403_explains_how_to_grant_edit():
     assert "91403" in text
     assert "添加文档应用" in text
     assert "可编辑" in text
+
+
+def test_1254045_explains_field_name_mismatch():
+    err = LarkApiError("新增多维表格记录", 1254045, "FieldNameNotFound", "log-2")
+    text = str(err)
+    assert "1254045" in text
+    assert "列名" in text
 
 
 def test_upsert_skips_formula_columns():

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+import unicodedata
 from typing import Any
 
 from .config import LarkConfig
@@ -46,7 +48,7 @@ class BitableStore:
             .build()
         )
         response = self._client.bitable.v1.app_table_record.create(request)
-        raise_if_failed(response, "新增多维表格记录")
+        self._raise_if_write_failed(response, "新增多维表格记录", fields)
         record = getattr(getattr(response, "data", None), "record", None)
         record_id = getattr(record, "record_id", None)
         if not record_id:
@@ -66,7 +68,7 @@ class BitableStore:
             .build()
         )
         response = self._client.bitable.v1.app_table_record.update(request)
-        raise_if_failed(response, "更新多维表格记录")
+        self._raise_if_write_failed(response, "更新多维表格记录", fields)
 
     def list_records(self, *, page_size: int = 100, page_token: str | None = None) -> dict[str, Any]:
         """列出一页记录。还有下一页时返回 page_token。"""
@@ -122,16 +124,21 @@ class BitableStore:
             body[name] = shanghai_midnight_ms(day)
         else:
             body.setdefault(name, day)
-        body = self._writable_fields(body)
+        body, unknown, catalog = self._writable_fields(body)
         existing = self.find_by_date(name, day)
         if existing:
             record_id = str(existing[0].get("record_id") or "")
             if not record_id:
                 raise ValueError("已有记录但缺少 record_id")
             self.update_record(record_id, body)
-            return {"action": "update", "record_id": record_id, "matched": len(existing)}
-        record_id = self.create_record(body)
-        return {"action": "create", "record_id": record_id, "matched": 0}
+            result = {"action": "update", "record_id": record_id, "matched": len(existing), "fields": body}
+        else:
+            record_id = self.create_record(body)
+            result = {"action": "create", "record_id": record_id, "matched": 0, "fields": body}
+        if unknown:
+            result["skipped"] = unknown
+            result["hint"] = _unknown_fields_message(unknown, catalog, skipped=True)
+        return result
 
     def _field_kind(self, field_name: str) -> str:
         """列类型：date / text / missing / unknown。列清单读失败时为 unknown。"""
@@ -157,8 +164,8 @@ class BitableStore:
             return {}
         catalog: dict[str, tuple[str, Any, str]] = {}
         for field in fields:
-            name = str(getattr(field, "field_name", "") or "").strip()
-            if not name:
+            name = str(getattr(field, "field_name", "") or "")
+            if not name.strip():
                 continue
             ui = str(getattr(field, "ui_type", "") or "")
             ftype = getattr(field, "type", None)
@@ -171,22 +178,45 @@ class BitableStore:
             catalog[name] = (kind, ftype, ui)
         return catalog
 
-    def _writable_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """丢掉表里没有的列和公式/系统列，避免写入时报 Forbidden。"""
+    def _writable_fields(self, fields: dict[str, Any]) -> tuple[dict[str, Any], list[str], dict[str, tuple[str, Any, str]]]:
+        """丢掉表里没有的列和公式/系统列。没有的列名留给调用方提示。"""
         catalog = self._field_catalog()
         if not catalog:
-            return fields
+            return fields, [], catalog
         out: dict[str, Any] = {}
+        unknown: list[str] = []
         for name, value in fields.items():
-            meta = catalog.get(name)
-            if meta is None:
-                out[name] = value
+            actual = _canonical_field_name(name, catalog)
+            if actual is None:
+                unknown.append(name)
                 continue
-            _kind, ftype, ui = meta
+            _kind, ftype, ui = catalog[actual]
             if ftype in _READONLY_TYPES or ui in _READONLY_UI:
                 continue
-            out[name] = value
-        return out
+            out[actual] = value
+        return out, unknown, catalog
+
+    def _raise_if_write_failed(self, response: Any, action: str, fields: dict[str, Any]) -> None:
+        """写入失败时，尽量补上表里对不上的列名。"""
+        try:
+            raise_if_failed(response, action)
+        except LarkApiError as exc:
+            if exc.code != 1254045:
+                raise
+            catalog = self._field_catalog()
+            if not catalog:
+                names = "、".join(f"「{name}」" for name in fields)
+                extra = f"飞书未指出具体列；本次写入了：{names}。请对照表格实际列名。"
+            else:
+                unknown = [
+                    name for name in fields if _canonical_field_name(name, catalog) is None
+                ]
+                extra = (
+                    _unknown_fields_message(unknown, catalog)
+                    if unknown
+                    else "请核对列名是否完全一致，或检查高级权限是否隐藏了部分列。"
+                )
+            raise LarkApiError(action, exc.code, f"{exc.msg}。{extra}", exc.log_id) from exc
 
     def _list_fields(self) -> list[Any]:
         from lark_oapi.api.bitable.v1 import ListAppTableFieldRequest
@@ -291,3 +321,51 @@ def _record_items(data: Any) -> list[dict[str, Any]]:
             "fields": fields,
         })
     return items
+
+
+def _norm_field_name(name: str) -> str:
+    return unicodedata.normalize("NFKC", str(name or "")).strip()
+
+
+def _canonical_field_name(name: str, catalog: dict[str, Any]) -> str | None:
+    """把配置里的列名对到表格真实列名。只差空格/全半角时用表里的写法。"""
+    if name in catalog:
+        return name
+    target = _norm_field_name(name)
+    if not target:
+        return None
+    for actual in catalog:
+        if _norm_field_name(actual) == target:
+            return actual
+    return None
+
+
+def _unknown_fields_message(
+    unknown: list[str],
+    catalog: dict[str, Any],
+    *,
+    skipped: bool = False,
+) -> str:
+    actual = [str(name) for name in catalog]
+    parts: list[str] = []
+    for name in unknown:
+        close = difflib.get_close_matches(
+            _norm_field_name(name),
+            [_norm_field_name(item) for item in actual],
+            n=1,
+            cutoff=0.5,
+        )
+        if close:
+            original = next(
+                (item for item in actual if _norm_field_name(item) == close[0]),
+                close[0],
+            )
+            parts.append(f"「{name}」→接近「{original}」")
+        else:
+            parts.append(f"「{name}」")
+    lead = "已跳过表里没有的列：" if skipped else "多维表格里没有这些列："
+    return (
+        lead
+        + "、".join(parts)
+        + "。请把插件配置里的列名改成与表格完全一致（含空格和符号）。"
+    )

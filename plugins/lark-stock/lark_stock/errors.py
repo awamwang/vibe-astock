@@ -11,6 +11,10 @@ _CODE_HINTS = {
         "请打开该表格 → 右上角「…」→「添加文档应用」，搜到本应用并设为「可编辑」；"
         "若表格开了高级权限，还需给应用「可管理」，并允许新增记录。"
     ),
+    1254045: (
+        "字段名与多维表格列名不完全一致，或高级权限下应用看不到该列。"
+        "请对照表格实际列名（含空格、换行和符号），或给应用「可管理」权限。"
+    ),
 }
 
 
@@ -24,6 +28,7 @@ class LarkApiError(RuntimeError):
     def __init__(self, action: str, code: int | None, msg: str, log_id: str | None = None) -> None:
         self.action = action
         self.code = code
+        self.msg = msg
         self.log_id = log_id
         detail = f"{action}失败：{msg or '未知错误'}（code={code}"
         if log_id:

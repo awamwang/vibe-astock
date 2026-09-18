@@ -139,6 +139,12 @@ _PAGE = """<!doctype html>
         p.className = "hint";
         p.textContent = (data.action === "update" ? "已更新 " : "已新增 ") + (data.date || "") + " 的短线记录";
         wrap.appendChild(p);
+        if (data.hint) {
+          const warn = document.createElement("p");
+          warn.className = "warn";
+          warn.textContent = data.hint;
+          wrap.appendChild(warn);
+        }
         wrap.appendChild(renderRecords({
           records: [{ rows: data.rows || [] }],
           date: data.date,
@@ -378,15 +384,21 @@ def handle_push(
         result = store.upsert_by_date(field, day, fields)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
-    return {
+    written = result.get("fields") or fields
+    out = {
         "ok": True,
         "action": result.get("action"),
         "record_id": result.get("record_id"),
         "matched": result.get("matched"),
         "date": day,
         "date_field": field,
-        "rows": record_rows(fields, service.config),
+        "rows": record_rows(written, service.config),
     }
+    hint = str(result.get("hint") or "").strip()
+    if hint:
+        out["hint"] = hint
+        out["skipped"] = list(result.get("skipped") or [])
+    return out
 
 
 def read_json(request: Request) -> dict[str, Any]:
