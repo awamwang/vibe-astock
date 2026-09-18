@@ -16,7 +16,9 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from duanxian.hooks import HookPack, HookRegistry
+import html as htmlmod
+
+from duanxian.hooks import HookPack, HookRegistry, PluginEnvField
 
 _REQ_FILE = Path(__file__).resolve().parent / "requirements.txt"
 
@@ -837,15 +839,51 @@ class ThsLinkerBridge:
 _BRIDGE: ThsLinkerBridge | None = None
 
 
+def _status_page() -> str:
+    """插件前端页：同花顺联动连接状态。"""
+    bridge = _BRIDGE
+    ready = bool(bridge is not None and bridge.is_ready())
+    ws = htmlmod.escape(os.environ.get("THS_LINKER_WS_URL") or "ws://127.0.0.1:8765")
+    state = "已连接" if ready else "未连接"
+    tone = "#4ade80" if ready else "#fbbf24"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>同花顺联动</title>
+  <style>
+    :root {{ color-scheme: dark; }}
+    body {{ margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0b1220; color: #e5e7eb; }}
+    main {{ max-width: 40rem; margin: 12vh auto; padding: 0 1.25rem; }}
+    h1 {{ font-size: 1.15rem; font-weight: 600; }}
+    .card {{ border: 1px solid #1f2937; border-radius: 12px; padding: 1rem 1.1rem; background: #111827; }}
+    .state {{ color: {tone}; font-weight: 600; }}
+    .muted {{ color: #9ca3af; font-size: 12px; word-break: break-all; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>同花顺联动</h1>
+    <div class="card">
+      <p>状态：<span class="state">{state}</span></p>
+      <p class="muted">WebSocket {ws}</p>
+    </div>
+  </main>
+</body>
+</html>
+"""
+
+
 def on_enable(reg: HookRegistry) -> None:
     global _BRIDGE
-    if _BRIDGE is not None:
-        return
-    plugin_id = reg.plugin_id or ""
-    bridge = ThsLinkerBridge(reg, plugin_id)
-    # 连接失败由桥接后台自愈，不在此处抛错，避免整插件卡在 error 只能等管理页启停
-    bridge.start()
-    _BRIDGE = bridge
+    if _BRIDGE is None:
+        plugin_id = reg.plugin_id or ""
+        bridge = ThsLinkerBridge(reg, plugin_id)
+        # 连接失败由桥接后台自愈，不在此处抛错，避免整插件卡在 error 只能等管理页启停
+        bridge.start()
+        _BRIDGE = bridge
+    reg.register_route("", "同花顺联动状态", handler=_status_page)
 
 
 def on_disable() -> None:
@@ -885,6 +923,14 @@ PACK = HookPack(
     name="vibe-ths-linker",
     version="1.0.0",
     schema_bundle="vibe-ths-linker/1.0.0",
+    env_fields=(
+        PluginEnvField(
+            "THS_LINKER_WS_URL",
+            "同花联动工具WebSocket地址",
+            "",
+            default="ws://127.0.0.1:8765",
+        ),
+    ),
     on_enable=on_enable,
     on_disable=on_disable,
     on_watchlist_add=on_watchlist_add,

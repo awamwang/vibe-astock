@@ -29,6 +29,65 @@ _REQUIRED: tuple[tuple[str, str], ...] = (
     ("LARK_IM_RECEIVE_ID", "消息接收方 ID"),
 )
 
+@dataclass(frozen=True)
+class BitableColumn:
+    """短线盘面一个指标对应的多维表格列名。"""
+
+    key: str
+    label: str
+    hint: str = "写入多维表格的列名，留空则用页面上的中文名称"
+
+
+# 短线盘面上半部分（标签页以上）的卡片，顺序与页面一致。
+# 上证/A股量能盘中会显示成「预测量能」，仍是同一列。
+DUANXIAN_BITABLE_COLUMNS: tuple[BitableColumn, ...] = (
+    BitableColumn("DUANXIAN_DATE_BITABLE_KEY_NAME", "日期"), 
+    BitableColumn("DUANXIAN_TEMPERATURE_BITABLE_KEY_NAME", "情绪温度"), 
+    BitableColumn("DUANXIAN_BREADTH_BITABLE_KEY_NAME", "大盘宽度"),
+    BitableColumn("DUANXIAN_SPECULATION_BITABLE_KEY_NAME", "题材投机"),
+    BitableColumn("DUANXIAN_UP_BITABLE_KEY_NAME", "上涨数"),
+    BitableColumn("DUANXIAN_DOWN_BITABLE_KEY_NAME", "下跌数"),
+    BitableColumn("DUANXIAN_FLAT_BITABLE_KEY_NAME", "平盘"),
+    BitableColumn("DUANXIAN_ACTIVE_BITABLE_KEY_NAME", "活跃度"),
+    BitableColumn(
+        "DUANXIAN_SH_VOLUME_BITABLE_KEY_NAME",
+        "上证量能",
+        "盘中界面为「上证预测量能」，与定稿后的「上证量能」同一列",
+    ),
+    BitableColumn(
+        "DUANXIAN_A_VOLUME_BITABLE_KEY_NAME",
+        "A股量能",
+        "盘中界面为「A股预测量能」，与定稿后的「A股量能」同一列",
+    ),
+    BitableColumn("DUANXIAN_MAIN_INFLOW_BITABLE_KEY_NAME", "主力净流入"),
+    BitableColumn("DUANXIAN_VOL_RATIO_5D_BITABLE_KEY_NAME", "5日量比"),
+    BitableColumn("DUANXIAN_VOL_RATIO_20D_BITABLE_KEY_NAME", "20日量比"),
+    BitableColumn("DUANXIAN_EMOTION_SCORE_BITABLE_KEY_NAME", "情绪分"),
+    BitableColumn("DUANXIAN_PHASE_BITABLE_KEY_NAME", "阶段"),
+    BitableColumn("DUANXIAN_LIMIT_UP_BITABLE_KEY_NAME", "涨停数"),
+    BitableColumn("DUANXIAN_LIMIT_DOWN_BITABLE_KEY_NAME", "跌停数"),
+    BitableColumn("DUANXIAN_LEADER_BITABLE_KEY_NAME", "龙头"),
+    BitableColumn("DUANXIAN_THEMES_BITABLE_KEY_NAME", "主线题材"),
+    BitableColumn("DUANXIAN_OPEN_SUCCESS_BITABLE_KEY_NAME", "打板成功率"),
+    BitableColumn("DUANXIAN_ZT_PREMIUM_BITABLE_KEY_NAME", "涨停溢价"),
+    BitableColumn("DUANXIAN_LIANBAN_PREMIUM_BITABLE_KEY_NAME", "连板溢价"),
+    BitableColumn("DUANXIAN_PROMOTION_BITABLE_KEY_NAME", "晋级率"),
+    BitableColumn("DUANXIAN_BROKEN_RATE_BITABLE_KEY_NAME", "炸板率"),
+    BitableColumn("DUANXIAN_MAX_BOARDS_BITABLE_KEY_NAME", "连板高度"),
+    BitableColumn("DUANXIAN_LIANBAN_COUNT_BITABLE_KEY_NAME", "连板数"),
+    BitableColumn("DUANXIAN_ZT_DEEP_LOSS_BITABLE_KEY_NAME", "昨涨停跌超5%"),
+    BitableColumn("DUANXIAN_BROKEN_COUNT_BITABLE_KEY_NAME", "炸板家数"),
+    BitableColumn("DUANXIAN_RESONANCE_BITABLE_KEY_NAME", "打板情绪共振"),
+)
+
+
+def _column_fields() -> tuple[PluginEnvField, ...]:
+    return tuple(
+        PluginEnvField(col.key, col.label, col.hint, default=col.label)
+        for col in DUANXIAN_BITABLE_COLUMNS
+    )
+
+
 ENV_FIELDS: tuple[PluginEnvField, ...] = (
     PluginEnvField("LARK_APP_ID", "应用 App ID", "飞书开放平台 → 应用 → 凭证与基础信息"),
     PluginEnvField("LARK_APP_SECRET", "应用 App Secret", secret=True),
@@ -51,6 +110,19 @@ ENV_FIELDS: tuple[PluginEnvField, ...] = (
         "链接 table= 后面",
         secret=True,
     ),
+    PluginEnvField(
+        "DUANXIAN_BITABLE_APP_TOKEN",
+        "短线盘面多维表格 app_token",
+        "短线盘面指标写入的表，链接 /base/ 后面",
+        secret=True,
+    ),
+    PluginEnvField(
+        "DUANXIAN_BITABLE_TABLE_ID",
+        "短线盘面多维表格 table_id",
+        "短线盘面指标写入的数据表，链接 table= 后面",
+        secret=True,
+    ),
+    *_column_fields(),
     PluginEnvField(
         "LARK_SPREADSHEET_TOKEN",
         "电子表格 token",
@@ -78,6 +150,9 @@ class LarkConfig:
     drive_folder_token: str
     bitable_app_token: str
     bitable_table_id: str
+    duanxian_bitable_app_token: str
+    duanxian_bitable_table_id: str
+    duanxian_columns: dict[str, str]
     spreadsheet_token: str
     sheet_id: str
     im_receive_id_type: str
@@ -132,6 +207,12 @@ def load_config(env_file: Path | None = None) -> LarkConfig:
         drive_folder_token=os.environ["LARK_DRIVE_FOLDER_TOKEN"].strip(),
         bitable_app_token=os.environ["LARK_BITABLE_APP_TOKEN"].strip(),
         bitable_table_id=os.environ["LARK_BITABLE_TABLE_ID"].strip(),
+        duanxian_bitable_app_token=os.environ.get("DUANXIAN_BITABLE_APP_TOKEN", "").strip(),
+        duanxian_bitable_table_id=os.environ.get("DUANXIAN_BITABLE_TABLE_ID", "").strip(),
+        duanxian_columns={
+            col.key: os.environ.get(col.key, "").strip() or col.label
+            for col in DUANXIAN_BITABLE_COLUMNS
+        },
         spreadsheet_token=os.environ["LARK_SPREADSHEET_TOKEN"].strip(),
         sheet_id=os.environ["LARK_SHEET_ID"].strip(),
         im_receive_id_type=receive_id_type,
