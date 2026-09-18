@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from duanxian.trade_calendar import is_settled
-from duanxian.util import china_today
+from duanxian.util import china_now, china_today
 
 from .page import handle_push, im_gaps, push_gaps
 
@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SEC = 30.0
 SETTLED_NOTICE = "今日短线盘面数据已更新"
+PUSHED_AT_FMT = "%Y-%m-%d %H:%M:%S"
 # 短线盘面一行依赖的、会在收盘后落盘 ``settled: true`` 的数据源。
 REQUIRED_SETTLED_SOURCES = ("short_board", "live_emotion", "live_zt_effect")
+
+_ACTIVE: SettledPushPoller | None = None
 
 
 def default_state_path() -> Path:
@@ -54,25 +57,68 @@ def payload_all_settled(payload: dict[str, Any], today: str) -> bool:
     return True
 
 
+def now_pushed_at() -> str:
+    return china_now().strftime(PUSHED_AT_FMT)
+
+
+def _empty_state() -> dict[str, str]:
+    return {"pushed_date": "", "notified_date": "", "pushed_at": ""}
+
+
 def load_state(path: Path) -> dict[str, str]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"pushed_date": "", "notified_date": ""}
+        return _empty_state()
     if not isinstance(raw, dict):
-        return {"pushed_date": "", "notified_date": ""}
+        return _empty_state()
     return {
         "pushed_date": str(raw.get("pushed_date") or "").strip(),
         "notified_date": str(raw.get("notified_date") or "").strip(),
+        "pushed_at": str(raw.get("pushed_at") or "").strip(),
     }
 
 
-def save_state(path: Path, pushed_date: str, notified_date: str) -> None:
+def save_state(
+    path: Path,
+    pushed_date: str,
+    notified_date: str,
+    pushed_at: str = "",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"pushed_date": pushed_date, "notified_date": notified_date}
+    payload = {
+        "pushed_date": pushed_date,
+        "notified_date": notified_date,
+        "pushed_at": pushed_at,
+    }
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def last_push_at() -> str:
+    """供插件页读取上次成功推送时间。优先内存，否则读落盘。"""
+    poller = _ACTIVE
+    if poller is not None:
+        return poller.last_pushed_at()
+    return load_state(default_state_path())["pushed_at"]
+
+
+def record_push_success(at: str | None = None) -> str:
+    """表格推送成功后记下时间；自动定稿与手动推送共用。"""
+    stamp = (at or now_pushed_at()).strip()
+    poller = _ACTIVE
+    if poller is not None:
+        poller.note_pushed_at(stamp)
+        return stamp
+    saved = load_state(default_state_path())
+    save_state(
+        default_state_path(),
+        saved["pushed_date"],
+        saved["notified_date"],
+        stamp,
+    )
+    return stamp
 
 
 class SettledPushPoller:
@@ -102,8 +148,10 @@ class SettledPushPoller:
         saved = load_state(self._state_path)
         self._pushed_date = saved["pushed_date"]
         self._notified_date = saved["notified_date"]
+        self._pushed_at = saved["pushed_at"]
 
     def start(self) -> None:
+        global _ACTIVE
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop,
@@ -111,14 +159,25 @@ class SettledPushPoller:
             daemon=True,
         )
         self._thread.start()
+        _ACTIVE = self
         logger.info("短线定稿推送已启动，收盘后每 %.0f 秒探测一次", self._interval)
 
     def stop(self) -> None:
+        global _ACTIVE
         self._stop.set()
         thread = self._thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=5.0)
         self._thread = None
+        if _ACTIVE is self:
+            _ACTIVE = None
+
+    def last_pushed_at(self) -> str:
+        with self._state_lock:
+            return self._pushed_at
+
+    def note_pushed_at(self, at: str) -> None:
+        self._remember(pushed_at=str(at or "").strip())
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -133,16 +192,25 @@ class SettledPushPoller:
         with self._state_lock:
             return self._pushed_date, self._notified_date
 
-    def _remember(self, *, pushed_date: str | None = None, notified_date: str | None = None) -> None:
+    def _remember(
+        self,
+        *,
+        pushed_date: str | None = None,
+        notified_date: str | None = None,
+        pushed_at: str | None = None,
+    ) -> None:
         with self._state_lock:
             if pushed_date is not None:
                 self._pushed_date = pushed_date
             if notified_date is not None:
                 self._notified_date = notified_date
+            if pushed_at is not None:
+                self._pushed_at = pushed_at
             pushed = self._pushed_date
             notified = self._notified_date
+            at = self._pushed_at
         try:
-            save_state(self._state_path, pushed, notified)
+            save_state(self._state_path, pushed, notified, at)
         except OSError:
             logger.exception("短线定稿推送状态未能落盘")
 
@@ -202,7 +270,7 @@ class SettledPushPoller:
                 logger.warning("定稿短线推送失败：%s", err)
                 self._report("warn", "定稿短线推送失败", err)
                 return "push_error"
-            self._remember(pushed_date=today)
+            self._remember(pushed_date=today, pushed_at=now_pushed_at())
             logger.info("已推送 %s 定稿短线盘面", today)
 
         if self._stop.is_set():

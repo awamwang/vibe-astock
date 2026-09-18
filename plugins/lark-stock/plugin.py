@@ -31,7 +31,7 @@ from lark_stock.config import ENV_FIELDS, load_config
 from lark_stock.errors import ConfigError
 from lark_stock.page import handle_send, handle_today, handle_push, render_home
 from lark_stock.service import LarkStock
-from lark_stock.settled_push import SettledPushPoller
+from lark_stock.settled_push import SettledPushPoller, last_push_at, record_push_success
 
 _service: LarkStock | None = None
 _registry: HookRegistry | None = None
@@ -65,7 +65,11 @@ def on_enable(reg: HookRegistry) -> None:
         )
 
     def home() -> str:
-        return render_home(get_service().config, plugin_id)
+        return render_home(
+            get_service().config,
+            plugin_id,
+            last_pushed_at=last_push_at(),
+        )
 
     def _live() -> dict:
         return (_registry or reg).get_live_snapshot()
@@ -78,7 +82,10 @@ def on_enable(reg: HookRegistry) -> None:
     def push(request) -> str | dict:
         if (request.method or "GET").upper() == "GET":
             return _open_home()
-        return handle_push(get_service(), plugin_id, fetch_live=_live)
+        out = handle_push(get_service(), plugin_id, fetch_live=_live)
+        if isinstance(out, dict) and out.get("ok"):
+            out["pushed_at"] = record_push_success()
+        return out
 
     def send(request) -> str | dict:
         if (request.method or "GET").upper() == "GET":

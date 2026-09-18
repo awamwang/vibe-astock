@@ -31,6 +31,7 @@ _PAGE = """<!doctype html>
     section { border: 1px solid #1f2937; border-radius: 12px; background: #111827; padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem; }
     h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.35rem; }
     .hint, .muted { color: #9ca3af; font-size: 12px; margin: 0 0 0.75rem; }
+    .last-push { color: #d1d5db; font-size: 13px; margin: 0 0 0.75rem; }
     .warn { color: #fbbf24; margin: 0 0 0.65rem; }
     a.config { color: #93c5fd; }
     button { border: 0; border-radius: 8px; background: #1d4ed8; color: #fff; padding: 0.45rem 0.9rem; font: inherit; cursor: pointer; }
@@ -50,6 +51,7 @@ _PAGE = """<!doctype html>
     <h1>飞书</h1>
     <section>
       <h2>今日短线</h2>
+      __LAST_PUSH__
       __TODAY__
     </section>
     <section>
@@ -151,6 +153,10 @@ _PAGE = """<!doctype html>
           date_field: data.date_field,
         }));
         box.replaceChildren(wrap);
+        if (data.pushed_at) {
+          const last = document.getElementById("last-push");
+          if (last) last.textContent = "上次成功推送：" + data.pushed_at;
+        }
       } catch (err) {
         show(box, (err && err.message) || "推送失败", true);
       } finally {
@@ -247,7 +253,18 @@ def _date_field(config: LarkConfig) -> str:
     return str((config.duanxian_columns or {}).get("DUANXIAN_DATE_BITABLE_KEY_NAME") or "").strip() or "日期"
 
 
-def render_home(config: LarkConfig, plugin_id: str) -> str:
+def _last_push_html(last_pushed_at: str) -> str:
+    text = str(last_pushed_at or "").strip() or "暂无"
+    return (
+        f'<p class="last-push" id="last-push">上次成功推送：{html.escape(text)}</p>'
+    )
+
+
+def render_home(
+    config: LarkConfig,
+    plugin_id: str,
+    last_pushed_at: str = "",
+) -> str:
     """插件首页。两个功能分区；缺配置的分区不放出操作。"""
     pull = bitable_gaps(config)
     push = push_gaps(config)
@@ -291,7 +308,12 @@ def render_home(config: LarkConfig, plugin_id: str) -> str:
             '</form>'
             '<div id="send-result" class="result" hidden></div>'
         )
-    return _PAGE.replace("__TODAY__", today).replace("__SEND__", send)
+    return (
+        _PAGE
+        .replace("__LAST_PUSH__", _last_push_html(last_pushed_at))
+        .replace("__TODAY__", today)
+        .replace("__SEND__", send)
+    )
 
 
 def record_rows(fields: dict[str, Any], config: LarkConfig) -> list[dict[str, str]]:

@@ -18,7 +18,9 @@ from lark_stock.config import LarkConfig  # noqa: E402
 from lark_stock.settled_push import (  # noqa: E402
     SETTLED_NOTICE,
     SettledPushPoller,
+    last_push_at,
     payload_all_settled,
+    record_push_success,
 )
 
 
@@ -68,6 +70,16 @@ def test_payload_all_settled_requires_three_sources():
     missing = _payload()
     missing["sources"]["short_board"] = {"available": False, "data": None}
     assert not payload_all_settled(missing, today)
+
+
+@pytest.fixture(autouse=True)
+def _reset_active_poller():
+    import lark_stock.settled_push as sp
+
+    prev = sp._ACTIVE
+    sp._ACTIVE = None
+    yield
+    sp._ACTIVE = prev
 
 
 def _poller(tmp_path, *, fetch_live, store=None, messenger=None, config=None, interval=30.0):
@@ -133,9 +145,11 @@ def test_tick_pushes_once_then_notifies(monkeypatch, tmp_path):
         return _payload()
 
     poller, sent, written = _poller(tmp_path, fetch_live=fetch)
+    monkeypatch.setattr("lark_stock.settled_push.now_pushed_at", lambda: "2026-09-18 15:32:10")
     assert poller.tick() == "pushed"
     assert [row["day"] for row in written] == ["2026-09-18"]
     assert sent == [SETTLED_NOTICE]
+    assert poller.last_pushed_at() == "2026-09-18 15:32:10"
     assert poller.tick() == "skip_done"
     assert fetches["n"] == 1
     assert len(written) == 1
@@ -183,12 +197,30 @@ def test_tick_persists_once_per_day_across_instances(monkeypatch, tmp_path):
     monkeypatch.setattr("lark_stock.settled_push.china_today", lambda: "2026-09-18")
     monkeypatch.setattr("lark_stock.settled_push.is_settled", lambda d: True)
     first, sent, written = _poller(tmp_path, fetch_live=_payload)
+    monkeypatch.setattr("lark_stock.settled_push.now_pushed_at", lambda: "2026-09-18 15:32:10")
     assert first.tick() == "pushed"
+    assert first.last_pushed_at() == "2026-09-18 15:32:10"
     second, sent2, written2 = _poller(tmp_path, fetch_live=_payload)
     assert second.tick() == "skip_done"
+    assert second.last_pushed_at() == "2026-09-18 15:32:10"
     assert sent == [SETTLED_NOTICE]
     assert sent2 == []
     assert written2 == []
+
+
+@pytest.mark.unit
+def test_record_push_success_updates_active_poller_time(monkeypatch, tmp_path):
+    monkeypatch.setattr("lark_stock.settled_push.china_today", lambda: "2026-09-18")
+    monkeypatch.setattr("lark_stock.settled_push.is_settled", lambda d: False)
+    poller, _sent, _written = _poller(tmp_path, fetch_live=_payload)
+    poller.start()
+    try:
+        assert last_push_at() == ""
+        assert record_push_success("2026-09-18 16:01:02") == "2026-09-18 16:01:02"
+        assert last_push_at() == "2026-09-18 16:01:02"
+        assert poller.last_pushed_at() == "2026-09-18 16:01:02"
+    finally:
+        poller.stop()
 
 
 @pytest.mark.unit

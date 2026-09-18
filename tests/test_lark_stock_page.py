@@ -60,6 +60,8 @@ def test_home_prompts_missing_config_in_each_section():
     assert "拉取今日短线" not in html
     assert "推送今日短线盘面" not in html
     assert "<textarea" not in html
+    assert "上次成功推送：暂无" in html
+    assert 'id="last-push"' in html
 
 
 def test_home_shows_actions_when_configured():
@@ -74,6 +76,18 @@ def test_home_shows_actions_when_configured():
     assert "<textarea" in html
     assert "请先配置" not in html
     assert "去配置" not in html
+    assert "上次成功推送：暂无" in html
+    assert "data.pushed_at" in html
+
+
+def test_home_shows_last_successful_push_time():
+    html = render_home(
+        _config(bitable_app_token="app", bitable_table_id="tbl"),
+        "abc123",
+        last_pushed_at="2026-09-18 15:32:10",
+    )
+    assert "上次成功推送：2026-09-18 15:32:10" in html
+    assert "暂无" not in html
 
 
 def test_today_refuses_without_bitable():
