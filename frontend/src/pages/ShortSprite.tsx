@@ -24,20 +24,41 @@ import { fetchMarketSession, type MarketSession } from "@/lib/liveBoard";
 const CALIBER =
   "短线精灵只盯短线盘面、短线风格已有快照里的市场级序列：溢价、环境条上涨数/下跌数、情绪温度、情绪分、打板情绪共振默认分、短线风格指数当场涨幅。\n" +
   "不盯个股，不盯人气榜/成交额榜/板块管理。命中是观察记录，不是买卖指令。\n" +
-  "开盘记录 = 该场次 09:30 之后第一条非空随盘快照。涨速 = 当前值 − 约 5 分钟前的值（点不足则空）。突破/跌破是相对开盘记录的差穿过阈值边沿。\n" +
+  "开盘记录 = 该场次 09:30 之后第一条非空随盘快照。涨速 = 当前值 − 约 5 分钟前的值（点不足则空）；涨速命中记下该窗两端读数。突破/跌破是相对开盘记录的差穿过阈值边沿，不记窗。\n" +
   "情绪温度、情绪分的突破/跌破按阈值整数倍继续报（15、30、45…），每档边沿一次，回差后可再报。\n" +
   "上涨数/下跌数用环境条随盘家数，不是市场整体卡片上的 overview 家数。下跌数升高为绿。";
 
-export function hitDirClass(hit: Pick<SpriteHit, "direction" | "reversed">): string {
+function hitShowsUp(hit: Pick<SpriteHit, "direction" | "reversed">): boolean {
   const up = hit.direction === "up";
-  const showUp = hit.reversed ? !up : up;
-  return showUp ? UP_TEXT : DOWN_TEXT;
+  return hit.reversed ? !up : up;
 }
 
+/** 数值涨跌色：红涨绿跌，reversed 序列取反。 */
+export function hitDirClass(hit: Pick<SpriteHit, "direction" | "reversed">): string {
+  return hitShowsUp(hit) ? UP_TEXT : DOWN_TEXT;
+}
+
+/** 卡片边框/底色：好坏。 */
+export function hitToneClass(hit: Pick<SpriteHit, "direction" | "reversed">): string {
+  return hitShowsUp(hit)
+    ? "border-danger/45 bg-danger/10 border-l-danger"
+    : "border-success/45 bg-success/10 border-l-success";
+}
+
+/** 类型文字色：涨速 / 突破 / 跌破。 */
 export function hitEventClass(label: string): string {
-  if (label === "涨速") return "border-l-primary bg-primary/5";
-  if (label === "突破") return "border-l-warning bg-warning/5";
-  return "border-l-muted-foreground bg-muted/30";
+  if (label === "涨速") return "text-primary";
+  if (label === "突破") return "text-warning";
+  return "text-muted-foreground";
+}
+
+export function speedWindowLabel(hit: Pick<SpriteHit, "event" | "from_value" | "to_value" | "from_ts" | "unit">): string | null {
+  if (hit.event !== "speed_up" && hit.event !== "speed_down") return null;
+  if (hit.from_value == null || hit.to_value == null) return null;
+  const a = fmtSpriteValue(hit.from_value, hit.unit);
+  const b = fmtSpriteValue(hit.to_value, hit.unit);
+  const fromTs = hit.from_ts != null ? `${fmtSampleTs(hit.from_ts)} ` : "";
+  return `${fromTs}${a} → ${b}`;
 }
 
 export function SpriteHitList({ hits, empty }: { hits: SpriteHit[]; empty?: string }) {
@@ -46,15 +67,17 @@ export function SpriteHitList({ hits, empty }: { hits: SpriteHit[]; empty?: stri
   }
   return (
     <ul className="space-y-1.5">
-      {hits.map((h) => (
+      {hits.map((h) => {
+        const window = speedWindowLabel(h);
+        return (
         <li
           key={h.id}
-          className={cn("rounded-md border border-border/50 border-l-4 px-3 py-2", hitEventClass(h.event_label))}
+          className={cn("rounded-md border border-l-4 px-3 py-2", hitToneClass(h))}
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <span className="text-sm">
+            <span className={cn("text-sm", hitEventClass(h.event_label))}>
               {h.name}
-              <span className="ml-2 text-[11px] text-muted-foreground">{h.event_label}</span>
+              <span className="ml-2 text-[11px]">{h.event_label}</span>
             </span>
             <span className={cn("font-mono text-sm tabular-nums", hitDirClass(h))}>
               {fmtSpriteValue(h.value, h.unit)}
@@ -62,10 +85,12 @@ export function SpriteHitList({ hits, empty }: { hits: SpriteHit[]; empty?: stri
           </div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">
             {h.ts.replace("T", " ")}
+            {window ? ` · ${window}` : ""}
             {h.voice ? "" : " · 静音"}
           </div>
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
@@ -95,6 +120,7 @@ function EnableButton({
 
 function SeqRow({ seq }: { seq: SpriteSequence }) {
   const outside = Object.values(seq.outside).some(Boolean);
+  const lastWindow = seq.last_hit ? speedWindowLabel(seq.last_hit) : null;
   return (
     <details className="border-b border-border/40 py-2 last:border-0">
       <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2 [&::-webkit-details-marker]:hidden">
@@ -116,6 +142,7 @@ function SeqRow({ seq }: { seq: SpriteSequence }) {
       {seq.last_hit && (
         <p className="mt-1 text-[11px] text-muted-foreground">
           最近命中：{seq.last_hit.event_label} {fmtSpriteValue(seq.last_hit.value, seq.last_hit.unit)}
+          {lastWindow ? `（${lastWindow}）` : ""}
         </p>
       )}
       {seq.samples.length > 0 && (

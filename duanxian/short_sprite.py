@@ -705,10 +705,13 @@ def _hit_record(
     event: str,
     value: float,
     voice: bool,
+    from_value: Optional[float] = None,
+    from_ts: Optional[float] = None,
+    to_value: Optional[float] = None,
 ) -> dict[str, Any]:
     name = rec["name"]
     unit = rec["unit"]
-    return {
+    hit: dict[str, Any] = {
         "id": uuid.uuid4().hex,
         "ts": _iso(now),
         "epoch": _epoch(now),
@@ -723,6 +726,12 @@ def _hit_record(
         "speech": format_speech(name, event, value, unit),
         "voice": bool(voice),
     }
+    if event in ("speed_up", "speed_down") and from_value is not None and to_value is not None:
+        hit["from_value"] = from_value
+        hit["to_value"] = to_value
+        if from_ts is not None:
+            hit["from_ts"] = from_ts
+    return hit
 
 
 def _switch_session(date: str, payload: dict[str, Any]) -> None:
@@ -896,34 +905,77 @@ def tick() -> dict[str, Any]:
                 spec = _specs_by_key().get(rec["config_key"]) or STYLE_SPEC
                 rule = rules.get(rec["config_key"]) or _default_rule(spec)
                 arms = _armed.setdefault(seq_id, _armed_default())
-                speed, _, _ = _speed_for(seq_id, now_ts)
+                speed, speed_from, speed_from_ts = _speed_for(seq_id, now_ts)
                 open_val = _open[seq_id]["value"] if seq_id in _open else None
                 vs_open = None if open_val is None else current - open_val
                 hyst = float(rule["hysteresis"])
                 monitored = bool(rule["monitor"])
                 voice = bool(rule["voice"])
 
-                def emit_hit(event: str, value: float) -> None:
+                def emit_hit(
+                    event: str,
+                    value: float,
+                    from_value: Optional[float] = None,
+                    from_ts: Optional[float] = None,
+                    to_value: Optional[float] = None,
+                ) -> None:
                     nonlocal day_dirty
                     if not monitored:
                         return
-                    hit = _hit_record(now=now, rec=rec, event=event, value=value, voice=voice)
+                    hit = _hit_record(
+                        now=now,
+                        rec=rec,
+                        event=event,
+                        value=value,
+                        voice=voice,
+                        from_value=from_value,
+                        from_ts=from_ts,
+                        to_value=to_value,
+                    )
                     _hits.append(hit)
                     _last_new_hits.append(hit)
                     day_dirty = True
 
-                def maybe_hit(event: str, value: float, arm_key: str) -> None:
+                def maybe_hit(
+                    event: str,
+                    value: float,
+                    arm_key: str,
+                    *,
+                    from_value: Optional[float] = None,
+                    from_ts: Optional[float] = None,
+                    to_value: Optional[float] = None,
+                ) -> None:
                     if not arms.get(arm_key, True):
                         return
-                    emit_hit(event, value)
+                    emit_hit(
+                        event,
+                        value,
+                        from_value=from_value,
+                        from_ts=from_ts,
+                        to_value=to_value,
+                    )
                     arms[arm_key] = False
 
                 prev_s = _prev_speed.get(seq_id)
                 if speed is not None:
                     if _cross_up(prev_s, speed, float(rule["speed_up"])):
-                        maybe_hit("speed_up", speed, "speed_up")
+                        maybe_hit(
+                            "speed_up",
+                            speed,
+                            "speed_up",
+                            from_value=speed_from,
+                            from_ts=speed_from_ts,
+                            to_value=current,
+                        )
                     if _cross_down(prev_s, speed, float(rule["speed_down"])):
-                        maybe_hit("speed_down", speed, "speed_down")
+                        maybe_hit(
+                            "speed_down",
+                            speed,
+                            "speed_down",
+                            from_value=speed_from,
+                            from_ts=speed_from_ts,
+                            to_value=current,
+                        )
                     if speed <= float(rule["speed_up"]) - hyst:
                         arms["speed_up"] = True
                     if speed >= float(rule["speed_down"]) + hyst:

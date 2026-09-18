@@ -18,6 +18,11 @@ export interface SpriteHit {
   unit: SpriteUnit | string;
   speech: string;
   voice: boolean;
+  /** 涨速命中：约 5 分钟窗起始读数。突破/跌破没有。 */
+  from_value?: number | null;
+  from_ts?: number | null;
+  /** 涨速命中：约 5 分钟窗结束读数。突破/跌破没有。 */
+  to_value?: number | null;
 }
 
 export interface SpriteSequence {

@@ -174,6 +174,9 @@ class TestEdgesAndHysteresis:
         assert len(hits) == 1
         assert hits[0]["event"] == "speed_up"
         assert hits[0]["speech"] == "连板溢价，涨速突破1.6%"
+        assert hits[0]["from_value"] == pytest.approx(0.0)
+        assert hits[0]["to_value"] == pytest.approx(1.6)
+        assert hits[0]["from_ts"] == pytest.approx(ss._epoch(_dt(10, 0, 0)))
         engine["clock"].add(seconds=20)
         engine["feeds"]["zt"] = _zt(2.0)
         snap = ss.snapshot()
@@ -209,6 +212,8 @@ class TestEdgesAndHysteresis:
         ups = [h for h in snap["new_hits"] if h["event"] == "break_up"]
         assert len(ups) == 1
         assert ups[0]["speech"] == "连板溢价，涨幅突破3.1%"
+        assert "from_value" not in ups[0]
+        assert "to_value" not in ups[0]
         engine["clock"].add(seconds=20)
         engine["feeds"]["zt"] = _zt(3.4)
         snap = ss.snapshot()
@@ -274,6 +279,25 @@ class TestPersistRestart:
         assert seq["speed"] is None
         # 环不落盘：重启后只剩本拍一个点，没有重启前那 5 分钟
         assert len(seq["samples"]) == 1
+
+    def test_speed_window_survives_restart(self, engine):
+        engine["feeds"]["zt"] = _zt(0.0)
+        ss.snapshot()
+        engine["clock"].add(minutes=5)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        engine["feeds"]["zt"] = _zt(1.6)
+        snap = ss.snapshot()
+        hit = next(h for h in snap["new_hits"] if h["seq_id"] == "consec_premium" and h["event"] == "speed_up")
+        assert hit["from_value"] == pytest.approx(0.0)
+        assert hit["to_value"] == pytest.approx(1.6)
+        hit_id = hit["id"]
+        ss._reset_runtime_state()
+        snap = ss.snapshot()
+        loaded = next(h for h in snap["hits"] if h["id"] == hit_id)
+        assert loaded["from_value"] == pytest.approx(0.0)
+        assert loaded["to_value"] == pytest.approx(1.6)
+        assert loaded["from_ts"] == pytest.approx(ss._epoch(_dt(10, 0, 0)))
 
     def test_new_session_does_not_carry_open(self, engine):
         engine["feeds"]["zt"] = _zt(1.0)
