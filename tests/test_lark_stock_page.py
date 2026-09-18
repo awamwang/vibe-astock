@@ -15,9 +15,11 @@ from lark_stock.errors import LarkApiError  # noqa: E402
 from lark_stock.fields import format_cell, shanghai_midnight_ms, value_matches_day  # noqa: E402
 from lark_stock.page import (  # noqa: E402
     bitable_gaps,
+    handle_push,
     handle_send,
     handle_today,
     im_gaps,
+    push_gaps,
     record_rows,
     render_home,
 )
@@ -54,6 +56,7 @@ def test_home_prompts_missing_config_in_each_section():
     assert 'target="_blank"' in html
     assert "/settings/plugins?plugin=abc123&amp;config=1" in html
     assert "拉取今日短线" not in html
+    assert "推送今日短线程序" not in html
     assert "<textarea" not in html
 
 
@@ -64,6 +67,7 @@ def test_home_shows_actions_when_configured():
         im_receive_id="oc_1",
     ), "abc123")
     assert "拉取今日短线" in html
+    assert "推送今日短线程序" in html
     assert "<textarea" in html
     assert "请先配置" not in html
     assert "去配置" not in html
@@ -223,3 +227,168 @@ def test_send_requires_text():
         bitable_app_token="a",
         bitable_table_id="b",
     ))
+    assert not push_gaps(_config(bitable_app_token="a", bitable_table_id="b"))
+    assert push_gaps(_config())
+
+
+def test_extract_duanxian_values_use_env_column_names():
+    from lark_stock.duanxian_row import extract_duanxian_values, to_bitable_fields
+
+    payload = {
+        "date": "2026-09-18",
+        "sources": {
+            "short_board": {
+                "available": True,
+                "data": {
+                    "today": {
+                        "temperature": 72,
+                        "v_sh": 5.2e11,
+                        "qcj_temp": 55,
+                        "qcj_level": "升温期",
+                        "qcj_leader": "某龙头",
+                        "qcj_leader_top": "3天3板",
+                        "qcj_themes": ["人工智能", "芯片"],
+                        "broken_r": 18.5,
+                    }
+                },
+            },
+            "live_emotion": {
+                "available": True,
+                "data": {"max_boards": 5, "promotion_rate": 0.4, "lianban_count": 12, "zb_count": 30},
+            },
+            "live_zt_effect": {
+                "available": True,
+                "data": {"open_success_rate": 0.62, "consec_premium_avg": 3.2, "deep_loss_5_count": 7},
+            },
+            "market_sentiment": {
+                "available": True,
+                "data": {"breadth": "偏强", "speculation": "活跃", "up": 3200, "down": 1800, "flat": 200, "active": "62%"},
+            },
+            "board_emotion_resonance": {
+                "available": True,
+                "data": {"default": {"score": 0.123, "label": "偏多"}},
+            },
+        },
+    }
+    values = extract_duanxian_values(payload, date="2026-09-18")
+    assert values["DUANXIAN_TEMPERATURE_BITABLE_KEY_NAME"] == 72
+    assert values["DUANXIAN_SH_VOLUME_BITABLE_KEY_NAME"] == 5200.0
+    assert values["DUANXIAN_PROMOTION_BITABLE_KEY_NAME"] == 40.0
+    assert values["DUANXIAN_LEADER_BITABLE_KEY_NAME"] == "某龙头 · 3天3板"
+    assert values["DUANXIAN_RESONANCE_BITABLE_KEY_NAME"] == "0.123 偏多"
+    fields = to_bitable_fields(values, {
+        "DUANXIAN_DATE_BITABLE_KEY_NAME": "交易日",
+        "DUANXIAN_TEMPERATURE_BITABLE_KEY_NAME": "温度",
+        "DUANXIAN_BREADTH_BITABLE_KEY_NAME": "宽度",
+    })
+    assert fields["交易日"] == "2026-09-18"
+    assert fields["温度"] == 72
+    assert fields["宽度"] == "偏强"
+    assert "情绪温度" not in fields
+
+
+def test_push_refuses_without_table():
+    out = handle_push(SimpleNamespace(config=_config(), duanxian_bitable=None), "pid")
+    assert out["need_config"] is True
+    assert "短线盘面" in out["error"] or "日期列名" in out["error"]
+
+
+def test_push_creates_then_updates_by_date():
+    written: list[dict] = []
+
+    class Store:
+        def upsert_by_date(self, field_name, day, fields):
+            written.append({"field": field_name, "day": day, "fields": dict(fields)})
+            action = "create" if len(written) == 1 else "update"
+            return {"action": action, "record_id": "rec1", "matched": 0 if action == "create" else 1}
+
+    payload = {
+        "date": "2026-09-18",
+        "sources": {
+            "short_board": {"available": True, "data": {"today": {"temperature": 80}}},
+        },
+    }
+    service = SimpleNamespace(
+        config=_config(
+            duanxian_bitable_app_token="app",
+            duanxian_bitable_table_id="tbl",
+            duanxian_columns={
+                "DUANXIAN_DATE_BITABLE_KEY_NAME": "交易日",
+                "DUANXIAN_TEMPERATURE_BITABLE_KEY_NAME": "温度",
+            },
+        ),
+        duanxian_bitable=Store(),
+    )
+    created = handle_push(service, "pid", fetch_live=lambda: payload)
+    updated = handle_push(service, "pid", fetch_live=lambda: payload)
+    assert created["ok"] is True and created["action"] == "create"
+    assert updated["ok"] is True and updated["action"] == "update"
+    assert written[0]["field"] == "交易日"
+    assert written[0]["fields"]["交易日"] == "2026-09-18"
+    assert written[0]["fields"]["温度"] == 80
+
+
+def test_upsert_by_date_updates_existing_date_row():
+    from lark_stock.bitable import BitableStore
+
+    class Field:
+        field_name = "日期"
+        type = 5
+        ui_type = "DateTime"
+
+    class Record:
+        def __init__(self, record_id, fields):
+            self.record_id = record_id
+            self.fields = fields
+
+    class Data:
+        def __init__(self, items=None, has_more=False):
+            self.items = items or []
+            self.has_more = has_more
+            self.page_token = None
+
+    class Resp:
+        def __init__(self, data=None, record=None):
+            self.data = data
+            self.record = record
+
+        def success(self):
+            return True
+
+    updated: list[tuple[str, dict]] = []
+    created: list[dict] = []
+
+    class FieldApi:
+        def list(self, request):
+            return Resp(Data([Field()]))
+
+    class RecordApi:
+        def search(self, request):
+            return Resp(Data([Record("rec-old", {"日期": shanghai_midnight_ms("2026-09-18")})]))
+
+        def update(self, request):
+            updated.append((request.record_id, request.request_body.fields))
+            return Resp()
+
+        def create(self, request):
+            created.append(request.request_body.fields)
+            rec = SimpleNamespace(record_id="rec-new")
+            return Resp(SimpleNamespace(record=rec))
+
+        def list(self, request):
+            raise AssertionError("不应整表扫描")
+
+    class V1:
+        app_table_field = FieldApi()
+        app_table_record = RecordApi()
+
+    class Client:
+        bitable = SimpleNamespace(v1=V1())
+
+    store = BitableStore(Client(), _config(bitable_app_token="app", bitable_table_id="tbl"))
+    out = store.upsert_by_date("日期", "2026-09-18", {"情绪温度": 66})
+    assert out["action"] == "update"
+    assert out["record_id"] == "rec-old"
+    assert updated[0][1]["情绪温度"] == 66
+    assert updated[0][1]["日期"] == shanghai_midnight_ms("2026-09-18")
+    assert created == []

@@ -39,6 +39,7 @@
 | `report_current_stock` | [附录 B.6](#b6-report_current_stock) |
 | `register_message_source` | [附录 B.7](#b7-register_message_source) |
 | `register_route` | [附录 B.11](#b11-register_route) |
+| `get_live_snapshot` | [附录 B.12](#b12-get_live_snapshot) |
 | `push_messages` | [附录 B.8](#b8-push_messages) |
 | `import_experience` | [附录 B.9](#b9-import_experience) |
 | `push_article` | [附录 B.10](#b10-push_article) |
@@ -526,6 +527,10 @@ python -m duanxian.plugin_cli list
 | `sources.short_board` | 环境条（`duanxian.short_board`） |
 | `sources.live_zt_effect` | 昨涨停效应 |
 | `sources.ladder` | 连板股客观榜（VR `get_short_term_emotion`），与上三者分立 |
+| `sources.market_sentiment` | 涨跌宽度：大盘宽度 / 题材投机 / 上涨下跌平盘 / 活跃度 |
+| `sources.board_emotion_resonance` | 打板情绪共振默认分 |
+
+插件可主动 `reg.get_live_snapshot()`（或 `from duanxian.hooks import build_live_payload`）拉取，不必等节流推送。
 
 ---
 
@@ -905,7 +910,7 @@ _REG.push_messages({
 | 项 | 说明 |
 |---|---|
 | **中文作用** | 向引擎登记一条 **HTTP 路由**，用于插件自己的前端页或接口。公开 URL 固定为 `/plugin/{plugin_id}/...`，不会覆盖系统 `/api` 或 SPA 路径。停用插件时自动注销。 |
-| **调用方式** | `reg.register_route(path, description="", handler=None, *, html=None, methods=None) -> ImportResult`（须已 `bind_plugin`） |
+| **调用方式** | `reg.register_route(path, description="", handler=None, *, html=None, methods=None, visible=True) -> ImportResult`（须已 `bind_plugin`） |
 | **对应页面** | [插件管理](/settings/plugins) — 每条插件下展示 URL 与说明，点击新标签打开 |
 | **对应 API** | `GET /api/plugins` 响应字段 `routes[]`；页面本身走 `GET /plugin/{id}/...` |
 
@@ -915,6 +920,7 @@ _REG.push_messages({
 - `path` 相对插件前缀：`""` / `"/"` 为首页 `/plugin/{id}`；`"panel"` 为 `/plugin/{id}/panel`
 - 段只允许 `A-Za-z0-9._~-`，不可含 `..`
 - 默认方法 `GET`（自动带 `HEAD`）；同插件同 path 再登记则更新说明与处理函数
+- `visible=False` 时路由仍可访问，但不出现在插件管理页的页面列表
 - `handler` 可无参，或接收名为 `request` 的 `Request`。返回 `str` 当作 HTML，`dict`/`list` 当作 JSON，也可直接返回 FastAPI `Response`
 
 **示例**：
@@ -926,7 +932,19 @@ def on_enable(reg: HookRegistry) -> None:
 
     reg.register_route("", "插件主页", handler=page)
     # 或：reg.register_route("panel", "状态面板", html="<p>就绪</p>")
+    # 接口不进管理页列表：reg.register_route("send", "发送", handler=send, visible=False)
 ```
+
+---
+
+### B.12 `get_live_snapshot` {#b12-get_live_snapshot}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 主动拉取与 [短线盘面](/short-board) 同源的随盘快照（`live.snapshot` payload），不必等引擎 15s 节流推送。 |
+| **调用方式** | `reg.get_live_snapshot(date=None) -> dict` |
+| **对应页面** | [短线盘面](/short-board) |
+| **对应 payload** | 同 [A.10](#a10-on_live_snapshot) |
 
 ---
 

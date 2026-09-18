@@ -264,6 +264,13 @@ class HookRegistry:
         wt.poke()
         return ImportResult(True, "watchlist", f"{len(codes)} 只")
 
+    def get_live_snapshot(self, date: str | None = None) -> dict:
+        """拉取与短线盘面同源的随盘快照（``live.snapshot`` payload）。
+
+        供插件在独立页面或定时任务里主动取数，不必等引擎节流推送。
+        """
+        return build_live_payload(date)
+
     def register_route(
         self,
         path: str,
@@ -272,11 +279,13 @@ class HookRegistry:
         *,
         html: str | None = None,
         methods: Sequence[str] | None = None,
+        visible: bool = True,
     ) -> ImportResult:
         """登记插件 HTTP 路由（进程内）；公开 URL 为 ``/plugin/{id}/...``，停用时自动注销。
 
         须提供 ``handler`` 或 ``html`` 之一。``handler`` 可无参，或接收 ``request``。
         返回 str 当作 HTML，dict/list 当作 JSON，也可直接返回 FastAPI Response。
+        ``visible=False`` 时路由仍可访问，但不在插件管理页列出。
         """
         from . import plugin_routes as pr
 
@@ -291,6 +300,7 @@ class HookRegistry:
                 handler=handler,
                 html=html,
                 methods=methods,
+                visible=visible,
             )
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
@@ -781,7 +791,10 @@ def _safe_live_source(key: str, date: str, fetch) -> dict:
 
 
 def build_live_payload(date: str | None = None) -> dict:
-    """构造随盘快照：打板情绪 / 环境条 / 昨涨停效应 / 连板榜分块保留（ADR-0001）。"""
+    """构造随盘快照：打板情绪 / 环境条 / 昨涨停效应 / 连板榜分块保留（ADR-0001）。
+
+    另附市场涨跌宽度（大盘宽度/题材投机）与打板情绪共振，供插件按日外发。
+    """
     day = date or china_today()
 
     def _emotion():
@@ -805,12 +818,31 @@ def build_live_payload(date: str | None = None) -> dict:
 
         return mkt.get_short_term_emotion()
 
+    def _sentiment():
+        _ensure_vr_path()
+        import market as mkt  # noqa: PLC0415
+
+        overview = mkt.get_overview() or {}
+        sent = overview.get("sentiment") if isinstance(overview, dict) else None
+        if not isinstance(sent, dict):
+            return {"available": False, "reason": "市场情绪不可用"}
+        return sent
+
+    def _resonance():
+        from . import board_emotion_resonance as ber
+
+        return ber.snapshot()
+
     sources = {
         "live_emotion": _safe_live_source("live_emotion", day, _emotion),
         "short_board": _safe_live_source("short_board", day, _board),
         "live_zt_effect": _safe_live_source("live_zt_effect", day, _zt_effect),
         # 连板股客观榜（VR short_term_emotion）；与打板情绪 / 环境条分立
         "ladder": _safe_live_source("ladder", day, _ladder),
+        "market_sentiment": _safe_live_source("market_sentiment", day, _sentiment),
+        "board_emotion_resonance": _safe_live_source(
+            "board_emotion_resonance", day, _resonance
+        ),
     }
     return {
         "$schema": hs.LIVE_SNAPSHOT,

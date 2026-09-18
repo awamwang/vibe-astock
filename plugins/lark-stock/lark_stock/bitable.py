@@ -16,9 +16,18 @@ _SCAN_PAGE_LIMIT = 20
 class BitableStore:
     """维护配置中的那张多维表格。"""
 
-    def __init__(self, client: Any, config: LarkConfig) -> None:
+    def __init__(
+        self,
+        client: Any,
+        config: LarkConfig,
+        *,
+        app_token: str | None = None,
+        table_id: str | None = None,
+    ) -> None:
         self._client = client
         self._config = config
+        self._app_token = (app_token or "").strip() or config.bitable_app_token
+        self._table_id = (table_id or "").strip() or config.bitable_table_id
 
     def create_record(self, fields: dict[str, Any]) -> str:
         """新增一条记录，返回 record_id。"""
@@ -26,8 +35,8 @@ class BitableStore:
 
         request = (
             CreateAppTableRecordRequest.builder()
-            .app_token(self._config.bitable_app_token)
-            .table_id(self._config.bitable_table_id)
+            .app_token(self._app_token)
+            .table_id(self._table_id)
             .request_body(AppTableRecord.builder().fields(fields).build())
             .build()
         )
@@ -45,8 +54,8 @@ class BitableStore:
 
         request = (
             UpdateAppTableRecordRequest.builder()
-            .app_token(self._config.bitable_app_token)
-            .table_id(self._config.bitable_table_id)
+            .app_token(self._app_token)
+            .table_id(self._table_id)
             .record_id(record_id)
             .request_body(AppTableRecord.builder().fields(fields).build())
             .build()
@@ -60,8 +69,8 @@ class BitableStore:
 
         builder = (
             ListAppTableRecordRequest.builder()
-            .app_token(self._config.bitable_app_token)
-            .table_id(self._config.bitable_table_id)
+            .app_token(self._app_token)
+            .table_id(self._table_id)
             .page_size(page_size)
         )
         if page_token:
@@ -97,6 +106,27 @@ class BitableStore:
             return found
         return self._scan_day(name, day)
 
+    def upsert_by_date(self, field_name: str, day: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """按日期列新增或更新。已有多条时更新最先找到的那条。"""
+        name = str(field_name or "").strip()
+        if not name:
+            raise ValueError("日期列名未配置")
+        body = {str(k): v for k, v in (fields or {}).items() if str(k).strip()}
+        kind = self._field_kind(name)
+        if kind == "date":
+            body[name] = shanghai_midnight_ms(day)
+        else:
+            body.setdefault(name, day)
+        existing = self.find_by_date(name, day)
+        if existing:
+            record_id = str(existing[0].get("record_id") or "")
+            if not record_id:
+                raise ValueError("已有记录但缺少 record_id")
+            self.update_record(record_id, body)
+            return {"action": "update", "record_id": record_id, "matched": len(existing)}
+        record_id = self.create_record(body)
+        return {"action": "create", "record_id": record_id, "matched": 0}
+
     def _field_kind(self, field_name: str) -> str:
         """列类型：date / text / missing / unknown。列清单读失败时为 unknown。"""
         try:
@@ -121,8 +151,8 @@ class BitableStore:
         for _ in range(10):
             builder = (
                 ListAppTableFieldRequest.builder()
-                .app_token(self._config.bitable_app_token)
-                .table_id(self._config.bitable_table_id)
+                .app_token(self._app_token)
+                .table_id(self._table_id)
                 .page_size(100)
             )
             if page_token:
@@ -159,8 +189,8 @@ class BitableStore:
         for _ in range(5):
             builder = (
                 SearchAppTableRecordRequest.builder()
-                .app_token(self._config.bitable_app_token)
-                .table_id(self._config.bitable_table_id)
+                .app_token(self._app_token)
+                .table_id(self._table_id)
                 .page_size(100)
                 .request_body(SearchAppTableRecordRequestBody.builder().filter(filt).build())
             )
