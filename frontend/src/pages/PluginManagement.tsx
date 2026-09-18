@@ -132,6 +132,7 @@ function PluginEnvPanel({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [file, setFile] = useState("");
+  const [dotenvFile, setDotenvFile] = useState("");
   const [error, setError] = useState("");
   const [rows, setRows] = useState<EnvRow[]>([]);
   const [shown, setShown] = useState<Record<string, boolean>>({});
@@ -141,6 +142,7 @@ function PluginEnvPanel({
     try {
       const data = await api.pluginsEnv(pluginId);
       setFile(data.file || "");
+      setDotenvFile(data.dotenv_file || "");
       setError(data.error || "");
       setRows(rowsFromEnv(data.fields || [], data.env || {}));
     } catch (e) {
@@ -215,7 +217,9 @@ function PluginEnvPanel({
           <p className="text-[11px] text-muted-foreground">
             键值写在用户目录，与插件注册表一起保存
             {file ? <>：<span className="break-all">{file}</span></> : "（plugins.plugin-env）"}
-            。已填写的项优先于插件目录 .env；留空则回落。已启用的插件保存后会重新加载。
+            。空项会从插件目录 .env
+            {dotenvFile ? <>（<span className="break-all">{dotenvFile}</span>）</> : ""}
+            预填已有值；保存后已填写项优先，留空则回落。已启用的插件保存后会重新加载。
           </p>
           {loading ? (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">

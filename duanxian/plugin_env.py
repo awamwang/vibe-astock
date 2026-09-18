@@ -1,7 +1,7 @@
 """插件键值配置 —— 与注册表同目录，文件名为 plugins.plugin-env。
 
-按插件 id 分节保存 KEY=VALUE。管理页展开编辑；启用前写入进程环境，
-已填写的项优先于插件目录 .env。
+按插件 id 分节保存 KEY=VALUE。管理页展开编辑；空项从插件目录 .env 预填。
+启用前写入进程环境，已填写的项优先于插件目录 .env。
 """
 
 from __future__ import annotations
@@ -60,6 +60,21 @@ def _parse_value(raw: str) -> str:
     return value
 
 
+def _parse_kv_line(raw: str) -> tuple[str, str] | None:
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return None
+    if line.startswith("export "):
+        line = line[len("export ") :].strip()
+    if "=" not in line:
+        return None
+    key, _, value = line.partition("=")
+    key = key.strip()
+    if not _KEY_RE.fullmatch(key):
+        return None
+    return key, _parse_value(value)
+
+
 def load_all() -> dict[str, dict[str, str]]:
     """读出全部分节。文件缺失或损坏行跳过，不抛给调用方。"""
     path = env_file()
@@ -84,15 +99,11 @@ def load_all() -> dict[str, dict[str, str]]:
             else:
                 current = None
             continue
-        if current is None or "=" not in line:
+        parsed = _parse_kv_line(raw)
+        if current is None or parsed is None:
             continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if not _KEY_RE.fullmatch(key):
-            continue
-        sections[current][key] = _parse_value(value)
+        key, value = parsed
+        sections[current][key] = value
     return sections
 
 
@@ -100,6 +111,49 @@ def load_section(plugin_id: str) -> dict[str, str]:
     """该插件已保存的键值；尚未写入过则返回空 dict。"""
     pid = _check_id(plugin_id)
     return dict(load_all().get(pid) or {})
+
+
+def plugin_dotenv_path(plugin_path: str) -> str:
+    """插件入口同目录的 .env（单文件插件取其父目录）。"""
+    p = os.path.abspath(os.path.expanduser(plugin_path or ""))
+    if os.path.isdir(p):
+        return os.path.join(p, ".env")
+    return os.path.join(os.path.dirname(p), ".env")
+
+
+def load_dotenv_file(path: str) -> dict[str, str]:
+    """读 dotenv 风格 KEY=VALUE；文件缺失或损坏行跳过。"""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        parsed = _parse_kv_line(raw)
+        if parsed is None:
+            continue
+        key, value = parsed
+        out[key] = value
+    return out
+
+
+def _display_env(
+    field_keys: set[str],
+    saved: dict[str, str],
+    dotenv: dict[str, str],
+) -> dict[str, str]:
+    """管理页展示：已保存的非空项优先，空项回落到插件 .env。"""
+    merged = dict(saved)
+    for key, value in dotenv.items():
+        if not value:
+            continue
+        if key not in field_keys and key not in saved:
+            continue
+        if not merged.get(key):
+            merged[key] = value
+    return merged
 
 
 def section_exists(plugin_id: str) -> bool:
@@ -245,7 +299,7 @@ def _probe_fields(path: str) -> tuple:
 
 
 def describe(plugin_id: str, path: str) -> dict[str, Any]:
-    """给管理页：声明的配置项 + 已保存的键值。读声明失败时仍返回已保存内容。"""
+    """给管理页：声明的配置项 + 已保存的键值（空项从插件 .env 预填）。"""
     from .hooks import PLUGINS
 
     pid = _check_id(plugin_id)
@@ -259,10 +313,16 @@ def describe(plugin_id: str, path: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             fields = ()
             error = f"{type(exc).__name__}: {exc}"
+    public = _fields_public(fields)
+    dotenv_path = plugin_dotenv_path(path)
+    dotenv = load_dotenv_file(dotenv_path)
+    saved = load_section(pid)
+    field_keys = {str(item.get("key") or "") for item in public}
     return {
         "plugin": pid,
         "file": env_file(),
-        "fields": _fields_public(fields),
-        "env": load_section(pid),
+        "dotenv_file": dotenv_path if os.path.isfile(dotenv_path) else "",
+        "fields": public,
+        "env": _display_env(field_keys, saved, dotenv),
         "error": error,
     }

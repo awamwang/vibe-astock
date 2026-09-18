@@ -142,3 +142,41 @@ class TestPluginEnvFile:
         finally:
             apply_plugin_disable(rec.id)
             os.environ.pop("PLUGIN_ENV_TOKEN", None)
+
+    def test_describe_prefills_from_plugin_dotenv(self, plugin_home):
+        from duanxian import plugin_env as penv
+        from duanxian import plugin_store as ps
+
+        path = plugin_home / "envplug.py"
+        path.write_text(_ENV_PLUGIN, encoding="utf-8")
+        rec = ps.register(str(path), enabled=False)
+        (plugin_home / ".env").write_text(
+            'PLUGIN_ENV_TOKEN="from-dotenv"\nUNRELATED=skip\n',
+            encoding="utf-8",
+        )
+
+        info = penv.describe(rec.id, str(path))
+        assert info["env"]["PLUGIN_ENV_TOKEN"] == "from-dotenv"
+        assert "UNRELATED" not in info["env"]
+        assert info["dotenv_file"].endswith(".env")
+        assert Path(info["dotenv_file"]).is_file()
+
+        penv.save_section(rec.id, {"PLUGIN_ENV_TOKEN": "from-ui"})
+        info = penv.describe(rec.id, str(path))
+        assert info["env"]["PLUGIN_ENV_TOKEN"] == "from-ui"
+
+        penv.save_section(rec.id, {"PLUGIN_ENV_TOKEN": ""})
+        info = penv.describe(rec.id, str(path))
+        assert info["env"]["PLUGIN_ENV_TOKEN"] == "from-dotenv"
+
+    def test_describe_without_dotenv_keeps_saved_only(self, plugin_home):
+        from duanxian import plugin_env as penv
+        from duanxian import plugin_store as ps
+
+        path = plugin_home / "envplug.py"
+        path.write_text(_ENV_PLUGIN, encoding="utf-8")
+        rec = ps.register(str(path), enabled=False)
+        info = penv.describe(rec.id, str(path))
+        assert info["env"] == {}
+        assert info["dotenv_file"] == ""
+

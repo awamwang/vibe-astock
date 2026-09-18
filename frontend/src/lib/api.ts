@@ -1017,6 +1017,7 @@ export interface PluginEnvField {
 export interface PluginEnvResult {
   plugin: string;
   file: string;
+  dotenv_file?: string;
   fields: PluginEnvField[];
   env: Record<string, string>;
   error?: string;

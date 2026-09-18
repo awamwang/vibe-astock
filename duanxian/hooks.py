@@ -3,7 +3,7 @@
 多插件：先用 `python -m duanxian.plugin_cli register <path>` 注册，
 启用/停用/卸载见 `python -m duanxian.plugin_cli --help`。
 注册表：`~/.vibe-astock/plugins.json`。
-键值配置：同目录 `plugins.plugin-env`。
+键值配置：同目录 `plugins.plugin-env`；管理页空项从插件目录 `.env` 预填。
 """
 
 from __future__ import annotations
