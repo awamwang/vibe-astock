@@ -99,6 +99,7 @@ class TestSnapshotCache:
             lambda _t=None: ("2026-09-17", "2026-09-16", True),
         )
         monkeypatch.setattr(si.trade_calendar, "is_settled", lambda _d: False)
+        monkeypatch.setattr(si.trade_calendar, "ttl_until_session_boundary", lambda ttl: ttl)
         yield
         si._reset_runtime_state()
 
@@ -125,6 +126,67 @@ class TestSnapshotCache:
         b = snapshot()
         assert calls["n"] == 1
         assert a["hit"] == b["hit"] == 1
+
+    def test_premarket_cache_does_not_cover_the_open(self, monkeypatch):
+        """盘前 as_of 不能按小时缓存：开盘后必须换场次、重取报价。"""
+        from duanxian import style_indices as si
+
+        calls = {"n": 0}
+
+        def quotes():
+            calls["n"] += 1
+            return {"sh": _q(-0.41)}
+
+        monkeypatch.setattr(si, "_load_quotes", quotes)
+        monkeypatch.setattr(si.trade_calendar, "ttl_until_session_boundary", lambda ttl: ttl)
+        si._reset_runtime_state()
+        monkeypatch.setattr(
+            si.trade_calendar, "resolve_as_of",
+            lambda _t=None: ("2026-09-17", "2026-09-16", False),
+        )
+        monkeypatch.setattr(si.trade_calendar, "is_settled", lambda _d: True)
+        a = snapshot()
+        assert a["date"] == "2026-09-17"
+        assert a["is_live"] is False
+        assert calls["n"] == 1
+
+        monkeypatch.setattr(
+            si.trade_calendar, "resolve_as_of",
+            lambda _t=None: ("2026-09-18", "2026-09-17", True),
+        )
+        monkeypatch.setattr(si.trade_calendar, "is_settled", lambda _d: False)
+        b = snapshot()
+        assert calls["n"] == 2, "开盘后还在用盘前快照"
+        assert b["date"] == "2026-09-18"
+        assert b["is_live"] is True
+
+    def test_capped_ttl_expires_without_asof_change(self, monkeypatch):
+        """同一场次盘前快照也必须在开收盘边界失效，不能靠 24h TTL 活过 09:15。"""
+        from duanxian import style_indices as si
+
+        calls = {"n": 0}
+        clock = {"t": 1000.0}
+
+        def quotes():
+            calls["n"] += 1
+            return {"sh": _q(-0.41)}
+
+        monkeypatch.setattr(si, "_load_quotes", quotes)
+        monkeypatch.setattr(si.time, "monotonic", lambda: clock["t"])
+        monkeypatch.setattr(si.trade_calendar, "ttl_until_session_boundary", lambda _ttl: 30.0)
+        monkeypatch.setattr(
+            si.trade_calendar, "resolve_as_of",
+            lambda _t=None: ("2026-09-17", "2026-09-16", False),
+        )
+        monkeypatch.setattr(si.trade_calendar, "is_settled", lambda _d: True)
+        si._reset_runtime_state()
+        snapshot()
+        clock["t"] = 1029.0
+        snapshot()
+        assert calls["n"] == 1
+        clock["t"] = 1030.1
+        snapshot()
+        assert calls["n"] == 2
 
 
 @pytest.mark.unit
@@ -162,6 +224,12 @@ class TestHttpAndFrontend:
         assert 'path: "/short-style"' in router
         assert "ShortStyle" in router
         assert "fetchStyleIndices" in page
+        assert "if (!autoRefresh || !liveNow) return" not in page
+        assert "盘前也要续问场次" in page
+        si_src = pathlib.Path("duanxian/style_indices.py").read_text(encoding="utf-8")
+        assert "_CAL_TTL" not in si_src
+        assert "ttl_until_session_boundary" in si_src
+        assert 'f"asof:' not in si_src
         assert "打板情绪" not in page or "不是打板情绪" in page
         assert "unavailable" in page
         assert "风格热点" in page

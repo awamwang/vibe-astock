@@ -1872,6 +1872,16 @@ class TestLiveQuotesGateWindows:
                             lambda: __import__("datetime").datetime(2026, 7, 29, 20, 0, 0))
         assert tc._seconds_to_next_boundary() > 0
 
+    def test_ttl_until_session_boundary_caps_desired(self, monkeypatch):
+        """盘前 24h 快照 TTL 必须被压到 09:15，否则会活过开盘。"""
+        from duanxian import trade_calendar as tc
+
+        monkeypatch.setattr(tc, "china_now",
+                            lambda: __import__("datetime").datetime(2026, 7, 29, 9, 14, 59))
+        assert tc.ttl_until_session_boundary(86400.0) == 1.0
+        assert tc.ttl_until_session_boundary(0.5) == 0.5
+        assert tc.ttl_until_session_boundary(0.0) == 0.0
+
     def test_cache_actually_expires_at_the_boundary(self, monkeypatch):
         """端到端：开盘前取的值，开盘后**必须重新取**，不能靠 TTL 还没到就复用。"""
         import time

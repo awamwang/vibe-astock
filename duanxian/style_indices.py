@@ -20,7 +20,6 @@ from .util import china_now
 
 _TTL = 20.0
 _OFFSESSION_TTL = 86400.0
-_CAL_TTL = 3600.0
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
 
@@ -140,14 +139,15 @@ def _reset_runtime_state() -> None:
 
 def _cached(key: str, ttl: float, build):
     now = time.monotonic()
+    expire_at = now + float(ttl)
     with _lock:
         hit = _cache.get(key)
-        if hit and now - hit[0] < ttl:
+        if hit and now < hit[0]:
             return hit[1]
     val = build()
-    if val is not None:
+    if val is not None and ttl > 0 and time.monotonic() < expire_at:
         with _lock:
-            _cache[key] = (now, val)
+            _cache[key] = (expire_at, val)
     return val
 
 
@@ -477,15 +477,11 @@ def assemble(quotes: dict[str, dict]) -> dict:
 
 def snapshot() -> dict:
     calendar_today = china_now().strftime("%Y-%m-%d")
-    as_of, _prev, is_live = _cached(
-        f"asof:{calendar_today}", _CAL_TTL,
-        lambda: trade_calendar.resolve_as_of(calendar_today),
-    )
-    settled = _cached(
-        f"settled:{as_of}", _CAL_TTL,
-        lambda: ("Y" if trade_calendar.is_settled(as_of) else "N"),
-    ) == "Y"
-    ttl = _TTL if (is_live and not settled) else _OFFSESSION_TTL
+    # 场次不能按小时缓存：盘前 as_of 还是上一场，活过 09:15 会把凌晨快照一直当盘中用。
+    as_of, _prev, is_live = trade_calendar.resolve_as_of(calendar_today)
+    settled = trade_calendar.is_settled(as_of)
+    raw_ttl = _TTL if (is_live and not settled) else _OFFSESSION_TTL
+    ttl = trade_calendar.ttl_until_session_boundary(raw_ttl)
     catalog = ",".join(i.key for i in ITEMS)
 
     def build():

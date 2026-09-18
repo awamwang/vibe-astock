@@ -148,6 +148,14 @@ def _seconds_to_next_boundary() -> float:
     return 24 * 3600 - now_s + first
 
 
+def ttl_until_session_boundary(desired: float) -> float:
+    """内存 TTL 不得超过下一个开收盘边界，避免盘前快照活过 09:15。"""
+    cap = _seconds_to_next_boundary()
+    if desired <= 0 or cap <= 0:
+        return 0.0
+    return min(float(desired), cap)
+
+
 def quote_trade_day() -> Optional[str]:
     """参考股**实时行情**里的交易日（YYYY-MM-DD）。判不了返回 None"""
     import time as _time

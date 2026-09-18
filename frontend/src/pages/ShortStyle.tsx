@@ -233,13 +233,22 @@ export function ShortStyle() {
 
   const liveNow = session?.phase === "盘中" || session?.phase === "集合竞价";
   useEffect(() => {
-    if (!autoRefresh || !liveNow) return;
+    if (!autoRefresh) return;
     let cancelled = false;
     let timer = 0;
     const arm = () => {
       timer = window.setTimeout(() => {
         if (cancelled) return;
-        void load().finally(() => { if (!cancelled) arm(); });
+        // 盘前也要续问场次，否则凌晨打开会一直停在「非交易时段暂停」，开盘后不再刷。
+        const task = liveNow
+          ? load()
+          : fetchMarketSession().then((s) => {
+              if (!s) return;
+              setSession(s);
+              const live = s.phase === "盘中" || s.phase === "集合竞价";
+              if (live) void load();
+            }).catch(() => {});
+        void Promise.resolve(task).finally(() => { if (!cancelled) arm(); });
       }, delayUntilNextUnixSlot());
     };
     arm();
