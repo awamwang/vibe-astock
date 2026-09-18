@@ -181,6 +181,13 @@ def _env(key: str) -> str:
     return os.environ.get(key, "").strip()
 
 
+def duanxian_table_ids(config: LarkConfig) -> tuple[str, str]:
+    """短线盘面写入用的多维表格。未单独配置时回落到通用表。"""
+    app = (config.duanxian_bitable_app_token or config.bitable_app_token or "").strip()
+    table = (config.duanxian_bitable_table_id or config.bitable_table_id or "").strip()
+    return app, table
+
+
 def load_config(env_file: Path | None = None) -> LarkConfig:
     """读取配置。只缺 App ID 或 App Secret 时阻止启用，其余资源标识可留空。"""
     load_env_file(env_file or ENV_FILE)

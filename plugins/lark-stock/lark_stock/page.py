@@ -1,4 +1,4 @@
-"""飞书插件页面：拉取今日短线、推送今日短线程序、发送消息。缺配置时只提示并链到插件配置。"""
+"""飞书插件页面：拉取今日短线、推送今日短线盯盘、发送消息。缺配置时只提示并链到插件配置。"""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ def render_home(config: LarkConfig, plugin_id: str) -> str:
             day = html.escape(china_today())
             parts.append(
                 f'<p class="hint">从短线钩子取今日盘面，按「{field}」={day} 新增或更新飞书表格。</p>'
-                '<button id="push" class="alt" type="button">推送今日短线程序</button>'
+                '<button id="push" class="alt" type="button">推送今日短线盯盘</button>'
                 '<div id="push-result" class="result" hidden></div>'
             )
         today = "".join(parts)

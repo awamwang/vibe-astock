@@ -56,7 +56,7 @@ def test_home_prompts_missing_config_in_each_section():
     assert 'target="_blank"' in html
     assert "/settings/plugins?plugin=abc123&amp;config=1" in html
     assert "拉取今日短线" not in html
-    assert "推送今日短线程序" not in html
+    assert "推送今日短线盯盘" not in html
     assert "<textarea" not in html
 
 
@@ -67,7 +67,7 @@ def test_home_shows_actions_when_configured():
         im_receive_id="oc_1",
     ), "abc123")
     assert "拉取今日短线" in html
-    assert "推送今日短线程序" in html
+    assert "推送今日短线盯盘" in html
     assert "<textarea" in html
     assert "请先配置" not in html
     assert "去配置" not in html

@@ -450,6 +450,13 @@ class TestHookPayloads:
         keys = {x["key"] for x in out["metric_index"]}
         assert "limit_up_count" in keys
 
+    def test_get_live_snapshot_returns_payload(self, monkeypatch):
+        from duanxian.hooks import HookRegistry
+
+        fake = {"$schema": "live", "date": "2026-09-18", "sources": {"short_board": {}}}
+        monkeypatch.setattr("duanxian.hooks.build_live_payload", lambda date=None: fake)
+        assert HookRegistry().get_live_snapshot("2026-09-18") == fake
+
 
 @pytest.mark.unit
 class TestHookRunner:

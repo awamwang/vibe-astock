@@ -52,6 +52,19 @@ def test_only_app_credentials_are_required(isolated_env, tmp_path):
     assert config.im_receive_id == ""
 
 
+def test_duanxian_table_falls_back_to_generic(isolated_env, tmp_path):
+    from lark_stock.config import duanxian_table_ids
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LARK_APP_ID=cli_test\nLARK_APP_SECRET=secret\n"
+        "LARK_BITABLE_APP_TOKEN=app\nLARK_BITABLE_TABLE_ID=tbl\n",
+        encoding="utf-8",
+    )
+    config = load_config(env_file)
+    assert duanxian_table_ids(config) == ("app", "tbl")
+
+
 def test_missing_app_secret_blocks_enable(isolated_env, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("LARK_APP_ID=cli_test\n", encoding="utf-8")

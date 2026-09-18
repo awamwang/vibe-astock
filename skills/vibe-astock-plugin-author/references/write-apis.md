@@ -15,6 +15,7 @@
 | `report_current_stock` | 当前看盘股 | `code` 必填 6 位；未变返回 `detail=unchanged` |
 | `register_message_source` | 登记消息源 | 见 `message-source.md` |
 | `register_route` | 登记插件 HTTP 页 | `path` 相对 `/plugin/{id}/`；须 `handler` 或 `html`；`visible=False` 不在管理页列出 |
+| `get_live_snapshot` | 拉取短线盘面随盘快照 | 返回 `live.snapshot` payload；不必等引擎节流推送 |
 | `push_messages` | 标准格式推送消息 | 见 `message-source.md` |
 | `import_experience` | 交易经验主题 | `files[]`：title / content / summary（对齐 experience/commit） |
 | `push_article` | 研报文章 | `files[]` 或单篇 title/original（对齐 articles/commit） |
