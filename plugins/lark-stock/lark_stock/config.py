@@ -98,7 +98,7 @@ ENV_FIELDS: tuple[PluginEnvField, ...] = (
     PluginEnvField(
         "LARK_BITABLE_APP_TOKEN",
         "多维表格 app_token",
-        "链接 /base/ 后面",
+        "链接 /base/ 后面。写入前须在表格右上角「…」→「添加文档应用」把本应用设为可编辑",
         secret=True,
     ),
     PluginEnvField(
@@ -110,7 +110,7 @@ ENV_FIELDS: tuple[PluginEnvField, ...] = (
     PluginEnvField(
         "DUANXIAN_BITABLE_APP_TOKEN",
         "短线盘面多维表格 app_token",
-        "短线盘面指标写入的表，链接 /base/ 后面",
+        "短线盘面指标写入的表，链接 /base/ 后面。须把本应用加成该表协作者（可编辑）",
         secret=True,
     ),
     PluginEnvField(

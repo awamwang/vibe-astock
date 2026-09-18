@@ -10,6 +10,11 @@ from .fields import day_tokens, shanghai_midnight_ms, value_matches_day
 
 _DATE_TYPES = frozenset({5, 1001, 1002})
 _DATE_UI = frozenset({"DateTime", "CreatedTime", "ModifiedTime"})
+_READONLY_TYPES = frozenset({19, 20, 1001, 1002, 1003, 1004, 1005})
+_READONLY_UI = frozenset({
+    "Formula", "Lookup", "CreatedTime", "ModifiedTime",
+    "CreatedUser", "ModifiedUser", "AutoNumber",
+})
 _SCAN_PAGE_LIMIT = 20
 
 
@@ -117,6 +122,7 @@ class BitableStore:
             body[name] = shanghai_midnight_ms(day)
         else:
             body.setdefault(name, day)
+        body = self._writable_fields(body)
         existing = self.find_by_date(name, day)
         if existing:
             record_id = str(existing[0].get("record_id") or "")
@@ -142,6 +148,45 @@ class BitableStore:
                 return "date"
             return "text"
         return "missing"
+
+    def _field_catalog(self) -> dict[str, tuple[str, Any, str]]:
+        """列名 → (kind, type, ui_type)。列清单读失败时为空。"""
+        try:
+            fields = self._list_fields()
+        except LarkApiError:
+            return {}
+        catalog: dict[str, tuple[str, Any, str]] = {}
+        for field in fields:
+            name = str(getattr(field, "field_name", "") or "").strip()
+            if not name:
+                continue
+            ui = str(getattr(field, "ui_type", "") or "")
+            ftype = getattr(field, "type", None)
+            if ui in _DATE_UI or ftype in _DATE_TYPES:
+                kind = "date"
+            elif ftype == 2 or ui in {"Number", "Currency", "Progress", "Percent"}:
+                kind = "number"
+            else:
+                kind = "text"
+            catalog[name] = (kind, ftype, ui)
+        return catalog
+
+    def _writable_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """丢掉表里没有的列和公式/系统列，避免写入时报 Forbidden。"""
+        catalog = self._field_catalog()
+        if not catalog:
+            return fields
+        out: dict[str, Any] = {}
+        for name, value in fields.items():
+            meta = catalog.get(name)
+            if meta is None:
+                out[name] = value
+                continue
+            _kind, ftype, ui = meta
+            if ftype in _READONLY_TYPES or ui in _READONLY_UI:
+                continue
+            out[name] = value
+        return out
 
     def _list_fields(self) -> list[Any]:
         from lark_oapi.api.bitable.v1 import ListAppTableFieldRequest

@@ -268,7 +268,7 @@ def render_home(config: LarkConfig, plugin_id: str) -> str:
             field = html.escape(_date_field(config))
             day = html.escape(china_today())
             parts.append(
-                f'<p class="hint">从短线钩子取今日盘面，按「{field}」={day} 新增或更新飞书表格。</p>'
+                f'<p class="hint">从短线钩子取今日盘面，按「{field}」={day} 新增或更新飞书表格。应用须对该表有「可编辑」权限（表格右上角「…」→添加文档应用）。</p>'
                 '<button id="push" class="alt" type="button">推送今日短线盯盘</button>'
                 '<div id="push-result" class="result" hidden></div>'
             )

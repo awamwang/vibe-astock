@@ -392,3 +392,74 @@ def test_upsert_by_date_updates_existing_date_row():
     assert updated[0][1]["情绪温度"] == 66
     assert updated[0][1]["日期"] == shanghai_midnight_ms("2026-09-18")
     assert created == []
+
+
+def test_91403_explains_how_to_grant_edit():
+    from lark_stock.errors import LarkApiError
+
+    err = LarkApiError("新增多维表格记录", 91403, "Forbidden", "log-1")
+    text = str(err)
+    assert "91403" in text
+    assert "添加文档应用" in text
+    assert "可编辑" in text
+
+
+def test_upsert_skips_formula_columns():
+    from lark_stock.bitable import BitableStore
+
+    class Field:
+        def __init__(self, name, type_, ui):
+            self.field_name = name
+            self.type = type_
+            self.ui_type = ui
+
+    class Data:
+        def __init__(self, items=None, has_more=False):
+            self.items = items or []
+            self.has_more = has_more
+            self.page_token = None
+
+    class Resp:
+        def __init__(self, data=None):
+            self.data = data
+
+        def success(self):
+            return True
+
+    created: list[dict] = []
+
+    class FieldApi:
+        def list(self, request):
+            return Resp(Data([
+                Field("日期", 1, "Text"),
+                Field("情绪温度", 2, "Number"),
+                Field("公式列", 20, "Formula"),
+            ]))
+
+    class RecordApi:
+        def search(self, request):
+            return Resp(Data())
+
+        def list(self, request):
+            return Resp(Data())
+
+        def create(self, request):
+            created.append(request.request_body.fields)
+            rec = SimpleNamespace(record_id="rec-new")
+            return Resp(SimpleNamespace(record=rec))
+
+    store = BitableStore(
+        SimpleNamespace(bitable=SimpleNamespace(v1=SimpleNamespace(
+            app_table_field=FieldApi(),
+            app_table_record=RecordApi(),
+        ))),
+        _config(bitable_app_token="app", bitable_table_id="tbl"),
+    )
+    out = store.upsert_by_date("日期", "2026-09-18", {
+        "日期": "2026-09-18",
+        "情绪温度": 66,
+        "公式列": 1,
+    })
+    assert out["action"] == "create"
+    assert "公式列" not in created[0]
+    assert created[0]["情绪温度"] == 66

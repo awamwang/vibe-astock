@@ -5,6 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 
+_CODE_HINTS = {
+    91403: (
+        "当前应用没有这张多维表格的编辑权限。"
+        "请打开该表格 → 右上角「…」→「添加文档应用」，搜到本应用并设为「可编辑」；"
+        "若表格开了高级权限，还需给应用「可管理」，并允许新增记录。"
+    ),
+}
+
+
 class ConfigError(RuntimeError):
     """环境变量缺失或取值不合法。"""
 
@@ -20,6 +29,9 @@ class LarkApiError(RuntimeError):
         if log_id:
             detail += f", log_id={log_id}"
         detail += "）"
+        hint = _CODE_HINTS.get(code) if code is not None else None
+        if hint:
+            detail += f"。{hint}"
         super().__init__(detail)
 
 
