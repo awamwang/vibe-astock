@@ -43,7 +43,7 @@ def register(plugin_id: str, source_id: str, label: str = "") -> PluginMessageSo
     lbl = (label or "").strip() or sid
     now = china_now().strftime("%Y-%m-%d %H:%M:%S")
     with _LOCK:
-        existing = _SOURCES.get(sid)
+        existing = _SOURCES[sid] if sid in _SOURCES else None
         if existing is not None and existing.plugin_id != pid:
             raise ValueError(
                 f"source_id {sid!r} 已被插件 {existing.plugin_id} 注册"
@@ -75,7 +75,8 @@ def get(source_id: str) -> PluginMessageSource | None:
     if not sid:
         return None
     with _LOCK:
-        return _SOURCES.get(sid)
+        rec = _SOURCES[sid] if sid in _SOURCES else None
+    return rec
 
 
 def require_owned(source_id: str, plugin_id: str) -> PluginMessageSource:

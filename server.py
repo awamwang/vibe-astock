@@ -2156,6 +2156,7 @@ def api_articles_item_delete(request: Request, name: str = ""):
 def _plugin_row(rec) -> dict:
     from pathlib import Path
 
+    from duanxian import plugin_routes as pr
     from duanxian import plugin_status as ps
     from duanxian.hooks import PLUGINS
 
@@ -2169,6 +2170,7 @@ def _plugin_row(rec) -> dict:
         "enabled": rec.enabled,
         "registered_at": rec.registered_at,
         "file_exists": p.is_file(),
+        "routes": pr.as_route_dicts(rec.id) if rec.enabled else [],
     }
     row["runtime_status"] = ps.resolve_runtime_status(
         rec.id,
@@ -2188,10 +2190,13 @@ def api_plugins_list():
     # 管理页轮询时顺带按需加速不健康插件恢复
     psup.ensure_plugins_ready()
     rows = ps.list_plugins()
+    from duanxian import plugin_env as penv
+
     return {
         "data": {
             "plugins": [_plugin_row(r) for r in rows],
             "registry_file": ps.registry_file(),
+            "env_file": penv.env_file(),
         }
     }
 
@@ -2381,6 +2386,87 @@ def api_plugins_open_dir(request: Request, body: Optional[dict] = Body(None)):
     return {"data": {"ok": True, "path": opened}}
 
 
+def _plugin_env_target(plugin: str):
+    """解析插件 id，并取出注册记录。失败时返回 JSONResponse。"""
+    from duanxian import plugin_store as ps
+
+    key = (plugin or "").strip()
+    if not key:
+        return None, JSONResponse(
+            {"error": "请提供 plugin", "detail": "请提供 plugin"},
+            status_code=400,
+        )
+    try:
+        pid = ps.resolve_id(key)
+    except ValueError as exc:
+        return None, JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    rec = next((r for r in ps.list_plugins() if r.id == pid), None)
+    if rec is None:
+        return None, JSONResponse(
+            {"error": f"未找到插件：{pid}", "detail": f"未找到插件：{pid}"},
+            status_code=400,
+        )
+    return rec, None
+
+
+@app.get("/api/plugins/env")
+def api_plugins_env(plugin: str = ""):
+    """读取插件键值配置：声明项与已保存的值。"""
+    from duanxian import plugin_env as penv
+
+    rec, err = _plugin_env_target(plugin)
+    if err is not None:
+        return err
+    return {"data": penv.describe(rec.id, rec.path)}
+
+
+@app.post("/api/plugins/env")
+def api_plugins_env_save(request: Request, body: Optional[dict] = Body(None)):
+    """保存插件键值配置。已启用的插件会重新加载以使新值生效。"""
+    blocked = _backup_guard(request)
+    if blocked is not None:
+        return blocked
+    from duanxian import plugin_env as penv
+    from duanxian.hooks import PLUGINS, apply_plugin_enable, apply_plugin_restart
+
+    rec, err = _plugin_env_target(str((body or {}).get("plugin") or ""))
+    if err is not None:
+        return err
+    raw = (body or {}).get("env")
+    if not isinstance(raw, dict):
+        return JSONResponse(
+            {"error": "请提供 env 对象", "detail": "请提供 env 对象"},
+            status_code=400,
+        )
+    try:
+        saved = penv.save_section(rec.id, raw)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+
+    reloaded = False
+    reload_error = ""
+    if rec.enabled:
+        try:
+            if any(lp.id == rec.id for lp in PLUGINS):
+                loaded = apply_plugin_restart(rec.id)
+            else:
+                loaded = apply_plugin_enable(rec.id)
+            reloaded = loaded is not None
+            if not reloaded:
+                reload_error = "配置已保存，但插件重新加载失败"
+        except Exception as exc:  # noqa: BLE001
+            reload_error = str(exc)
+    return {
+        "data": {
+            "plugin": rec.id,
+            "file": penv.env_file(),
+            "env": saved,
+            "reloaded": reloaded,
+            "reload_error": reload_error,
+        }
+    }
+
+
 @app.get("/api/backup/status")
 def api_backup_status():
     """当前可备份数据规模（~/.duanxian-agents 非日志文件）。"""
@@ -2524,6 +2610,29 @@ def _mount_static() -> None:
         return FileResponse(os.path.join(_DIST, "index.html"))
 
     print(f"✓ React 构建产物已挂载（{_DIST}）")
+
+
+_PLUGIN_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
+
+
+def _dispatch_plugin_page(plugin_id: str, rest: str, request: Request):
+    from duanxian import plugin_routes as pr
+    from duanxian.hooks import _plugins_init_done
+
+    _plugins_init_done.wait(timeout=60.0)
+    return pr.dispatch(plugin_id, rest, request)
+
+
+@app.api_route("/plugin/{plugin_id}", methods=list(_PLUGIN_HTTP_METHODS))
+def api_plugin_page_root(plugin_id: str, request: Request):
+    """插件登记的前端页 / HTTP 路由（无子路径）。"""
+    return _dispatch_plugin_page(plugin_id, "", request)
+
+
+@app.api_route("/plugin/{plugin_id}/{rest:path}", methods=list(_PLUGIN_HTTP_METHODS))
+def api_plugin_page(plugin_id: str, rest: str, request: Request):
+    """插件登记的前端页 / HTTP 路由。"""
+    return _dispatch_plugin_page(plugin_id, rest, request)
 
 
 _mount_static()

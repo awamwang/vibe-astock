@@ -68,6 +68,52 @@ class TestCurrentStockDeadlockRegression:
 
 
 @pytest.mark.unit
+class TestPluginRouteLock:
+    def test_dispatch_list_no_deadlock(self):
+        """dispatch 不得持锁调用 handler；handler 内 list_for_plugin 须立刻返回。"""
+        from duanxian import plugin_routes as pr
+        from duanxian.hooks import HookRegistry
+        from starlette.requests import Request
+
+        pr.clear_all()
+        try:
+            def _handler():
+                return {"n": len(pr.list_for_plugin("plug-lock"))}
+
+            reg = HookRegistry()
+            reg.bind_plugin("plug-lock")
+            reg.register_route("n", "计数", handler=_handler)
+            req = Request({
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/plugin/plug-lock/n",
+                "raw_path": b"/plugin/plug-lock/n",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 9),
+                "server": ("127.0.0.1", 8910),
+            })
+            done = threading.Event()
+            status: list[int] = []
+
+            def _run() -> None:
+                resp = pr.dispatch("plug-lock", "n", req)
+                status.append(resp.status_code)
+                done.set()
+
+            t = threading.Thread(target=_run)
+            t.start()
+            assert done.wait(timeout=2.0), "plugin_routes.dispatch 持锁重入自死锁"
+            _join_or_fail(t, timeout=0.5, label="plugin route dispatch 线程未退出")
+            assert status == [200]
+        finally:
+            pr.clear_all()
+
+
+@pytest.mark.unit
 def test_lock_hold_static_scan_clean():
     """持锁块内不得调用同模块内也会抢同一把锁的函数。"""
     violations = lsc.scan_paths(lsc.default_scan_paths())

@@ -18,6 +18,10 @@ export default defineConfig(({ mode }) => {
       port: 5910,
       proxy: {
         // 全部 /api → 本仓库后端（8910）。见上面注释：不再需要逐条列举。
+        "/plugin": {
+          target: agentTarget,
+          changeOrigin: true,
+        },
         "/api": {
           target: agentTarget,
           changeOrigin: true,

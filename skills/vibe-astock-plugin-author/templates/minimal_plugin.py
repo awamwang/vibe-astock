@@ -14,11 +14,12 @@ def on_enable(reg: HookRegistry) -> None:
     _REG, _PID = reg, reg.plugin_id
     # saved = reg.plugin_env()
     # reg.register_message_source("my_feed", "我的快讯")
+    # reg.register_route("", "插件主页", html="<!doctype html><title>demo</title><p>ok</p>")
     reg.report_status("ok", "已启用")
 
 
 def on_disable() -> None:
-    """停用时释放连接与后台线程；消息源由引擎自动注销。"""
+    """停用时释放连接与后台线程；消息源与 HTTP 路由由引擎自动注销。"""
     global _REG, _PID
     _REG = None
     _PID = None

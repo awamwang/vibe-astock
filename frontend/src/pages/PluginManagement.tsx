@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import {
-  AlertTriangle, ChevronDown, ChevronRight, Eye, EyeOff, FolderOpen, Loader2,
+  AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Eye, EyeOff, FolderOpen, Loader2,
   Plug, Plus, Power, PowerOff, Save, Trash2, Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { api, type PluginEnvField, type PluginRecord, type PluginRuntimeStatus } from "@/lib/api";
+import { apiUrl } from "@/lib/base";
+import { api, type PluginEnvField, type PluginRecord, type PluginRoute, type PluginRuntimeStatus } from "@/lib/api";
 
 const PATH_KEY = "va-plugin-install-path";
 
@@ -316,6 +317,40 @@ function PluginEnvPanel({
   );
 }
 
+function PluginRoutesPanel({ routes }: { routes: PluginRoute[] }) {
+  if (!routes.length) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="text-[11px] font-medium text-muted-foreground">页面</div>
+      <ul className="space-y-1">
+        {routes.map((route) => (
+          <li key={route.url}>
+            <a
+              href={apiUrl(route.url)}
+              target="_blank"
+              rel="noreferrer"
+              className="group flex items-start gap-2 rounded-lg border border-border/70 bg-black/10 px-2.5 py-2 text-xs hover:border-primary/40 hover:bg-primary/5"
+              title="新标签打开插件页面"
+            >
+              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1">
+                <span className="break-all font-mono text-primary group-hover:underline">
+                  {route.url}
+                </span>
+                {route.description && (
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    {route.description}
+                  </span>
+                )}
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function PluginRow({
   row, busy, onEnable, onDisable, onUninstall, onOpenDir, onEnvSaved,
 }: {
@@ -342,6 +377,7 @@ function PluginRow({
           </div>
           <p className="mt-1.5 break-all text-xs text-muted-foreground/90">{row.path}</p>
           <RuntimeStatusPanel status={row.runtime_status} />
+          <PluginRoutesPanel routes={row.routes || []} />
           <PluginEnvPanel
             pluginId={row.id}
             pluginName={row.name}
@@ -534,7 +570,7 @@ export function PluginManagement() {
     <div>
       <PageHeader
         title="插件管理"
-        subtitle="管理钩子插件：选择 .py 入口安装、启用/停用、从注册表卸载。每条插件可展开键值配置，与注册表一起写到用户目录。"
+        subtitle="管理钩子插件：选择 .py 入口安装、启用/停用、从注册表卸载。每条插件可展开键值配置，与注册表一起写到用户目录。已启用插件登记的页面会列出 URL，点击在新标签打开。"
       />
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">

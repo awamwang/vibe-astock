@@ -3,6 +3,7 @@
 多插件：先用 `python -m duanxian.plugin_cli register <path>` 注册，
 启用/停用/卸载见 `python -m duanxian.plugin_cli --help`。
 注册表：`~/.vibe-astock/plugins.json`。
+键值配置：同目录 `plugins.plugin-env`。
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import threading
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from . import hook_schemas as hs
 from .util import china_now, china_today
@@ -67,11 +68,23 @@ class MetricProvider:
 
 
 @dataclass(frozen=True)
+class PluginEnvField:
+    """管理页可编辑的一项键值配置。"""
+
+    key: str
+    label: str = ""
+    hint: str = ""
+    secret: bool = False
+    default: str = ""
+
+
+@dataclass(frozen=True)
 class HookPack:
     name: str
     version: str
     schema_bundle: str
     metric_providers: tuple[MetricProvider, ...] = ()
+    env_fields: tuple[PluginEnvField, ...] = ()
     on_register: Callable[["HookRegistry"], None] | None = None
     on_enable: Callable[["HookRegistry"], None] | None = None
     on_disable: Callable[[], None] | None = None
@@ -109,6 +122,15 @@ class HookRegistry:
 
     def unbind_plugin(self) -> None:
         self._bound_plugin_id = None
+
+    def plugin_env(self) -> dict[str, str]:
+        """读取用户目录里本插件已保存的键值。尚未保存过时返回空 dict。"""
+        from . import plugin_env as penv
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("plugin_env 需在 on_enable 内调用，或先 bind_plugin")
+        return penv.load_section(pid)
 
     def report_status(self, level: str, message: str, detail: str | None = None) -> None:
         """向引擎上报运行状态，供插件管理页展示。"""
@@ -241,6 +263,38 @@ class HookRegistry:
         wt.set_watch(codes)
         wt.poke()
         return ImportResult(True, "watchlist", f"{len(codes)} 只")
+
+    def register_route(
+        self,
+        path: str,
+        description: str = "",
+        handler: Callable[..., Any] | None = None,
+        *,
+        html: str | None = None,
+        methods: Sequence[str] | None = None,
+    ) -> ImportResult:
+        """登记插件 HTTP 路由（进程内）；公开 URL 为 ``/plugin/{id}/...``，停用时自动注销。
+
+        须提供 ``handler`` 或 ``html`` 之一。``handler`` 可无参，或接收 ``request``。
+        返回 str 当作 HTML，dict/list 当作 JSON，也可直接返回 FastAPI Response。
+        """
+        from . import plugin_routes as pr
+
+        pid = self._bound_plugin_id
+        if not pid:
+            raise RuntimeError("register_route 需在 on_enable 内调用，或先 bind_plugin")
+        try:
+            rec = pr.register(
+                pid,
+                path,
+                description,
+                handler=handler,
+                html=html,
+                methods=methods,
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return ImportResult(True, "plugin_route", rec.url)
 
     def register_message_source(self, source_id: str, label: str = "") -> ImportResult:
         """登记插件消息源（进程内）；停用插件时自动注销。"""
@@ -508,9 +562,12 @@ def load_plugins() -> list[LoadedPlugin]:
     """从注册表加载所有已启用插件。"""
     from . import plugin_store as ps
 
+    from . import plugin_env as penv
+
     loaded: list[LoadedPlugin] = []
     for pid, path in ps.list_enabled_paths():
         try:
+            penv.apply_to_environ(pid)
             pack = load_pack_from_path(path, plugin_id=pid)
         except Exception as exc:  # noqa: BLE001
             from . import plugin_status as ps
@@ -1160,11 +1217,19 @@ def _activate_plugin(lp: LoadedPlugin, registry: HookRegistry) -> None:
         registry.unbind_plugin()
 
 
-def _deactivate_plugin(lp: LoadedPlugin) -> None:
+def _release_plugin_runtime(plugin_id: str) -> None:
+    """停用/重启前清除该插件进程内登记（消息源、HTTP 路由）。"""
     from . import message_sources as ms
+    from . import plugin_routes as pr
+
+    ms.unregister_plugin(plugin_id)
+    pr.unregister_plugin(plugin_id)
+
+
+def _deactivate_plugin(lp: LoadedPlugin) -> None:
     from . import plugin_status as ps
 
-    ms.unregister_plugin(lp.id)
+    _release_plugin_runtime(lp.id)
     _safe_call(lp.pack.on_disable, lp)
     ps.set_status(lp.id, "off", "已停用")
 
@@ -1217,6 +1282,9 @@ def apply_plugin_enable(plugin_id: str) -> LoadedPlugin | None:
         ps.set_status(plugin_id, "error", "插件文件不存在", path)
         return None
 
+    from . import plugin_env as penv
+
+    penv.apply_to_environ(plugin_id)
     try:
         pack = load_pack_from_path(path, plugin_id=plugin_id)
     except Exception as exc:  # noqa: BLE001
@@ -1239,7 +1307,6 @@ def apply_plugin_restart(plugin_id: str) -> LoadedPlugin | None:
 
     不改注册表 enabled；用于监督线程在报错后自动恢复。
     """
-    from . import message_sources as ms
     from . import plugin_status as ps
     from . import plugin_store as pstore
 
@@ -1251,7 +1318,7 @@ def apply_plugin_restart(plugin_id: str) -> LoadedPlugin | None:
 
     lp = _find_loaded_plugin(PLUGINS, plugin_id)
     if lp is not None:
-        ms.unregister_plugin(lp.id)
+        _release_plugin_runtime(lp.id)
         _safe_call(lp.pack.on_disable, lp)
         PLUGINS[:] = [p for p in PLUGINS if p.id != plugin_id]
         RUNNER.plugins[:] = [p for p in RUNNER.plugins if p.id != plugin_id]

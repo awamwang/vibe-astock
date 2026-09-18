@@ -10,7 +10,7 @@ description: "编写、改造或审查 vibe-astock 钩子插件（HookPack / Hoo
 ## 何时用
 
 - 新建/改写导出 `PACK = HookPack(...)` 的插件 `.py`
-- 接入 `HookRegistry` 写入：持仓、账户、自选、当前股、**消息源注册与标准格式推送**
+- 接入 `HookRegistry` 写入：持仓、账户、自选、当前股、**消息源注册与标准格式推送**、**插件页面路由**
 - 订阅复盘/预算/验证等引擎 → 插件回调
 - 启用/停用、CLI 注册、多线程推送约定
 
@@ -53,8 +53,8 @@ description: "编写、改造或审查 vibe-astock 钩子插件（HookPack / Hoo
 
 1. **定能力边界**：列出需要的写入方法与 push 回调；不实现的能力不要占位空函数。
 2. **落盘插件文件**：建议用户目录 `~/.vibe-astock/plugins/<name>.py`，或仓库 `plugins/<name>/`（不随默认安装自动启用）。文件必须导出合法 `PACK`。
-3. **实现激活钩子**：优先 `on_enable(reg)`（与 `on_register` 二选一即可；两者都有时引擎只调 `on_enable`）。在此 `register_message_source`、启动后台任务、记下 `pid = reg.plugin_id`。
-4. **实现 `on_disable`**：停线程、关连接；消息源由引擎在停用时 `unregister_plugin`，插件无需手清注册表。
+3. **实现激活钩子**：优先 `on_enable(reg)`（与 `on_register` 二选一即可；两者都有时引擎只调 `on_enable`）。在此 `register_message_source`、`register_route`、启动后台任务、记下 `pid = reg.plugin_id`。
+4. **实现 `on_disable`**：停线程、关连接；消息源与 HTTP 路由由引擎在停用时 `unregister_plugin`，插件无需手清注册表。
 5. **异步写入**：后台 worker 先 `reg.bind_plugin(pid)` 再调 Registry；**禁止**在 WebSocket/SSE 读线程里同步 `report_current_stock` / `push_messages` / 重 I/O。细节见 `references/concurrency.md`。
 6. **注册并启用**：
    ```bash

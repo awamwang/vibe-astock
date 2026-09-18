@@ -878,6 +878,10 @@ export const api = {
     request<PluginRecord>("/plugins/uninstall", "POST", { plugin }),
   pluginsOpenDir: (plugin: string) =>
     request<{ ok: boolean; path: string }>("/plugins/open-dir", "POST", { plugin }),
+  pluginsEnv: (plugin: string) =>
+    get<PluginEnvResult>(`/plugins/env?plugin=${encodeURIComponent(plugin)}`),
+  pluginsSaveEnv: (plugin: string, env: Record<string, string>) =>
+    request<PluginEnvSaveResult>("/plugins/env", "POST", { plugin, env }),
   pluginsCurrentStock: () => get<CurrentStockInfo | null>("/plugins/current-stock"),
   messageSources: () => get<MessageSourceInfo[]>("/messages/sources"),
   messageIngestPreview: (body: {
@@ -978,6 +982,13 @@ export interface PluginRuntimeStatus {
   updated_at: string;
 }
 
+export interface PluginRoute {
+  url: string;
+  path: string;
+  description: string;
+  methods: string[];
+}
+
 export interface PluginRecord {
   id: string;
   path: string;
@@ -987,10 +998,36 @@ export interface PluginRecord {
   registered_at: string;
   file_exists: boolean;
   runtime_status: PluginRuntimeStatus;
+  routes?: PluginRoute[];
 }
 export interface PluginsListResult {
   plugins: PluginRecord[];
   registry_file: string;
+  env_file: string;
+}
+
+export interface PluginEnvField {
+  key: string;
+  label: string;
+  hint: string;
+  secret: boolean;
+  default: string;
+}
+
+export interface PluginEnvResult {
+  plugin: string;
+  file: string;
+  fields: PluginEnvField[];
+  env: Record<string, string>;
+  error?: string;
+}
+
+export interface PluginEnvSaveResult {
+  plugin: string;
+  file: string;
+  env: Record<string, string>;
+  reloaded: boolean;
+  reload_error?: string;
 }
 
 export interface CurrentStockInfo {

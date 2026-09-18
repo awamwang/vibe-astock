@@ -15,7 +15,7 @@
 1. 仅 `enabled=true` 且文件仍存在的插件
 2. 单插件 import 失败：警告并跳过，不阻断引擎
 3. `on_enable` / `on_register`：有 `on_enable` 则只调它；否则调 `on_register`
-4. 停用：`on_disable` → 从 RUNNER 移除 → **清除该插件消息源** → 卸载模块
+4. 停用：`on_disable` → 从 RUNNER 移除 → **清除该插件消息源与 HTTP 路由** → 卸载模块
 
 ## 变更何时生效
 

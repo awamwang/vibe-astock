@@ -128,7 +128,7 @@ hooks.RUNNER.emit_after_review（插件推送）
 ## 5. 插件与扩展点
 
 - **Prompt 包**：`VIBE_ASTOCK_PROMPTS` → `duanxian.prompts.PACK`  
-- **钩子**：`duanxian.hooks` — 引擎 push（复盘/预算快照）与插件 pull（`HookRegistry.import_*`）  
+- **钩子**：`duanxian.hooks` — 引擎 push（复盘/预算快照）与插件 pull（`HookRegistry.import_*` / `register_route`）  
 - **指标验证**：`MetricProvider` 注册自定义可验证指标  
 
 详见 [plugin-development.md](./plugin-development.md)、[hook-lifecycle.md](./hook-lifecycle.md)。
@@ -172,6 +172,7 @@ hooks.RUNNER.emit_after_review（插件推送）
 | `duanxian/articles.py` | `_LOCK` | `Lock` | 研报文章索引 | 文章落盘与 index 刷新 |
 | `duanxian/sentiment_score.py` | `_LOCK` | `Lock` | 情绪分缓存 | 计算结果 memo |
 | `duanxian/current_stock.py` | `_lock` | `Lock` | `_current`、SSE 监听列表 | 当前看盘标的切换与推送 |
+| `duanxian/plugin_routes.py` | `_LOCK` | `Lock` | `_ROUTES` | 插件 HTTP 路由登记；dispatch 锁外调 handler |
 | `vr/message/store.py` | `_LOCK` | `RLock` | SQLite + 复合事务 | 消息入库、分析结果、列表查询 |
 | `vr/message/archive.py` | （复用 store） | — | 与 store 同锁 | 归档批量操作 |
 | `vr/message/poller.py` | `_LOCK` | `Lock` | `_STARTED` | 轮询钩子仅启动一次 |

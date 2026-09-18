@@ -38,6 +38,7 @@
 | `report_status` | [附录 B.5](#b5-report_status) |
 | `report_current_stock` | [附录 B.6](#b6-report_current_stock) |
 | `register_message_source` | [附录 B.7](#b7-register_message_source) |
+| `register_route` | [附录 B.11](#b11-register_route) |
 | `push_messages` | [附录 B.8](#b8-push_messages) |
 | `import_experience` | [附录 B.9](#b9-import_experience) |
 | `push_article` | [附录 B.10](#b10-push_article) |
@@ -47,6 +48,12 @@
 | 机制 | 详表 |
 |---|---|
 | `MetricProvider` / `metric_providers` | [附录 C.1](#c1-metricprovider) |
+
+### 键值配置
+
+| 机制 | 详表 |
+|---|---|
+| `env_fields` / `plugin_env` | [附录 D.4](#d4-plugin-env) |
 
 ### 公共类型
 
@@ -183,6 +190,7 @@ python -m duanxian.plugin_cli list
 | `duanxian/hooks.py` | `HookPack`、`HookRunner`、`HookRegistry`、payload 构建 |
 | `duanxian/hook_schemas.py` | `$schema` URL 与版本常量 |
 | `duanxian/message_sources.py` | 插件消息源进程内注册表 |
+| `duanxian/plugin_routes.py` | 插件 HTTP 路由进程内注册表（`/plugin/{id}/...`） |
 | `duanxian/plugin_store.py` | `plugins.json` 读写 |
 | `duanxian/plugin_status.py` | 运行状态存储与 API 合成 |
 | `duanxian/plugin_cli.py` | 命令行管理 |
@@ -892,6 +900,36 @@ _REG.push_messages({
 
 ---
 
+### B.11 `register_route` {#b11-register_route}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 向引擎登记一条 **HTTP 路由**，用于插件自己的前端页或接口。公开 URL 固定为 `/plugin/{plugin_id}/...`，不会覆盖系统 `/api` 或 SPA 路径。停用插件时自动注销。 |
+| **调用方式** | `reg.register_route(path, description="", handler=None, *, html=None, methods=None) -> ImportResult`（须已 `bind_plugin`） |
+| **对应页面** | [插件管理](/settings/plugins) — 每条插件下展示 URL 与说明，点击新标签打开 |
+| **对应 API** | `GET /api/plugins` 响应字段 `routes[]`；页面本身走 `GET /plugin/{id}/...` |
+
+**约束**：
+
+- 须提供 `handler` 或 `html` 之一
+- `path` 相对插件前缀：`""` / `"/"` 为首页 `/plugin/{id}`；`"panel"` 为 `/plugin/{id}/panel`
+- 段只允许 `A-Za-z0-9._~-`，不可含 `..`
+- 默认方法 `GET`（自动带 `HEAD`）；同插件同 path 再登记则更新说明与处理函数
+- `handler` 可无参，或接收名为 `request` 的 `Request`。返回 `str` 当作 HTML，`dict`/`list` 当作 JSON，也可直接返回 FastAPI `Response`
+
+**示例**：
+
+```python
+def on_enable(reg: HookRegistry) -> None:
+    def page():
+        return "<!doctype html><html><body><h1>我的插件</h1></body></html>"
+
+    reg.register_route("", "插件主页", handler=page)
+    # 或：reg.register_route("panel", "状态面板", html="<p>就绪</p>")
+```
+
+---
+
 ## 附录 C：扩展指标
 
 ### C.1 `MetricProvider` {#c1-metricprovider}
@@ -968,6 +1006,7 @@ class HookPack:
     version: str
     schema_bundle: str
     metric_providers: tuple[MetricProvider, ...] = ()
+    env_fields: tuple[PluginEnvField, ...] = ()
     on_register: Callable[[HookRegistry], None] | None = None
     on_enable: Callable[[HookRegistry], None] | None = None
     on_disable: Callable[[], None] | None = None
@@ -1024,3 +1063,36 @@ class HookPack:
 ```
 
 业务数据在 `envelope["payload"]`。各事件 payload 的 `$schema` 常量定义在 `duanxian.hook_schemas`。
+
+### D.4 键值配置 `env_fields` {#d4-plugin-env}
+
+插件可在 `PACK` 上声明管理页要展示的配置项。用户在 [插件管理](/plugins) 展开「配置」，按键值编辑后保存。
+
+落盘位置与注册表同目录：`~/.vibe-astock/plugins.plugin-env`（文件名后缀 `plugin-env`）。按插件 id 分节，一项一行 `KEY=VALUE`。卸载插件时删掉对应分节，不删 `.py`。
+
+```python
+from duanxian.hooks import HookPack, PluginEnvField
+
+PACK = HookPack(
+    name="my-plugin",
+    version="1.0.0",
+    schema_bundle="my-plugin/1.0.0",
+    env_fields=(
+        PluginEnvField("MY_TOKEN", "令牌", "在服务商控制台复制", secret=True),
+        PluginEnvField("MY_HOST", "地址", default="127.0.0.1"),
+    ),
+    on_enable=on_enable,
+)
+```
+
+| 字段 | 说明 |
+|---|---|
+| `key` | 环境变量名，`[A-Za-z_][A-Za-z0-9_]*` |
+| `label` | 管理页上的说明；空则显示 key |
+| `hint` | 补充提示 |
+| `secret` | 为真时输入框默认遮住 |
+| `default` | 仅作输入框占位，不自动写入文件 |
+
+读取：`on_enable` 里 `reg.plugin_env()` 返回已保存的 `dict[str, str]`，没有保存过则为 `{}`。引擎在加载插件模块之前，会把非空项写入进程环境（同名变量被覆盖）；留空的项会从进程环境去掉，随后插件自己的 `.env`（`setdefault`）或代码默认值可以接上。
+
+未声明 `env_fields` 的插件仍可在管理页手工添加键值。保存后，若该插件当前已启用，引擎会重新加载它。改 `.py` 里的声明仍需重启 server 才会出现在表单里（未启用时展开配置会现场读取 `PACK`）。
