@@ -619,6 +619,58 @@ class TestHookRunner:
         assert seen[0]["impact_level"] == "high"
         assert seen[0]["targets"][0]["code"] == "600000"
 
+    def test_emit_short_sprite_hits_only_to_registered_plugins(self):
+        from duanxian import hook_schemas as hs
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
+
+        seen: list[dict] = []
+
+        def _on_hits(ctx, envelope):
+            seen.append(envelope["payload"])
+
+        with_hook = LoadedPlugin(
+            id="with",
+            path="/x",
+            pack=HookPack(
+                name="with",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_short_sprite_hits=_on_hits,
+            ),
+        )
+        without = LoadedPlugin(
+            id="without",
+            path="/y",
+            pack=HookPack(name="without", version="1.0.0", schema_bundle="t/1"),
+        )
+        runner = HookRunner([with_hook, without], HookRegistry())
+        hit = {
+            "id": "hit1",
+            "seq_id": "consec_premium",
+            "name": "连板溢价",
+            "event": "break_up",
+            "speech": "连板溢价，涨幅突破3.2%",
+            "value": 3.2,
+            "unit": "pct",
+        }
+        n = runner.emit_short_sprite_hits(
+            [hit],
+            date="2026-09-18",
+            enabled=True,
+            is_live=True,
+            settled=False,
+        )
+        assert n == 1
+        assert runner.emit_short_sprite_hits([], date="2026-09-18") == 0
+        assert runner.emit_short_sprite_hits([{"seq_id": "x"}], date="2026-09-18") == 0
+        assert len(seen) == 1
+        payload = seen[0]
+        assert payload["$schema"] == hs.SHORT_SPRITE_HITS
+        assert payload["date"] == "2026-09-18"
+        assert payload["is_live"] is True
+        assert payload["hits"][0]["id"] == "hit1"
+        assert payload["hits"][0]["speech"] == "连板溢价，涨幅突破3.2%"
+
     def test_callback_error_does_not_raise(self):
         from duanxian import plugin_status as ps
         from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin

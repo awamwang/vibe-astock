@@ -94,6 +94,7 @@ sequenceDiagram
 | `watchlist.add` | `on_watchlist_add` | `POST /api/watchlist/add` | `watchlist-add/1.0.0` |
 | `watchlist.change` | `on_watchlist_change` | 自选 add / remove / replace | `watchlist-change/1.0.0` |
 | `message.analyzed` | `on_message_analyzed` | AI/规则分析落盘后 | `message-analyzed/1.0.0` |
+| `short_sprite.hits` | `on_short_sprite_hits` | 短线精灵 `tick()` 本拍有新命中、日缓存落盘后 | `short-sprite-hits/1.0.0` |
 
 信封层统一使用 `envelope/1.0.0`。
 

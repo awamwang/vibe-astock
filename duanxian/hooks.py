@@ -96,6 +96,7 @@ class HookPack:
     on_watchlist_add: Callable[[HookContext, dict], None] | None = None
     on_watchlist_change: Callable[[HookContext, dict], None] | None = None
     on_message_analyzed: Callable[[HookContext, dict], None] | None = None
+    on_short_sprite_hits: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 
 
@@ -852,6 +853,30 @@ def build_live_payload(date: str | None = None) -> dict:
     }
 
 
+def build_short_sprite_hits_payload(
+    date: str,
+    hits: list[dict],
+    *,
+    enabled: bool = True,
+    is_live: bool = False,
+    settled: bool = False,
+) -> dict:
+    """构造 short_sprite.hits 事件 payload（本拍新命中，非全日历史）。"""
+    clean: list[dict] = []
+    for hit in hits or []:
+        if isinstance(hit, dict) and hit.get("id"):
+            clean.append(dict(hit))
+    return {
+        "$schema": hs.SHORT_SPRITE_HITS,
+        "schema_version": hs.SCHEMA_VERSION,
+        "date": date,
+        "enabled": bool(enabled),
+        "is_live": bool(is_live),
+        "settled": bool(settled),
+        "hits": clean,
+    }
+
+
 def build_message_analyzed_payload(analyzed: dict) -> dict:
     """从分析消息 dict 抽出插件出站字段。"""
     body = dict(analyzed or {})
@@ -1151,6 +1176,40 @@ class HookRunner:
                 lp,
                 _ctx(day, "message.analyzed", lp),
                 _envelope("message.analyzed", day, payload, lp),
+            )
+        return n
+
+    def emit_short_sprite_hits(
+        self,
+        hits: list[dict],
+        *,
+        date: str | None = None,
+        enabled: bool = True,
+        is_live: bool = False,
+        settled: bool = False,
+    ) -> int:
+        """向已实现 on_short_sprite_hits 的插件派发本拍新命中；无命中则不派发。"""
+        clean = [dict(h) for h in hits or [] if isinstance(h, dict) and h.get("id")]
+        if not clean:
+            return 0
+        day = date or china_today()
+        payload = build_short_sprite_hits_payload(
+            day,
+            clean,
+            enabled=enabled,
+            is_live=is_live,
+            settled=settled,
+        )
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_short_sprite_hits is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_short_sprite_hits,
+                lp,
+                _ctx(day, "short_sprite.hits", lp),
+                _envelope("short_sprite.hits", day, payload, lp),
             )
         return n
 

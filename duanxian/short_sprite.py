@@ -1005,7 +1005,29 @@ def tick() -> dict[str, Any]:
 
     if persist_day is not None and _session:
         atomic_write_json(_day_path(_session), persist_day)
+    _emit_hits_hook(view)
     return view
+
+
+def _emit_hits_hook(view: dict[str, Any]) -> None:
+    """命中落盘后通知插件。须在 _STATE_LOCK 外调用。"""
+    hits = view.get("new_hits") or []
+    if not hits:
+        return
+    try:
+        from . import hooks
+    except ImportError:
+        return
+    try:
+        hooks.RUNNER.emit_short_sprite_hits(
+            hits,
+            date=view.get("date"),
+            enabled=bool(view.get("enabled")),
+            is_live=bool(view.get("is_live")),
+            settled=bool(view.get("settled")),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 短线精灵钩子派发失败：{type(exc).__name__}: {exc}")
 
 
 def snapshot() -> dict[str, Any]:

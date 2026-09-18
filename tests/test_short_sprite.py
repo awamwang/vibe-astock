@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 
 import pytest
 
 from duanxian import short_sprite as ss
+
+_REAL_EMIT_HITS_HOOK = ss._emit_hits_hook
 
 
 class Clock:
@@ -86,6 +89,7 @@ def engine(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "_read_zt_effect", lambda: feeds["zt"])
     monkeypatch.setattr(ss, "_read_resonance", lambda: feeds["res"])
     monkeypatch.setattr(ss, "_read_style_indices", lambda: feeds["st"])
+    monkeypatch.setattr(ss, "_emit_hits_hook", lambda view: None)
     yield {"clock": clock, "feeds": feeds, "tmp": tmp_path}
     ss._reset_runtime_state()
 
@@ -569,3 +573,85 @@ class TestBreakLadder:
         downs = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_down"]
         assert [h["value"] for h in downs] == [pytest.approx(-15), pytest.approx(-30)]
         assert downs[1]["speech"] == "情绪温度，涨幅跌破-30"
+
+
+def _break_premium(engine) -> None:
+    engine["feeds"]["zt"] = _zt(0.0)
+    ss.snapshot()
+    engine["clock"].add(seconds=20)
+    engine["feeds"]["zt"] = _zt(3.3)
+
+
+@pytest.mark.unit
+class TestPluginHook:
+    def test_new_hits_call_emit_hook(self, engine, monkeypatch):
+        seen: list[dict] = []
+        monkeypatch.setattr(ss, "_emit_hits_hook", seen.append)
+        _break_premium(engine)
+        snap = ss.snapshot()
+        hooked = [v for v in seen if v.get("new_hits")]
+        assert hooked
+        assert hooked[-1]["new_hits"][0]["seq_id"] == "consec_premium"
+        assert hooked[-1]["new_hits"][0]["id"] == snap["new_hits"][0]["id"]
+
+    def test_no_hits_skips_runner(self, engine, monkeypatch):
+        from duanxian import hooks
+
+        calls: list[int] = []
+
+        class _Fake:
+            def emit_short_sprite_hits(self, *args, **kwargs):
+                calls.append(1)
+                return 0
+
+        monkeypatch.setattr(hooks, "RUNNER", _Fake())
+        monkeypatch.setattr(ss, "_emit_hits_hook", _REAL_EMIT_HITS_HOOK)
+        ss.snapshot()
+        assert calls == []
+
+    def test_hits_forward_to_runner(self, engine, monkeypatch):
+        from duanxian import hooks
+
+        calls: list[tuple[list, dict]] = []
+
+        class _Fake:
+            def emit_short_sprite_hits(self, hits, **kwargs):
+                calls.append((list(hits), dict(kwargs)))
+                return 1
+
+        monkeypatch.setattr(hooks, "RUNNER", _Fake())
+        monkeypatch.setattr(ss, "_emit_hits_hook", _REAL_EMIT_HITS_HOOK)
+        _break_premium(engine)
+        snap = ss.snapshot()
+        assert calls
+        hits, kwargs = calls[-1]
+        assert hits[0]["id"] == snap["new_hits"][0]["id"]
+        assert hits[0]["seq_id"] == "consec_premium"
+        assert kwargs["date"] == "2026-09-18"
+        assert kwargs["enabled"] is True
+        assert kwargs["is_live"] is True
+        assert kwargs["settled"] is False
+
+    def test_hook_runs_outside_state_lock(self, engine, monkeypatch):
+        acquired: list[bool] = []
+        err: list[BaseException] = []
+
+        def _hook(view):
+            if not view.get("new_hits"):
+                return
+            try:
+                ok = ss._STATE_LOCK.acquire(timeout=1.0)
+                acquired.append(bool(ok))
+                if ok:
+                    ss._STATE_LOCK.release()
+            except BaseException as exc:  # noqa: BLE001
+                err.append(exc)
+
+        monkeypatch.setattr(ss, "_emit_hits_hook", _hook)
+        _break_premium(engine)
+        t = threading.Thread(target=ss.snapshot)
+        t.start()
+        t.join(timeout=3)
+        assert not t.is_alive()
+        assert err == []
+        assert acquired == [True]

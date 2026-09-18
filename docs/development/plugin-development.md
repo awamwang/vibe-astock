@@ -26,6 +26,7 @@
 | `on_watchlist_add` | `watchlist.add` | [附录 A.9](#a9-on_watchlist_add) |
 | `on_watchlist_change` | `watchlist.change` | [附录 A.11](#a11-on_watchlist_change) |
 | `on_message_analyzed` | `message.analyzed` | [附录 A.12](#a12-on_message_analyzed) |
+| `on_short_sprite_hits` | `short_sprite.hits` | [附录 A.13](#a13-on_short_sprite_hits) |
 
 ### 写入接口（插件 → 引擎）
 
@@ -197,6 +198,7 @@ python -m duanxian.plugin_cli list
 | `duanxian/plugin_cli.py` | 命令行管理 |
 | `duanxian/verification.py` | 内置与插件指标合并 |
 | `server.py` / `main.py` | `emit_after_review` 调用点 |
+| `duanxian/short_sprite.py` | `tick()` 新命中落盘后 `emit_short_sprite_hits` |
 
 ---
 
@@ -581,6 +583,60 @@ python -m duanxian.plugin_cli list
 | **回调签名** | `on_message_analyzed(ctx: HookContext, envelope: dict) -> None` |
 
 **`envelope["payload"]` 精简字段**（`$schema` = `message-analyzed/1.0.0`）：`id`、`source_id`、`title`、`summary`、`impact_level`、`ai_impact_level`、`targets`、`analyzed_by`、`raw_ids` 等。
+
+---
+
+### A.13 `on_short_sprite_hits` {#a13-on_short_sprite_hits}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 短线精灵本拍出现新命中时通知插件；插件可自行推送、落表或二次处理。未实现该回调的插件不会收到事件。 |
+| **HookPack 字段** | `on_short_sprite_hits` |
+| **事件名** | `short_sprite.hits` |
+| **触发时机** | `tick()` / `snapshot()`（含 `GET /api/market/short-sprite`、随盘页 `ping`）在 **本拍** 产生新命中、日缓存落盘之后。无新命中不派发。停用精灵后不再检测，因而也不会发本事件。 |
+| **对应页面** | [短线精灵](/short-sprite)；命中弹窗 `/popout/short-sprite` |
+| **对应 API** | `GET /api/market/short-sprite`、`POST /api/market/short-sprite/enabled`（启用后随下次 tick） |
+| **回调签名** | `on_short_sprite_hits(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 结构**（`$schema` = `short-sprite-hits/1.0.0`）：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/short-sprite-hits/1.0.0",
+  "schema_version": "1.0.0",
+  "date": "2026-09-18",
+  "enabled": true,
+  "is_live": true,
+  "settled": false,
+  "hits": [
+    {
+      "id": "a1b2c3",
+      "ts": "2026-09-18T10:05:00",
+      "epoch": 1758161100.0,
+      "seq_id": "consec_premium",
+      "name": "连板溢价",
+      "event": "break_up",
+      "event_label": "突破",
+      "direction": "up",
+      "reversed": false,
+      "value": 3.2,
+      "unit": "pct",
+      "speech": "连板溢价，涨幅突破3.2%",
+      "voice": true
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `date` | 交易日；与精灵场次一致。 |
+| `hits` | **本拍新命中**（与 snapshot 的 `new_hits` 相同），不是全日历史。一次 tick 可含多条。 |
+| `hits[].event` | `speed_up` / `speed_down` / `break_up` / `break_down`。涨速命中另有 `from_value`、`to_value`、`from_ts`。 |
+| `hits[].speech` | 与弹窗播报同一句。`voice` 仅表示规则是否开语音，插件可自定是否出声。 |
+| `hits[].reversed` | 序列是否反向解读（如下跌数增多视为环境转冷）；方向仍以 `event` / `direction` 为准。 |
+
+派发在 `_STATE_LOCK` 外。回调内可再读 `snapshot()`，但不要依赖重入检测；无新命中时不会再次进入本回调。
 
 ---
 
@@ -1036,6 +1092,7 @@ class HookPack:
     on_watchlist_add: Callable[[HookContext, dict], None] | None = None
     on_watchlist_change: Callable[[HookContext, dict], None] | None = None
     on_message_analyzed: Callable[[HookContext, dict], None] | None = None
+    on_short_sprite_hits: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 ```
 

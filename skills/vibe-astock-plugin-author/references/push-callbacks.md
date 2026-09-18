@@ -12,11 +12,12 @@
 | `on_watchlist_add` | `watchlist.add` | `POST /api/watchlist/add`（个股右键添加自选等） |
 | `on_watchlist_change` | `watchlist.change` | 自选 add / remove / `PUT` replace |
 | `on_message_analyzed` | `message.analyzed` | AI/规则分析落盘；`push_messages(auto_analyze=true)` |
+| `on_short_sprite_hits` | `short_sprite.hits` | 短线精灵 `tick()` 本拍有新命中、日缓存落盘后 |
 
 签名：`callback(ctx: HookContext, envelope: dict) -> None`。
 
 信封顶层含 `$schema`（envelope）、`event`、`date`、`emitted_at`、`engine_version`、`plugin`、`payload`。  
-`payload` 内各自有 `metrics-snapshot` / `verification-snapshot` / `budget-snapshot` / `review-saved` 的 `$schema`（见 `duanxian/hook_schemas.py`）。
+`payload` 内各自有 `metrics-snapshot` / `verification-snapshot` / `budget-snapshot` / `review-saved` / `short-sprite-hits` 的 `$schema`（见 `duanxian/hook_schemas.py`）。
 
 ## 复盘路径顺序（每插件）
 
