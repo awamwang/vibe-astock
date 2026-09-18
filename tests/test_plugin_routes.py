@@ -189,3 +189,36 @@ def test_http_dispatch_via_server(routes):
     assert "plugin-hi" in r.text
     r404 = client.get("/plugin/http1/nope")
     assert r404.status_code == 404
+
+
+@pytest.mark.unit
+def test_plugin_page_resolves_name_and_caches_body(routes, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from duanxian.hooks import HookRegistry
+    import server
+
+    seen: dict[str, bytes] = {}
+
+    def _echo(request):
+        seen["body"] = bytes(getattr(request, "_body", b"") or b"")
+        return {"ok": True}
+
+    reg = HookRegistry()
+    reg.bind_plugin("abc12345")
+    reg.register_route("", "首页", html="<p>named-home</p>")
+    reg.register_route("echo", "回声", handler=_echo, methods=("POST",))
+
+    def resolve_id(key: str) -> str:
+        if key == "lark-stock":
+            return "abc12345"
+        raise ValueError(key)
+
+    monkeypatch.setattr("duanxian.plugin_store.resolve_id", resolve_id)
+    client = TestClient(server.app)
+    home = client.get("/plugin/lark-stock")
+    assert home.status_code == 200
+    assert "named-home" in home.text
+    sent = client.post("/plugin/lark-stock/echo", json={"text": "你好"})
+    assert sent.status_code == 200
+    assert "你好".encode() in seen["body"]

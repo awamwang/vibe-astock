@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Eye, EyeOff, FolderOpen, Loader2,
   Plug, Plus, Power, PowerOff, Save, Trash2, Upload,
@@ -121,14 +122,15 @@ function rowsFromEnv(fields: PluginEnvField[], env: Record<string, string>): Env
 }
 
 function PluginEnvPanel({
-  pluginId, pluginName, disabled, onSaved,
+  pluginId, pluginName, disabled, onSaved, initialOpen = false,
 }: {
   pluginId: string;
   pluginName: string;
   disabled: boolean;
   onSaved: () => void;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [file, setFile] = useState("");
@@ -151,6 +153,13 @@ function PluginEnvPanel({
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialOpen) return;
+    setOpen(true);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpen, pluginId]);
 
   const toggle = () => {
     const next = !open;
@@ -356,7 +365,7 @@ function PluginRoutesPanel({ routes }: { routes: PluginRoute[] }) {
 }
 
 function PluginRow({
-  row, busy, onEnable, onDisable, onUninstall, onOpenDir, onEnvSaved,
+  row, busy, onEnable, onDisable, onUninstall, onOpenDir, onEnvSaved, focusConfig = false,
 }: {
   row: PluginRecord;
   busy: boolean;
@@ -365,9 +374,20 @@ function PluginRow({
   onUninstall: () => void;
   onOpenDir: () => void;
   onEnvSaved: () => void;
+  focusConfig?: boolean;
 }) {
+  const rowRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (!focusConfig) return;
+    rowRef.current?.scrollIntoView({ block: "center" });
+  }, [focusConfig]);
+
   return (
-    <li className="rounded-lg border border-border bg-muted/10 px-3 py-3">
+    <li
+      ref={rowRef}
+      className={`rounded-lg border bg-muted/10 px-3 py-3 ${focusConfig ? "border-primary/50" : "border-border"}`}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -387,6 +407,7 @@ function PluginRow({
             pluginName={row.name}
             disabled={busy}
             onSaved={onEnvSaved}
+            initialOpen={focusConfig}
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
@@ -432,6 +453,9 @@ function PluginRow({
 }
 
 export function PluginManagement() {
+  const [searchParams] = useSearchParams();
+  const focusPlugin = searchParams.get("plugin") || "";
+  const openConfig = searchParams.get("config") === "1" && focusPlugin !== "";
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
   const [registryFile, setRegistryFile] = useState("");
   const [envFile, setEnvFile] = useState("");
@@ -655,6 +679,7 @@ export function PluginManagement() {
                 key={row.id}
                 row={row}
                 busy={busy}
+                focusConfig={openConfig && (row.id === focusPlugin || row.name === focusPlugin)}
                 onEnable={() => act(row.id, "enable")}
                 onDisable={() => act(row.id, "disable")}
                 onUninstall={() => act(row.id, "uninstall")}

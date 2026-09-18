@@ -2615,24 +2615,40 @@ def _mount_static() -> None:
 _PLUGIN_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 
 
+def _resolve_plugin_id(plugin_id: str) -> str:
+    """路由段可以是插件 id，也可以是唯一名称（如 lark-stock）。"""
+    from duanxian import plugin_routes as pr
+    from duanxian import plugin_store
+
+    pid = str(plugin_id or "").strip()
+    if pr.list_for_plugin(pid):
+        return pid
+    try:
+        return plugin_store.resolve_id(pid)
+    except ValueError:
+        return pid
+
+
 def _dispatch_plugin_page(plugin_id: str, rest: str, request: Request):
     from duanxian import plugin_routes as pr
     from duanxian.hooks import _plugins_init_done
 
     _plugins_init_done.wait(timeout=60.0)
-    return pr.dispatch(plugin_id, rest, request)
+    return pr.dispatch(_resolve_plugin_id(plugin_id), rest, request)
 
 
 @app.api_route("/plugin/{plugin_id}", methods=list(_PLUGIN_HTTP_METHODS))
-def api_plugin_page_root(plugin_id: str, request: Request):
+async def api_plugin_page_root(plugin_id: str, request: Request):
     """插件登记的前端页 / HTTP 路由（无子路径）。"""
-    return _dispatch_plugin_page(plugin_id, "", request)
+    await request.body()
+    return await asyncio.to_thread(_dispatch_plugin_page, plugin_id, "", request)
 
 
 @app.api_route("/plugin/{plugin_id}/{rest:path}", methods=list(_PLUGIN_HTTP_METHODS))
-def api_plugin_page(plugin_id: str, rest: str, request: Request):
+async def api_plugin_page(plugin_id: str, rest: str, request: Request):
     """插件登记的前端页 / HTTP 路由。"""
-    return _dispatch_plugin_page(plugin_id, rest, request)
+    await request.body()
+    return await asyncio.to_thread(_dispatch_plugin_page, plugin_id, rest, request)
 
 
 _mount_static()

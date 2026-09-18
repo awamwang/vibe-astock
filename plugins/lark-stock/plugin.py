@@ -4,10 +4,12 @@
 配置：在插件管理页展开「配置」填写，或把同目录 .env.example 复制为 .env。
 启用只需 App ID 与 App Secret；云空间、表格、消息接收方可后补。
 管理页保存的值在用户目录 plugins.plugin-env，已填写项优先于 .env。
+启用后登记页面，地址为 /plugin/{插件 id}，插件名 /plugin/lark-stock 同样可打开。
 """
 
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -27,6 +29,7 @@ except ImportError as exc:
 from duanxian.hooks import HookPack, HookRegistry
 from lark_stock.config import ENV_FIELDS, load_config
 from lark_stock.errors import ConfigError
+from lark_stock.page import handle_send, handle_today, render_home
 from lark_stock.service import LarkStock
 
 _service: LarkStock | None = None
@@ -47,6 +50,32 @@ def on_enable(reg: HookRegistry) -> None:
     except ConfigError as exc:
         raise RuntimeError(str(exc)) from exc
     _service = LarkStock(config)
+    plugin_id = reg.plugin_id or "lark-stock"
+    home_url = f"/plugin/{plugin_id}"
+
+    def _open_home() -> str:
+        href = html.escape(home_url, quote=True)
+        return (
+            "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"/>"
+            f"<p>请从<a href=\"{href}\">插件页面</a>操作。</p>"
+        )
+
+    def home() -> str:
+        return render_home(get_service().config, plugin_id)
+
+    def today(request) -> str | dict:
+        if (request.method or "GET").upper() == "GET":
+            return _open_home()
+        return handle_today(get_service(), plugin_id)
+
+    def send(request) -> str | dict:
+        if (request.method or "GET").upper() == "GET":
+            return _open_home()
+        return handle_send(get_service(), request, plugin_id)
+
+    reg.register_route("", "飞书短线与消息", handler=home)
+    reg.register_route("today", "拉取今日短线", handler=today, methods=("GET", "POST"))
+    reg.register_route("send", "发送消息", handler=send, methods=("GET", "POST"))
     reg.report_status("ok", "飞书客户端已就绪")
 
 
