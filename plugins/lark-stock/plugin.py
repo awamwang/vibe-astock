@@ -86,7 +86,7 @@ def on_enable(reg: HookRegistry) -> None:
 
     reg.register_route("", "飞书短线与消息", handler=home)
     reg.register_route("today", "拉取今日短线", handler=today, methods=("GET", "POST"), visible=False)
-    reg.register_route("push", "推送今日短线盯盘", handler=push, methods=("GET", "POST"), visible=False)
+    reg.register_route("push", "推送今日短线盘面", handler=push, methods=("GET", "POST"), visible=False)
     reg.register_route("send", "发送消息", handler=send, methods=("GET", "POST"), visible=False)
     reg.report_status("ok", "飞书客户端已就绪")
 
