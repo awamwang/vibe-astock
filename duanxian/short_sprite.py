@@ -58,15 +58,15 @@ class ShortSpriteConfigError(ValueError):
     """短线精灵配置非法。"""
 
 
-# 盘面序列 + 风格共用行。unit: pct / count / temp / resonance
+# 盘面序列 + 指定风格项 + 风格共用行。unit: pct / count / temp / resonance
 BOARD_SPECS: tuple[dict[str, Any], ...] = (
     {
         "key": "consec_premium",
         "label": "连板溢价",
         "unit": "pct",
         "reversed": False,
-        "speed_up": 1.5,
-        "speed_down": -1.5,
+        "speed_up": 0.5,
+        "speed_down": -0.5,
         "break_up": 3.0,
         "break_down": -3.0,
         "hysteresis": 0.3,
@@ -76,8 +76,8 @@ BOARD_SPECS: tuple[dict[str, Any], ...] = (
         "label": "涨停溢价",
         "unit": "pct",
         "reversed": False,
-        "speed_up": 1.5,
-        "speed_down": -1.5,
+        "speed_up": 0.5,
+        "speed_down": -0.5,
         "break_up": 3.0,
         "break_down": -3.0,
         "hysteresis": 0.3,
@@ -114,6 +114,7 @@ BOARD_SPECS: tuple[dict[str, Any], ...] = (
         "break_up": 15.0,
         "break_down": -15.0,
         "hysteresis": 3.0,
+        "break_ladder": True,
     },
     {
         "key": "qcj_temp",
@@ -125,31 +126,64 @@ BOARD_SPECS: tuple[dict[str, Any], ...] = (
         "break_up": 15.0,
         "break_down": -15.0,
         "hysteresis": 3.0,
+        "break_ladder": True,
     },
     {
         "key": "resonance",
         "label": "打板情绪共振",
         "unit": "resonance",
         "reversed": False,
-        "speed_up": 0.25,
-        "speed_down": -0.25,
+        "speed_up": 0.1,
+        "speed_down": -0.1,
         "break_up": 0.40,
         "break_down": -0.40,
         "hysteresis": 0.08,
     },
 )
 
-STYLE_SPEC: dict[str, Any] = {
-    "key": "style_indices",
-    "label": "短线风格指数",
-    "unit": "pct",
-    "reversed": False,
+_STYLE_THRESH: dict[str, float] = {
     "speed_up": 1.5,
     "speed_down": -1.5,
     "break_up": 3.0,
     "break_down": -3.0,
     "hysteresis": 0.3,
 }
+
+_STYLE_WATCH_THRESH: dict[str, float] = {
+    "speed_up": 1.0,
+    "speed_down": -1.0,
+    "break_up": 2.0,
+    "break_down": -2.0,
+    "hysteresis": 0.3,
+}
+
+STYLE_SPEC: dict[str, Any] = {
+    "key": "style_indices",
+    "label": "短线风格指数",
+    "unit": "pct",
+    "reversed": False,
+    **_STYLE_THRESH,
+}
+
+# 单独成行的风格项；其余风格指数仍走 STYLE_SPEC 共用行。
+STYLE_WATCH_SPECS: tuple[dict[str, Any], ...] = tuple(
+    {
+        "key": key,
+        "label": label,
+        "unit": "pct",
+        "reversed": False,
+        **_STYLE_WATCH_THRESH,
+    }
+    for key, label in (
+        ("mid", "中盘股"),
+        ("low_price", "低价股"),
+        ("cyb", "创业板指"),
+        ("small", "小盘股"),
+        ("large", "大盘股"),
+        ("micro", "微盘股"),
+    )
+)
+_STYLE_WATCH_BY_KEY = {s["key"]: s for s in STYLE_WATCH_SPECS}
 
 _RULE_KEYS = ("monitor", "voice", "speed_up", "speed_down", "break_up", "break_down", "hysteresis")
 _EVENT_SPEECH = {
@@ -165,6 +199,9 @@ _EVENT_LABEL = {
     "break_down": "跌破",
 }
 _ARM_KEYS = ("speed_up", "speed_down", "break_up", "break_down")
+_LADDER_MAX_N = 32
+_ladder_disarmed_up: dict[str, set[int]] = {}
+_ladder_disarmed_down: dict[str, set[int]] = {}
 
 
 @_paths.register_rebind
@@ -235,16 +272,16 @@ def _default_rule(spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _all_specs() -> tuple[dict[str, Any], ...]:
+    return (*BOARD_SPECS, *STYLE_WATCH_SPECS, STYLE_SPEC)
+
+
 def default_rules() -> dict[str, dict[str, Any]]:
-    out = {s["key"]: _default_rule(s) for s in BOARD_SPECS}
-    out[STYLE_SPEC["key"]] = _default_rule(STYLE_SPEC)
-    return out
+    return {s["key"]: _default_rule(s) for s in _all_specs()}
 
 
 def _specs_by_key() -> dict[str, dict[str, Any]]:
-    out = {s["key"]: s for s in BOARD_SPECS}
-    out[STYLE_SPEC["key"]] = STYLE_SPEC
-    return out
+    return {s["key"]: s for s in _all_specs()}
 
 
 def _as_bool(v: object, label: str) -> bool:
@@ -392,7 +429,7 @@ def reset_rules() -> dict[str, dict[str, Any]]:
 def export_config() -> dict[str, Any]:
     values = resolved_rules()
     rules = []
-    for spec in (*BOARD_SPECS, STYLE_SPEC):
+    for spec in _all_specs():
         key = spec["key"]
         rule = values[key]
         rules.append({
@@ -458,6 +495,9 @@ def _style_seq_id(key: str) -> str:
 
 def _config_key_for(seq_id: str) -> str:
     if seq_id.startswith("style:"):
+        item_key = seq_id[6:]
+        if item_key in _STYLE_WATCH_BY_KEY:
+            return item_key
         return STYLE_SPEC["key"]
     return seq_id
 
@@ -493,7 +533,7 @@ def _extract(market: dict[str, dict]) -> tuple[dict[str, Any], dict[str, dict[st
             "reversed": bool(spec["reversed"]),
             "kind": "style" if seq_id.startswith("style:") else "board",
             "value": _finite(value),
-            "config_key": spec["key"] if spec is STYLE_SPEC or spec.get("key") == STYLE_SPEC["key"] else spec["key"],
+            "config_key": spec["key"],
         }
 
     add("consec_premium", BOARD_SPECS[0], zt.get("consec_premium_avg"))
@@ -523,12 +563,9 @@ def _extract(market: dict[str, dict]) -> tuple[dict[str, Any], dict[str, dict[st
             val = _finite(item.get("change_pct"))
             if val is None:
                 continue
-            add(_style_seq_id(key), STYLE_SPEC, val, name=str(item.get("name") or key))
+            spec = _STYLE_WATCH_BY_KEY.get(key) or STYLE_SPEC
+            add(_style_seq_id(key), spec, val, name=str(item.get("name") or key))
 
-    # 风格项的 config_key 一律走共用行
-    for rec in readings.values():
-        if rec["kind"] == "style":
-            rec["config_key"] = STYLE_SPEC["key"]
     return meta, readings
 
 
@@ -597,6 +634,70 @@ def _cross_down(prev: Optional[float], curr: float, th: float) -> bool:
     return prev >= th > curr
 
 
+def _rungs_crossed_up(prev: Optional[float], curr: float, step: float) -> list[int]:
+    """prev <= n*step < curr 的正整数 n。"""
+    if prev is None or not math.isfinite(prev) or not math.isfinite(curr):
+        return []
+    if not math.isfinite(step) or step <= 0:
+        return []
+    out: list[int] = []
+    for n in range(1, _LADDER_MAX_N + 1):
+        th = n * step
+        if not th < curr:
+            break
+        if prev <= th:
+            out.append(n)
+    return out
+
+
+def _rungs_crossed_down(prev: Optional[float], curr: float, step: float) -> list[int]:
+    """prev >= n*step > curr 的正整数 n。step 为负。"""
+    if prev is None or not math.isfinite(prev) or not math.isfinite(curr):
+        return []
+    if not math.isfinite(step) or step >= 0:
+        return []
+    out: list[int] = []
+    for n in range(1, _LADDER_MAX_N + 1):
+        th = n * step
+        if not th > curr:
+            break
+        if prev >= th:
+            out.append(n)
+    return out
+
+
+def _apply_break_ladder(
+    seq_id: str,
+    vs_open: float,
+    prev_v: Optional[float],
+    rule: dict[str, Any],
+    hyst: float,
+    emit: Callable[[str, float], None],
+) -> None:
+    up_step = float(rule["break_up"])
+    down_step = float(rule["break_down"])
+    dis_up = _ladder_disarmed_up.setdefault(seq_id, set())
+    dis_down = _ladder_disarmed_down.setdefault(seq_id, set())
+    if up_step > 0:
+        for n in list(dis_up):
+            if vs_open <= n * up_step - hyst:
+                dis_up.discard(n)
+        for n in _rungs_crossed_up(prev_v, vs_open, up_step):
+            if n in dis_up:
+                continue
+            emit("break_up", n * up_step)
+            dis_up.add(n)
+    if down_step < 0:
+        for n in list(dis_down):
+            if vs_open >= n * down_step + hyst:
+                dis_down.discard(n)
+        for n in _rungs_crossed_down(prev_v, vs_open, down_step):
+            if n in dis_down:
+                continue
+            emit("break_down", n * down_step)
+            dis_down.add(n)
+
+
 def _hit_record(
     *,
     now: _dt.datetime,
@@ -631,6 +732,8 @@ def _switch_session(date: str, payload: dict[str, Any]) -> None:
     _prev_speed.clear()
     _prev_vs.clear()
     _armed.clear()
+    _ladder_disarmed_up.clear()
+    _ladder_disarmed_down.clear()
     _open.clear()
     _hits.clear()
     opens = payload.get("open") if isinstance(payload.get("open"), dict) else {}
@@ -663,7 +766,8 @@ def _copy_view(rules: dict[str, dict[str, Any]]) -> dict[str, Any]:
     sequences = []
     for seq_id, rec in readings.items():
         cfg_key = rec["config_key"]
-        rule = rules.get(cfg_key) or _default_rule(STYLE_SPEC if rec["kind"] == "style" else _specs_by_key()[cfg_key])
+        spec = _specs_by_key().get(cfg_key) or STYLE_SPEC
+        rule = rules.get(cfg_key) or _default_rule(spec)
         current = rec["value"]
         open_rec = _open.get(seq_id)
         open_val = open_rec["value"] if open_rec else None
@@ -712,12 +816,12 @@ def _copy_view(rules: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "last_hit": last_hit,
             "samples": samples,
         })
-    board_ids = [s["key"] for s in BOARD_SPECS]
-    sequences.sort(key=lambda s: (
-        0 if s["kind"] == "board" else 1,
-        board_ids.index(s["id"]) if s["id"] in board_ids else 99,
-        s["name"],
-    ))
+    order = {s["key"]: i for i, s in enumerate(BOARD_SPECS)}
+    order.update({
+        _style_seq_id(s["key"]): len(BOARD_SPECS) + i
+        for i, s in enumerate(STYLE_WATCH_SPECS)
+    })
+    sequences.sort(key=lambda s: (order.get(s["id"], 1000), s["name"]))
     is_live = bool(now_meta.get("is_live"))
     settled = bool(now_meta.get("settled"))
     return {
@@ -789,7 +893,8 @@ def tick() -> dict[str, Any]:
                 current = rec["value"]
                 if current is None:
                     continue
-                rule = rules.get(rec["config_key"]) or _default_rule(STYLE_SPEC)
+                spec = _specs_by_key().get(rec["config_key"]) or STYLE_SPEC
+                rule = rules.get(rec["config_key"]) or _default_rule(spec)
                 arms = _armed.setdefault(seq_id, _armed_default())
                 speed, _, _ = _speed_for(seq_id, now_ts)
                 open_val = _open[seq_id]["value"] if seq_id in _open else None
@@ -798,15 +903,20 @@ def tick() -> dict[str, Any]:
                 monitored = bool(rule["monitor"])
                 voice = bool(rule["voice"])
 
-                def maybe_hit(event: str, value: float, arm_key: str) -> None:
+                def emit_hit(event: str, value: float) -> None:
                     nonlocal day_dirty
-                    if not monitored or not arms.get(arm_key, True):
+                    if not monitored:
                         return
                     hit = _hit_record(now=now, rec=rec, event=event, value=value, voice=voice)
                     _hits.append(hit)
                     _last_new_hits.append(hit)
-                    arms[arm_key] = False
                     day_dirty = True
+
+                def maybe_hit(event: str, value: float, arm_key: str) -> None:
+                    if not arms.get(arm_key, True):
+                        return
+                    emit_hit(event, value)
+                    arms[arm_key] = False
 
                 prev_s = _prev_speed.get(seq_id)
                 if speed is not None:
@@ -822,14 +932,19 @@ def tick() -> dict[str, Any]:
 
                 prev_v = _prev_vs.get(seq_id)
                 if vs_open is not None:
-                    if _cross_up(prev_v, vs_open, float(rule["break_up"])):
-                        maybe_hit("break_up", vs_open, "break_up")
-                    if _cross_down(prev_v, vs_open, float(rule["break_down"])):
-                        maybe_hit("break_down", vs_open, "break_down")
-                    if vs_open <= float(rule["break_up"]) - hyst:
-                        arms["break_up"] = True
-                    if vs_open >= float(rule["break_down"]) + hyst:
-                        arms["break_down"] = True
+                    if spec.get("break_ladder"):
+                        _apply_break_ladder(
+                            seq_id, vs_open, prev_v, rule, hyst, emit_hit,
+                        )
+                    else:
+                        if _cross_up(prev_v, vs_open, float(rule["break_up"])):
+                            maybe_hit("break_up", vs_open, "break_up")
+                        if _cross_down(prev_v, vs_open, float(rule["break_down"])):
+                            maybe_hit("break_down", vs_open, "break_down")
+                        if vs_open <= float(rule["break_up"]) - hyst:
+                            arms["break_up"] = True
+                        if vs_open >= float(rule["break_down"]) + hyst:
+                            arms["break_down"] = True
                     _prev_vs[seq_id] = vs_open
 
         if day_dirty and _session:
@@ -877,6 +992,8 @@ def _reset_runtime_state() -> None:
         _prev_speed.clear()
         _prev_vs.clear()
         _armed.clear()
+        _ladder_disarmed_up.clear()
+        _ladder_disarmed_down.clear()
         _last_new_hits = []
         _last_meta.clear()
         _last_readings.clear()

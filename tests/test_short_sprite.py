@@ -305,7 +305,8 @@ class TestOtherSeries:
         assert down and down[0]["direction"] == "down"
         assert down[0]["reversed"] is True
         temp = [h for h in snap["new_hits"] if h["seq_id"] == "temperature"]
-        assert temp and temp[0]["speech"] == "情绪温度，涨幅突破16"
+        assert temp and temp[0]["speech"] == "情绪温度，涨幅突破15"
+        assert temp[0]["value"] == pytest.approx(15)
         res_hits = [h for h in snap["new_hits"] if h["seq_id"] == "resonance"]
         assert res_hits and res_hits[0]["speech"] == "打板情绪共振，涨幅突破0.410"
 
@@ -362,8 +363,15 @@ class TestConfigAndVoice:
         assert ss.resolved_rules()["consec_premium"]["speed_up"] == pytest.approx(9.9)
         ss.reset_rules()
         rule = ss.resolved_rules()["consec_premium"]
-        assert rule["speed_up"] == pytest.approx(1.5)
+        assert rule["speed_up"] == pytest.approx(0.5)
+        assert rule["speed_down"] == pytest.approx(-0.5)
         assert rule["monitor"] is True
+        zt = ss.resolved_rules()["zt_premium"]
+        assert zt["speed_up"] == pytest.approx(0.5)
+        assert zt["speed_down"] == pytest.approx(-0.5)
+        res = ss.resolved_rules()["resonance"]
+        assert res["speed_up"] == pytest.approx(0.1)
+        assert res["speed_down"] == pytest.approx(-0.1)
 
     def test_voice_flag_on_hit(self, engine):
         ss.save_rules({"consec_premium": {"voice": False}})
@@ -375,3 +383,165 @@ class TestConfigAndVoice:
         hit = next(h for h in snap["new_hits"] if h["seq_id"] == "consec_premium")
         assert hit["voice"] is False
         assert hit["speech"].startswith("连板溢价，")
+
+    def test_export_includes_dedicated_style_watches(self, engine):
+        cfg = ss.export_config()
+        keys = [r["key"] for r in cfg["rules"]]
+        assert keys[:2] == ["consec_premium", "zt_premium"]
+        for key in ("mid", "low_price", "cyb", "small", "large", "micro"):
+            assert key in keys
+            assert key in cfg["defaults"]
+            assert cfg["defaults"][key]["monitor"] is True
+            assert cfg["defaults"][key]["speed_up"] == pytest.approx(1.0)
+            assert cfg["defaults"][key]["speed_down"] == pytest.approx(-1.0)
+            assert cfg["defaults"][key]["break_up"] == pytest.approx(2.0)
+            assert cfg["defaults"][key]["break_down"] == pytest.approx(-2.0)
+        assert cfg["defaults"]["style_indices"]["speed_up"] == pytest.approx(1.5)
+        assert cfg["defaults"]["style_indices"]["break_up"] == pytest.approx(3.0)
+        assert keys[-1] == "style_indices"
+        labels = {r["key"]: r["label"] for r in cfg["rules"]}
+        assert labels["mid"] == "中盘股"
+        assert labels["low_price"] == "低价股"
+        assert labels["cyb"] == "创业板指"
+        assert labels["small"] == "小盘股"
+        assert labels["large"] == "大盘股"
+        assert labels["micro"] == "微盘股"
+
+    def test_dedicated_style_watch_independent_of_shared_row(self, engine):
+        ss.save_rules({"style_indices": {"monitor": False}, "small": {"monitor": True}})
+        engine["feeds"]["st"] = _style(
+            _item("small", "小盘股", 0.0),
+            _item("zt_perf", "昨日涨停表现", 0.0),
+        )
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        engine["feeds"]["st"] = _style(
+            _item("small", "小盘股", 3.2),
+            _item("zt_perf", "昨日涨停表现", 3.2),
+        )
+        snap = ss.snapshot()
+        ids = {h["seq_id"] for h in snap["new_hits"]}
+        assert "style:small" in ids
+        assert "style:zt_perf" not in ids
+        assert _seq(snap, "style:small")["monitored"] is True
+        assert _seq(snap, "style:zt_perf")["monitored"] is False
+        assert _seq(snap, "style:small")["thresholds"]["speed_up"] == pytest.approx(1.0)
+        assert _seq(snap, "style:small")["thresholds"]["break_up"] == pytest.approx(2.0)
+
+    def test_dedicated_watch_off_does_not_follow_shared_row(self, engine):
+        ss.save_rules({"style_indices": {"monitor": True}, "small": {"monitor": False}})
+        engine["feeds"]["st"] = _style(
+            _item("small", "小盘股", 0.0),
+            _item("zt_perf", "昨日涨停表现", 0.0),
+        )
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        engine["feeds"]["st"] = _style(
+            _item("small", "小盘股", 3.2),
+            _item("zt_perf", "昨日涨停表现", 3.2),
+        )
+        snap = ss.snapshot()
+        ids = {h["seq_id"] for h in snap["new_hits"]}
+        assert "style:small" not in ids
+        assert "style:zt_perf" in ids
+        assert _seq(snap, "style:small")["monitored"] is False
+        assert _seq(snap, "style:zt_perf")["monitored"] is True
+
+
+@pytest.mark.unit
+class TestBreakLadder:
+    def _set_temp(self, engine, temperature=50, qcj_temp=40):
+        engine["feeds"]["sb"] = _sb(
+            n_up=2000, n_down=1500, temperature=temperature,
+            qcj_temp=qcj_temp, zt_avg_zr=1.0,
+        )
+
+    def test_rungs_math(self):
+        assert ss._rungs_crossed_up(10, 16, 15) == [1]
+        assert ss._rungs_crossed_up(10, 32, 15) == [1, 2]
+        assert ss._rungs_crossed_up(16, 20, 15) == []
+        assert ss._rungs_crossed_up(16, 31, 15) == [2]
+        assert ss._rungs_crossed_up(None, 32, 15) == []
+        assert ss._rungs_crossed_down(0, -16, -15) == [1]
+        assert ss._rungs_crossed_down(0, -32, -15) == [1, 2]
+        assert ss._rungs_crossed_down(-16, -20, -15) == []
+
+    def test_second_rung_fires(self, engine):
+        self._set_temp(engine, temperature=50)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=66)
+        snap = ss.snapshot()
+        first = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_up"]
+        assert len(first) == 1
+        assert first[0]["value"] == pytest.approx(15)
+        assert first[0]["speech"] == "情绪温度，涨幅突破15"
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=81)
+        snap = ss.snapshot()
+        second = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_up"]
+        assert len(second) == 1
+        assert second[0]["value"] == pytest.approx(30)
+        assert second[0]["speech"] == "情绪温度，涨幅突破30"
+
+    def test_skip_fires_both_rungs(self, engine):
+        self._set_temp(engine, temperature=50)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=82)
+        snap = ss.snapshot()
+        hits = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_up"]
+        assert [h["value"] for h in hits] == [pytest.approx(15), pytest.approx(30)]
+        assert hits[1]["speech"] == "情绪温度，涨幅突破30"
+
+    def test_second_rung_hysteresis(self, engine):
+        self._set_temp(engine, temperature=50)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=82)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=78)  # vs=28, 30-3=27，30 档未回差
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=81)
+        snap = ss.snapshot()
+        assert [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_up"] == []
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=76)  # vs=26 <= 27，30 档回差
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=81)
+        snap = ss.snapshot()
+        hits = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_up"]
+        assert len(hits) == 1
+        assert hits[0]["value"] == pytest.approx(30)
+
+    def test_qcj_temp_ladder_and_premium_not(self, engine):
+        self._set_temp(engine, qcj_temp=40)
+        engine["feeds"]["zt"] = _zt(0.0)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, qcj_temp=72)
+        engine["feeds"]["zt"] = _zt(6.2)
+        snap = ss.snapshot()
+        qcj = [h for h in snap["new_hits"] if h["seq_id"] == "qcj_temp" and h["event"] == "break_up"]
+        assert [h["value"] for h in qcj] == [pytest.approx(15), pytest.approx(30)]
+        prem = [h for h in snap["new_hits"] if h["seq_id"] == "consec_premium" and h["event"] == "break_up"]
+        assert len(prem) == 1
+        assert prem[0]["value"] == pytest.approx(6.2)
+        engine["clock"].add(seconds=20)
+        engine["feeds"]["zt"] = _zt(6.5)
+        snap = ss.snapshot()
+        extra = [h for h in snap["new_hits"] if h["seq_id"] == "consec_premium" and h["event"] == "break_up"]
+        assert extra == []
+
+    def test_down_ladder(self, engine):
+        self._set_temp(engine, temperature=50)
+        ss.snapshot()
+        engine["clock"].add(seconds=20)
+        self._set_temp(engine, temperature=18)
+        snap = ss.snapshot()
+        downs = [h for h in snap["new_hits"] if h["seq_id"] == "temperature" and h["event"] == "break_down"]
+        assert [h["value"] for h in downs] == [pytest.approx(-15), pytest.approx(-30)]
+        assert downs[1]["speech"] == "情绪温度，涨幅跌破-30"

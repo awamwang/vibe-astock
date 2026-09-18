@@ -1656,8 +1656,8 @@ export function ZtKeywordsSettings() {
           <Zap className="h-4 w-4 text-primary" /> 短线精灵
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          每条盘面序列单独设监控、语音、四阈和回差。短线风格指数共用一行，命中仍按单条指数。
-          关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
+          每条盘面序列单独设监控、语音、四阈和回差。中盘股、低价股、创业板指、小盘股、大盘股、微盘股各占一行。其余短线风格指数共用一行，命中仍按单条指数。
+          情绪温度、情绪分的突破/跌破按该行上阈/下阈的整数倍继续报。关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
         </p>
         {spriteLoading ? (
           <p className="text-xs text-muted-foreground">正在读取短线精灵配置…</p>
