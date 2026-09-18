@@ -567,6 +567,13 @@ def test_1254045_explains_field_name_mismatch():
     assert "列名" in text
 
 
+def test_1254061_explains_number_conversion():
+    err = LarkApiError("新增多维表格记录", 1254061, "NumberFieldConvFail", "log-3")
+    text = str(err)
+    assert "1254061" in text
+    assert "百分比" in text
+
+
 def test_upsert_skips_formula_columns():
     from lark_stock.bitable import BitableStore
 
@@ -626,3 +633,87 @@ def test_upsert_skips_formula_columns():
     assert out["action"] == "create"
     assert "公式列" not in created[0]
     assert created[0]["情绪温度"] == 66
+
+
+def test_coerce_text_number_percent_values():
+    from lark_stock.fields import coerce_bitable_value
+
+    assert coerce_bitable_value(72, "text") == "72"
+    assert coerce_bitable_value("12", "number") == 12
+    assert coerce_bitable_value("62%", "number") == 62
+    assert coerce_bitable_value("0.123 偏多", "number") == 0.123
+    assert coerce_bitable_value("偏强", "number") is None
+    assert coerce_bitable_value(40, "percent") == 0.4
+    assert coerce_bitable_value("62%", "percent") == 0.62
+    assert coerce_bitable_value(0.4, "percent") == 0.4
+
+
+def test_upsert_coerces_text_number_percent_columns():
+    from lark_stock.bitable import BitableStore
+
+    class Field:
+        def __init__(self, name, type_, ui, formatter=""):
+            self.field_name = name
+            self.type = type_
+            self.ui_type = ui
+            self.property = SimpleNamespace(formatter=formatter or None)
+
+    class Data:
+        def __init__(self, items=None, has_more=False):
+            self.items = items or []
+            self.has_more = has_more
+            self.page_token = None
+
+    class Resp:
+        def __init__(self, data=None):
+            self.data = data
+
+        def success(self):
+            return True
+
+    created: list[dict] = []
+
+    class FieldApi:
+        def list(self, request):
+            return Resp(Data([
+                Field("日期", 5, "DateTime"),
+                Field("备注", 1, "Text"),
+                Field("涨停数", 2, "Number"),
+                Field("晋级率", 2, "Percent"),
+                Field("打板成功率", 2, "Number", "0.00%"),
+            ]))
+
+    class RecordApi:
+        def search(self, request):
+            return Resp(Data())
+
+        def list(self, request):
+            return Resp(Data())
+
+        def create(self, request):
+            created.append(request.request_body.fields)
+            rec = SimpleNamespace(record_id="rec-new")
+            return Resp(SimpleNamespace(record=rec))
+
+    store = BitableStore(
+        SimpleNamespace(bitable=SimpleNamespace(v1=SimpleNamespace(
+            app_table_field=FieldApi(),
+            app_table_record=RecordApi(),
+        ))),
+        _config(bitable_app_token="app", bitable_table_id="tbl"),
+    )
+    out = store.upsert_by_date("日期", "2026-09-18", {
+        "日期": "2026-09-18",
+        "备注": 72,
+        "涨停数": "12",
+        "晋级率": 40,
+        "打板成功率": "62%",
+        "龙头": "某龙头",
+    })
+    assert out["action"] == "create"
+    body = created[0]
+    assert body["备注"] == "72"
+    assert body["涨停数"] == 12
+    assert body["晋级率"] == 0.4
+    assert body["打板成功率"] == 0.62
+    assert "龙头" not in body

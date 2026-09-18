@@ -8,7 +8,12 @@ from typing import Any
 
 from .config import LarkConfig
 from .errors import LarkApiError, raise_if_failed
-from .fields import day_tokens, shanghai_midnight_ms, value_matches_day
+from .fields import (
+    coerce_bitable_value,
+    day_tokens,
+    shanghai_midnight_ms,
+    value_matches_day,
+)
 
 _DATE_TYPES = frozenset({5, 1001, 1002})
 _DATE_UI = frozenset({"DateTime", "CreatedTime", "ModifiedTime"})
@@ -171,7 +176,9 @@ class BitableStore:
             ftype = getattr(field, "type", None)
             if ui in _DATE_UI or ftype in _DATE_TYPES:
                 kind = "date"
-            elif ftype == 2 or ui in {"Number", "Currency", "Progress", "Percent"}:
+            elif _is_percent_field(ui, field):
+                kind = "percent"
+            elif ftype == 2 or ui in {"Number", "Currency", "Rating"}:
                 kind = "number"
             else:
                 kind = "text"
@@ -193,7 +200,10 @@ class BitableStore:
             _kind, ftype, ui = catalog[actual]
             if ftype in _READONLY_TYPES or ui in _READONLY_UI:
                 continue
-            out[actual] = value
+            converted = coerce_bitable_value(value, _kind)
+            if converted is None:
+                continue
+            out[actual] = converted
         return out, unknown, catalog
 
     def _raise_if_write_failed(self, response: Any, action: str, fields: dict[str, Any]) -> None:
@@ -201,20 +211,26 @@ class BitableStore:
         try:
             raise_if_failed(response, action)
         except LarkApiError as exc:
-            if exc.code != 1254045:
+            if exc.code not in {1254045, 1254060, 1254061}:
                 raise
             catalog = self._field_catalog()
-            if not catalog:
-                names = "、".join(f"「{name}」" for name in fields)
-                extra = f"飞书未指出具体列；本次写入了：{names}。请对照表格实际列名。"
+            if exc.code == 1254045:
+                if not catalog:
+                    names = "、".join(f"「{name}」" for name in fields)
+                    extra = f"飞书未指出具体列；本次写入了：{names}。请对照表格实际列名。"
+                else:
+                    unknown = [
+                        name for name in fields if _canonical_field_name(name, catalog) is None
+                    ]
+                    extra = (
+                        _unknown_fields_message(unknown, catalog)
+                        if unknown
+                        else "请核对列名是否完全一致，或检查高级权限是否隐藏了部分列。"
+                    )
             else:
-                unknown = [
-                    name for name in fields if _canonical_field_name(name, catalog) is None
-                ]
                 extra = (
-                    _unknown_fields_message(unknown, catalog)
-                    if unknown
-                    else "请核对列名是否完全一致，或检查高级权限是否隐藏了部分列。"
+                    "数字列须传 JSON 数字，百分比列传 0.5 表示 50%，文本列传字符串。"
+                    "请核对写入值是否与列类型一致。"
                 )
             raise LarkApiError(action, exc.code, f"{exc.msg}。{extra}", exc.log_id) from exc
 
@@ -325,6 +341,21 @@ def _record_items(data: Any) -> list[dict[str, Any]]:
 
 def _norm_field_name(name: str) -> str:
     return unicodedata.normalize("NFKC", str(name or "")).strip()
+
+
+def _field_formatter(field: Any) -> str:
+    prop = getattr(field, "property", None)
+    if prop is None:
+        return ""
+    if isinstance(prop, dict):
+        return str(prop.get("formatter") or "")
+    return str(getattr(prop, "formatter", "") or "")
+
+
+def _is_percent_field(ui: str, field: Any) -> bool:
+    if ui in {"Percent", "Progress"}:
+        return True
+    return "%" in _field_formatter(field)
 
 
 def _canonical_field_name(name: str, catalog: dict[str, Any]) -> str | None:

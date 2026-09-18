@@ -1,8 +1,9 @@
-"""多维表格单元格的日期匹配与展示。"""
+"""多维表格单元格的日期匹配、展示，以及写入前的类型转换。"""
 
 from __future__ import annotations
 
 import datetime
+import re
 from typing import Any
 
 try:
@@ -122,3 +123,60 @@ def format_cell(value: Any) -> str:
                 return format_cell(value[key])
         return "—"
     return str(value)
+
+
+_NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def parse_number(value: Any) -> float | int | None:
+    """抽出可写入数字列的值。去百分号、千分位，混排文本取第一个数字。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (value != value or value in {float("inf"), float("-inf")}):
+            return None
+        return int(value) if isinstance(value, float) and value.is_integer() else value
+    text = flatten_cell(value)
+    if not text:
+        return None
+    compact = text.replace(",", "").replace("%", "").replace("％", "").strip()
+    try:
+        number = float(compact)
+    except ValueError:
+        match = _NUM_RE.search(text.replace(",", ""))
+        if not match:
+            return None
+        try:
+            number = float(match.group(0))
+        except ValueError:
+            return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def parse_percent(value: Any) -> float | None:
+    """飞书百分比列：0.5 表示 50%。带 % 或绝对值 ≥ 1 的按百分数点除以 100。"""
+    raw = flatten_cell(value)
+    had_percent = "%" in raw or "％" in raw
+    number = parse_number(value)
+    if number is None:
+        return None
+    amount = float(number)
+    if had_percent or abs(amount) >= 1:
+        amount /= 100.0
+    return round(amount, 8)
+
+
+def coerce_bitable_value(value: Any, kind: str) -> Any | None:
+    """按列类型转成飞书可写的文本、数字或百分比。转不了则返回 None。"""
+    if value is None or value == "":
+        return None
+    if kind == "date":
+        return value
+    if kind == "percent":
+        return parse_percent(value)
+    if kind == "number":
+        return parse_number(value)
+    text = flatten_cell(value)
+    return text or None
