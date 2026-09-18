@@ -2,6 +2,7 @@
 
 依赖：pip install -r plugins/lark-stock/requirements.txt
 配置：在插件管理页展开「配置」填写，或把同目录 .env.example 复制为 .env。
+启用只需 App ID 与 App Secret；云空间、表格、消息接收方可后补。
 管理页保存的值在用户目录 plugins.plugin-env，已填写项优先于 .env。
 """
 
@@ -39,7 +40,7 @@ def get_service() -> LarkStock:
 
 
 def on_enable(reg: HookRegistry) -> None:
-    """校验 .env 并建好客户端。缺配置时把要填的变量名报给插件状态。"""
+    """校验应用凭证并建好客户端。资源标识未填不影响启用。"""
     global _service
     try:
         config = load_config()

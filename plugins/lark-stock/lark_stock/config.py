@@ -1,4 +1,7 @@
-"""从插件目录 .env 与进程环境读取飞书凭证和资源标识。"""
+"""从插件目录 .env 与进程环境读取飞书凭证和资源标识。
+
+启用只要求应用 App ID 与 App Secret，其余资源标识可后补。
+"""
 
 from __future__ import annotations
 
@@ -17,16 +20,10 @@ ENV_FILE = _PLUGIN_DIR / ".env"
 _RECEIVE_ID_TYPES = frozenset({"open_id", "user_id", "union_id", "email", "chat_id"})
 _DOMAINS = frozenset({"feishu", "lark"})
 
-# (变量名, 空值时提示给用户的说明)
+# (变量名, 空值时提示给用户的说明)。资源标识未填不影响启用。
 _REQUIRED: tuple[tuple[str, str], ...] = (
     ("LARK_APP_ID", "飞书应用 App ID"),
     ("LARK_APP_SECRET", "飞书应用 App Secret"),
-    ("LARK_DRIVE_FOLDER_TOKEN", "云空间文件夹 token"),
-    ("LARK_BITABLE_APP_TOKEN", "多维表格 app_token"),
-    ("LARK_BITABLE_TABLE_ID", "多维表格数据表 table_id"),
-    ("LARK_SPREADSHEET_TOKEN", "电子表格 spreadsheet token"),
-    ("LARK_SHEET_ID", "电子表格工作表 sheet id"),
-    ("LARK_IM_RECEIVE_ID", "消息接收方 ID"),
 )
 
 @dataclass(frozen=True)
@@ -142,7 +139,7 @@ ENV_FIELDS: tuple[PluginEnvField, ...] = (
 
 @dataclass(frozen=True)
 class LarkConfig:
-    """启用插件所需的应用凭证和四项资源标识。"""
+    """应用凭证，以及可后补的云空间、表格和消息接收方。未填的资源字段为空字符串。"""
 
     app_id: str
     app_secret: str
@@ -180,41 +177,45 @@ def load_env_file(path: Path) -> None:
             os.environ.setdefault(key, value)
 
 
+def _env(key: str) -> str:
+    return os.environ.get(key, "").strip()
+
+
 def load_config(env_file: Path | None = None) -> LarkConfig:
-    """读取配置。缺必填项时列出变量名，要求先填 .env。"""
+    """读取配置。只缺 App ID 或 App Secret 时阻止启用，其余资源标识可留空。"""
     load_env_file(env_file or ENV_FILE)
-    missing = [f"{key}（{label}）" for key, label in _REQUIRED if not os.environ.get(key, "").strip()]
+    missing = [f"{key}（{label}）" for key, label in _REQUIRED if not _env(key)]
     if missing:
         lines = "\n".join(f"- {item}" for item in missing)
         raise ConfigError(
-            "飞书插件配置未填完。请把 plugins/lark-stock/.env.example 复制为 "
+            "飞书插件缺少应用凭证。请把 plugins/lark-stock/.env.example 复制为 "
             f"plugins/lark-stock/.env 并填写：\n{lines}"
         )
 
-    domain = os.environ.get("LARK_DOMAIN", "feishu").strip().lower() or "feishu"
+    domain = _env("LARK_DOMAIN").lower() or "feishu"
     if domain not in _DOMAINS:
         raise ConfigError("LARK_DOMAIN 只能是 feishu 或 lark")
 
-    receive_id_type = os.environ.get("LARK_IM_RECEIVE_ID_TYPE", "chat_id").strip() or "chat_id"
+    receive_id_type = _env("LARK_IM_RECEIVE_ID_TYPE") or "chat_id"
     if receive_id_type not in _RECEIVE_ID_TYPES:
         allowed = "、".join(sorted(_RECEIVE_ID_TYPES))
         raise ConfigError(f"LARK_IM_RECEIVE_ID_TYPE 只能是 {allowed}")
 
     return LarkConfig(
-        app_id=os.environ["LARK_APP_ID"].strip(),
-        app_secret=os.environ["LARK_APP_SECRET"].strip(),
+        app_id=_env("LARK_APP_ID"),
+        app_secret=_env("LARK_APP_SECRET"),
         domain=domain,
-        drive_folder_token=os.environ["LARK_DRIVE_FOLDER_TOKEN"].strip(),
-        bitable_app_token=os.environ["LARK_BITABLE_APP_TOKEN"].strip(),
-        bitable_table_id=os.environ["LARK_BITABLE_TABLE_ID"].strip(),
-        duanxian_bitable_app_token=os.environ.get("DUANXIAN_BITABLE_APP_TOKEN", "").strip(),
-        duanxian_bitable_table_id=os.environ.get("DUANXIAN_BITABLE_TABLE_ID", "").strip(),
+        drive_folder_token=_env("LARK_DRIVE_FOLDER_TOKEN"),
+        bitable_app_token=_env("LARK_BITABLE_APP_TOKEN"),
+        bitable_table_id=_env("LARK_BITABLE_TABLE_ID"),
+        duanxian_bitable_app_token=_env("DUANXIAN_BITABLE_APP_TOKEN"),
+        duanxian_bitable_table_id=_env("DUANXIAN_BITABLE_TABLE_ID"),
         duanxian_columns={
-            col.key: os.environ.get(col.key, "").strip() or col.label
+            col.key: _env(col.key) or col.label
             for col in DUANXIAN_BITABLE_COLUMNS
         },
-        spreadsheet_token=os.environ["LARK_SPREADSHEET_TOKEN"].strip(),
-        sheet_id=os.environ["LARK_SHEET_ID"].strip(),
+        spreadsheet_token=_env("LARK_SPREADSHEET_TOKEN"),
+        sheet_id=_env("LARK_SHEET_ID"),
         im_receive_id_type=receive_id_type,
-        im_receive_id=os.environ["LARK_IM_RECEIVE_ID"].strip(),
+        im_receive_id=_env("LARK_IM_RECEIVE_ID"),
     )
