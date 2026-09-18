@@ -74,8 +74,8 @@ def on_enable(reg: HookRegistry) -> None:
         return handle_send(get_service(), request, plugin_id)
 
     reg.register_route("", "飞书短线与消息", handler=home)
-    reg.register_route("today", "拉取今日短线", handler=today, methods=("GET", "POST"))
-    reg.register_route("send", "发送消息", handler=send, methods=("GET", "POST"))
+    reg.register_route("today", "拉取今日短线", handler=today, methods=("GET", "POST"), visible=False)
+    reg.register_route("send", "发送消息", handler=send, methods=("GET", "POST"), visible=False)
     reg.report_status("ok", "飞书客户端已就绪")
 
 

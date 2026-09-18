@@ -62,6 +62,19 @@ class TestPluginRouteRegistry:
         assert isinstance(resp, HTMLResponse)
         assert b"hello" in resp.body
 
+    def test_hidden_route_stays_callable(self, routes):
+        from duanxian.hooks import HookRegistry
+
+        reg = HookRegistry()
+        reg.bind_plugin("plug1")
+        reg.register_route("", "首页", html="<p>home</p>")
+        reg.register_route("send", "发送", html="<p>api</p>", visible=False)
+        rows = routes.as_route_dicts("plug1")
+        assert [row["path"] for row in rows] == [""]
+        resp = routes.dispatch("plug1", "send", _request(path="/plugin/plug1/send"))
+        assert resp.status_code == 200
+        assert b"api" in resp.body
+
     def test_root_path_and_handler_request(self, routes):
         from duanxian.hooks import HookRegistry
 

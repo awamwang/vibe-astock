@@ -35,6 +35,7 @@ class PluginRoute:
     methods: tuple[str, ...]
     handler: Callable[..., Any]
     registered_at: str
+    visible: bool = True
 
 
 def public_url(plugin_id: str, path: str = "") -> str:
@@ -105,8 +106,12 @@ def register(
     handler: Callable[..., Any] | None = None,
     html: str | None = None,
     methods: Sequence[str] | None = None,
+    visible: bool = True,
 ) -> PluginRoute:
-    """登记一条插件路由；同插件同 path 可重复注册以更新说明与处理函数。"""
+    """登记一条插件路由；同插件同 path 可重复注册以更新说明与处理函数。
+
+    ``visible=False`` 的路由仍可访问，但不出现在插件管理页。
+    """
     pid = str(plugin_id or "").strip()
     if not pid:
         raise ValueError("plugin_id 不能为空")
@@ -133,6 +138,7 @@ def register(
             methods=meth,
             handler=fn,
             registered_at=existing.registered_at if existing else now,
+            visible=bool(visible),
         )
         _ROUTES[key] = rec
         return rec
@@ -174,7 +180,7 @@ def list_for_plugin(plugin_id: str) -> list[PluginRoute]:
 
 
 def as_route_dicts(plugin_id: str) -> list[dict[str, Any]]:
-    """供 ``GET /api/plugins`` 列表展示。"""
+    """供 ``GET /api/plugins`` 列表展示。不包含 ``visible=False`` 的路由。"""
     return [
         {
             "url": r.url,
@@ -183,6 +189,7 @@ def as_route_dicts(plugin_id: str) -> list[dict[str, Any]]:
             "methods": list(r.methods),
         }
         for r in list_for_plugin(plugin_id)
+        if r.visible
     ]
 
 
