@@ -1,7 +1,8 @@
 """飞书插件入口。
 
 依赖：pip install -r plugins/lark-stock/requirements.txt
-配置：把 plugins/lark-stock/.env.example 复制为 .env 并填写。
+配置：在插件管理页展开「配置」填写，或把同目录 .env.example 复制为 .env。
+管理页保存的值在用户目录 plugins.plugin-env，已填写项优先于 .env。
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ except ImportError as exc:
     ) from exc
 
 from duanxian.hooks import HookPack, HookRegistry
-from lark_stock.config import load_config
+from lark_stock.config import ENV_FIELDS, load_config
 from lark_stock.errors import ConfigError
 from lark_stock.service import LarkStock
 
@@ -57,6 +58,7 @@ PACK = HookPack(
     name="lark-stock",
     version="0.1.0",
     schema_bundle="lark-stock/0.1.0",
+    env_fields=ENV_FIELDS,
     on_enable=on_enable,
     on_disable=on_disable,
 )

@@ -5,9 +5,10 @@
 ## 注册表
 
 - 路径：`~/.vibe-astock/plugins.json`
+- 键值配置：同目录 `plugins.plugin-env`（后缀 `plugin-env`）。`HookPack.env_fields` 声明管理页要展示的项；`HookRegistry.plugin_env()` 读取已保存的键值。保存后若插件已启用会重新加载。`uninstall` 删掉该插件这一节
 - CLI：`python -m duanxian.plugin_cli`（`list` / `register` / `enable` / `disable` / `uninstall`）
 - `register` 校验文件可加载且含合法 `PACK`；**不复制**文件，路径须稳定
-- `uninstall` 只删注册表项，不删 `.py`
+- `uninstall` 只删注册表项和该插件的键值分节，不删 `.py`
 
 ## 加载规则
 
@@ -22,6 +23,7 @@
 |------|----------------|
 | enable / disable / uninstall | 即时（同进程） |
 | register 且已启用 | 即时热加载 |
+| 保存管理页键值配置 | 已启用则重新加载；停用则下次启用生效 |
 | 修改插件 `.py` | **需重启进程** |
 | 独立 CLI 改注册表 | 不影响其他已运行 server |
 

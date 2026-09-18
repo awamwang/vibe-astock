@@ -189,6 +189,9 @@ def uninstall(name_or_id: str) -> PluginRecord:
     if hit is None:
         raise ValueError(f"未找到插件：{pid}")
     save_registry({**data, "plugins": kept})
+    from . import plugin_env as penv
+
+    penv.delete_section(hit.id)
     return hit
 
 

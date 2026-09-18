@@ -11,6 +11,7 @@
 | `override_budget_phase` | 覆盖某日仓位档 | `date`、`phase`（或清除） |
 | `import_watchlist` | 自选股 | `replace=true` 全量，或 `merge=true` 按来源合并 |
 | `report_status` | 插件管理页状态 | `level`：`ok`/`info`/`error` 等；`message`、`detail` |
+| `plugin_env` | 读取已保存的键值配置 | 返回 `dict[str, str]`；文件是用户目录 `plugins.plugin-env` |
 | `report_current_stock` | 当前看盘股 | `code` 必填 6 位；未变返回 `detail=unchanged` |
 | `register_message_source` | 登记消息源 | 见 `message-source.md` |
 | `push_messages` | 标准格式推送消息 | 见 `message-source.md` |

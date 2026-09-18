@@ -12,6 +12,7 @@ def on_enable(reg: HookRegistry) -> None:
     """进程加载或管理页启用时调用；可登记消息源、启动后台任务。"""
     global _REG, _PID
     _REG, _PID = reg, reg.plugin_id
+    # saved = reg.plugin_env()
     # reg.register_message_source("my_feed", "我的快讯")
     reg.report_status("ok", "已启用")
 
@@ -27,6 +28,7 @@ PACK = HookPack(
     name="minimal-example",
     version="1.0.0",
     schema_bundle="minimal-example/1.0.0",
+    # env_fields=(PluginEnvField("MY_TOKEN", "令牌", secret=True),),
     on_enable=on_enable,
     on_disable=on_disable,
 )

@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from duanxian.hooks import PluginEnvField
+
 from .errors import ConfigError
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +27,44 @@ _REQUIRED: tuple[tuple[str, str], ...] = (
     ("LARK_SPREADSHEET_TOKEN", "电子表格 spreadsheet token"),
     ("LARK_SHEET_ID", "电子表格工作表 sheet id"),
     ("LARK_IM_RECEIVE_ID", "消息接收方 ID"),
+)
+
+ENV_FIELDS: tuple[PluginEnvField, ...] = (
+    PluginEnvField("LARK_APP_ID", "应用 App ID", "飞书开放平台 → 应用 → 凭证与基础信息"),
+    PluginEnvField("LARK_APP_SECRET", "应用 App Secret", secret=True),
+    PluginEnvField("LARK_DOMAIN", "开放平台域名", "feishu（国内）或 lark（国际）", default="feishu"),
+    PluginEnvField(
+        "LARK_DRIVE_FOLDER_TOKEN",
+        "云空间文件夹 token",
+        "打开目标文件夹，链接里 /folder/ 后面那一段",
+        secret=True,
+    ),
+    PluginEnvField(
+        "LARK_BITABLE_APP_TOKEN",
+        "多维表格 app_token",
+        "链接 /base/ 后面",
+        secret=True,
+    ),
+    PluginEnvField(
+        "LARK_BITABLE_TABLE_ID",
+        "多维表格 table_id",
+        "链接 table= 后面",
+        secret=True,
+    ),
+    PluginEnvField(
+        "LARK_SPREADSHEET_TOKEN",
+        "电子表格 token",
+        "链接 /sheets/ 后面",
+        secret=True,
+    ),
+    PluginEnvField("LARK_SHEET_ID", "工作表 sheet id", "链接 sheet= 后面", secret=True),
+    PluginEnvField(
+        "LARK_IM_RECEIVE_ID_TYPE",
+        "消息接收方类型",
+        "chat_id / open_id / user_id / union_id / email",
+        default="chat_id",
+    ),
+    PluginEnvField("LARK_IM_RECEIVE_ID", "消息接收方 ID", secret=True),
 )
 
 
