@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap, Search } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -123,6 +123,12 @@ function groupSpriteDrafts(rows: SpriteDraft[]): { id: string; label: string; ro
   return groups;
 }
 
+function spriteDraftMatches(row: SpriteDraft, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return [row.label, row.key, row.group_label].some((s) => s.toLowerCase().includes(needle));
+}
+
 type PhaseDraft = {
   phase: string;
   capTotalPct: string;
@@ -192,8 +198,9 @@ function refForField(
 }
 
 export function ZtKeywordsSettings() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = parseKeywordsSection(searchParams.get("section"));
+  const spriteQuery = searchParams.get("q") ?? "";
 
   const [tags, setTags] = useState<string[]>([]);
   const [tagsLoading, setTagsLoading] = useState(true);
@@ -526,6 +533,23 @@ export function ZtKeywordsSettings() {
       setThSaving(false);
     }
   };
+
+  const setSpriteQuery = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("section", "short-sprite");
+      if (value) next.set("q", value);
+      else next.delete("q");
+      return next;
+    }, { replace: true });
+  };
+
+  const spriteGroups = useMemo(
+    () => groupSpriteDrafts(spriteDrafts)
+      .map((g) => ({ ...g, rows: g.rows.filter((r) => spriteDraftMatches(r, spriteQuery)) }))
+      .filter((g) => g.rows.length > 0),
+    [spriteDrafts, spriteQuery],
+  );
 
   const persistSprite = async () => {
     const rules: Record<string, Record<string, number | boolean>> = {};
@@ -1673,11 +1697,24 @@ export function ZtKeywordsSettings() {
           按短线风格的分类分区：每条序列单独设监控、语音、四阈和回差。不把短线风格指数整组当一条指标。
           情绪温度、情绪分的突破/跌破按该行上阈/下阈的整数倍继续报。关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
         </p>
+        <div className="relative mb-3">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={spriteQuery}
+            onChange={(e) => setSpriteQuery(e.target.value)}
+            placeholder="搜索配置名称、key…"
+            className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
+          />
+        </div>
         {spriteLoading ? (
           <p className="text-xs text-muted-foreground">正在读取短线精灵配置…</p>
+        ) : spriteGroups.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {spriteQuery.trim() ? `没有匹配「${spriteQuery.trim()}」的配置。` : "暂无配置。"}
+          </p>
         ) : (
           <div className="space-y-4">
-            {groupSpriteDrafts(spriteDrafts).map((g) => (
+            {spriteGroups.map((g) => (
               <div key={g.id}>
                 <h4 className="mb-1 text-[11px] font-semibold text-muted-foreground">{g.label}</h4>
                 <div className="divide-y divide-border/40 rounded-lg border border-border/50">

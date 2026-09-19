@@ -22,7 +22,8 @@ import {
   type StyleRotation,
 } from "@/lib/styleIndices";
 import { delayUntilNextUnixSlot } from "@/lib/wallClock";
-import { pingShortSprite } from "@/lib/shortSprite";
+import { fetchShortSpriteConfig, pingShortSprite } from "@/lib/shortSprite";
+import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
 
 const CUM_EXCESS_GROUPS = new Set([
@@ -64,12 +65,28 @@ function Tag({ children, className }: { children: string; className: string }) {
   );
 }
 
+function itemMetricBits(it: StyleIndexItem): string[] {
+  const bits = [
+    `上场差 ${formatStyleDelta(it.change_pct_delta)}`,
+    `位次 ${formatRankDelta(it.excess_rank_delta)}`,
+    `z ${formatZscore(it.zscore)}`,
+  ];
+  if (CUM_EXCESS_GROUPS.has(it.group) && it.key !== "csi_all") {
+    bits.push(`累计超额 ${it.cum_excess == null ? "不足" : formatStylePct(it.cum_excess)}`);
+  }
+  if (it.close_extreme != null) {
+    bits.push(`近20场收盘 ${it.close_extreme}`);
+  }
+  return bits;
+}
+
 function GroupCard({
-  group, hotspotKeys, leadKey,
+  group, hotspotKeys, leadKey, spriteWatchKeys,
 }: {
   group: StyleIndexGroup;
   hotspotKeys: Set<string>;
   leadKey: string | undefined;
+  spriteWatchKeys: Set<string>;
 }) {
   return (
     <GlassCard className="p-4">
@@ -78,43 +95,49 @@ function GroupCard({
         {group.items.map((it) => (
           <div
             key={it.key}
-            className="flex items-baseline justify-between gap-3 border-b border-border/40 py-1.5 last:border-0"
+            className="border-b border-border/40 py-1 last:border-0"
           >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline">
-                <span className="truncate text-sm">{it.name}</span>
-                {hotspotKeys.has(it.key) && (
-                  <Tag className="bg-danger/15 text-danger">热点</Tag>
-                )}
-                {!hotspotKeys.has(it.key) && leadKey === it.key && (
-                  <Tag className="bg-primary/15 text-primary">组内领涨</Tag>
-                )}
-                {it.width_flag && (
-                  <Tag className="bg-warning/15 text-warning">{it.width_flag}</Tag>
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-baseline">
+                  <span className="truncate text-sm">{it.name}</span>
+                  {hotspotKeys.has(it.key) && (
+                    <Tag className="bg-danger/15 text-danger">热点</Tag>
+                  )}
+                  {!hotspotKeys.has(it.key) && leadKey === it.key && (
+                    <Tag className="bg-primary/15 text-primary">组内领涨</Tag>
+                  )}
+                  {it.width_flag && (
+                    <Tag className="bg-warning/15 text-warning">{it.width_flag}</Tag>
+                  )}
+                  {spriteWatchKeys.has(it.key) && (
+                    <Link
+                      to={keywordsSettingsTo("short-sprite", it.name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-1.5 inline-flex shrink-0 rounded border border-primary/35 px-1.5 py-px text-[10px] font-medium leading-4 text-primary hover:bg-primary/15"
+                    >
+                      监控
+                    </Link>
+                  )}
+                </div>
+                {it.note && (
+                  <div className="truncate text-[10px] leading-tight text-muted-foreground/70">{it.note}</div>
                 )}
               </div>
-              {it.note && (
-                <div className="truncate text-[10px] leading-tight text-muted-foreground/70">{it.note}</div>
-              )}
+              <div className="shrink-0 text-right">
+                <div className={cn("font-mono text-base font-bold tabular-nums", pctColor(it.change_pct))}>
+                  {formatStylePct(it.change_pct)}
+                </div>
+                {breadth(it.up, it.down) && (
+                  <div className="font-mono text-[10px] text-muted-foreground/60">{breadth(it.up, it.down)}</div>
+                )}
+              </div>
             </div>
-            <div className="shrink-0 text-right">
-              <div className={cn("font-mono text-base font-bold tabular-nums", pctColor(it.change_pct))}>
-                {formatStylePct(it.change_pct)}
-              </div>
-              {breadth(it.up, it.down) && (
-                <div className="font-mono text-[10px] text-muted-foreground/60">{breadth(it.up, it.down)}</div>
-              )}
-              <div className="mt-0.5 max-w-[11rem] text-right text-[10px] leading-tight text-muted-foreground/70">
-                <div>上场已定稿涨幅差 {formatStyleDelta(it.change_pct_delta)}</div>
-                <div>超额位次 {formatRankDelta(it.excess_rank_delta)}</div>
-                <div>z（N=10）{formatZscore(it.zscore)}</div>
-                {CUM_EXCESS_GROUPS.has(it.group) && it.key !== "csi_all" && (
-                  <div>累计超额（N=10）{it.cum_excess == null ? "不足" : formatStylePct(it.cum_excess)}</div>
-                )}
-                {it.close_extreme != null && (
-                  <div>近 20 场收盘 {it.close_extreme}</div>
-                )}
-              </div>
+            <div className="mt-0.5 flex flex-wrap gap-x-2.5 text-[10px] leading-tight text-muted-foreground/70">
+              {itemMetricBits(it).map((bit) => (
+                <span key={bit}>{bit}</span>
+              ))}
             </div>
           </div>
         ))}
@@ -336,6 +359,7 @@ function preferenceContext(snap: StyleIndicesSnapshot): string {
 export function ShortStyle() {
   const [snap, setSnap] = useState<StyleIndicesSnapshot | null>(null);
   const [session, setSession] = useState<MarketSession | null>(null);
+  const [spriteWatchKeys, setSpriteWatchKeys] = useState<Set<string>>(() => new Set());
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -356,6 +380,18 @@ export function ShortStyle() {
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchShortSpriteConfig()
+      .then((cfg) => {
+        if (!cancelled && cfg?.rules) {
+          setSpriteWatchKeys(new Set(cfg.rules.map((r) => r.key)));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -508,6 +544,7 @@ export function ShortStyle() {
               group={g}
               hotspotKeys={hotspotKeys}
               leadKey={leadByGroup.get(g.id)}
+              spriteWatchKeys={spriteWatchKeys}
             />
           ))}
         </div>

@@ -45,8 +45,11 @@ export function parseSystemSection(raw: string | null | undefined): SystemSectio
   return "proxy";
 }
 
-export function keywordsSettingsTo(section: KeywordsSectionId): string {
-  return `/settings/keywords?section=${section}`;
+export function keywordsSettingsTo(section: KeywordsSectionId, q?: string): string {
+  const params = new URLSearchParams({ section });
+  const query = q?.trim();
+  if (query) params.set("q", query);
+  return `/settings/keywords?${params.toString()}`;
 }
 
 export function dataSettingsTo(section: DataSectionId): string {
