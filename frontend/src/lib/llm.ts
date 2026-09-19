@@ -40,6 +40,13 @@ export function staleBlockedProvider(): string | null {
   }
 }
 
+/** 一条配置当前能不能拿来调模型（CLI 被闸 / 缺 key 都不算）。 */
+export function llmCfgUsable(c: LlmConfig | null | undefined): c is LlmConfig {
+  if (!c?.model) return false;
+  if (serverAllowsCli(c.provider) === false) return false;
+  return !!(isCliProvider(c.provider) || (c.baseURL && c.apiKey));
+}
+
 export function loadLlm(): LlmConfig | null {
   try {
     const raw = localStorage.getItem(KEY);
@@ -57,19 +64,22 @@ export function loadLlm(): LlmConfig | null {
 export function saveLlm(cfg: LlmConfig, label?: string) {
   localStorage.setItem(KEY, JSON.stringify(cfg));
   upsertSavedLlm(cfg, label);
+  _overrideId = null; // 新保存的即全局默认，清掉本次会话的临时选择
+  notifyLlmChange();
 }
 
 export function clearLlm() {
   localStorage.removeItem(KEY);
+  notifyLlmChange();
 }
 
 export function hasLlm(): boolean {
-  return loadLlm() !== null;
+  return resolveLlm() !== null;
 }
 
 const SAVED_KEY = "vr-llm-saved";
 
-/** 已保存模型条目：与当前生效配置分开存，重启后可勾选切换。 */
+/** 已保存模型条目：与全局默认分开存，重启后可点选切换默认、或在问 AI 下拉里临时选用。 */
 export interface SavedLlmEntry {
   id: string;
   cfg: LlmConfig;
@@ -110,6 +120,26 @@ function readSavedRaw(): SavedLlmEntry[] {
 
 function writeSaved(list: SavedLlmEntry[]) {
   localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+}
+
+/** 各「问 AI」面板临时选用的模型（不改全局默认；刷新页面后回到默认）。 */
+let _overrideId: string | null = null;
+
+export const LLM_CHANGE_EVENT = "vr-llm-change";
+
+function notifyLlmChange() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(LLM_CHANGE_EVENT));
+}
+
+export function llmOverrideId(): string | null {
+  return _overrideId;
+}
+
+/** 本次会话临时选用；传 null 则回到全局默认。不写入 localStorage。 */
+export function setLlmOverride(id: string | null) {
+  _overrideId = id;
+  notifyLlmChange();
 }
 
 /** 读取已保存列表；若仅有当前生效配置、列表为空，则自动迁移进去。 */
@@ -169,6 +199,7 @@ export function renameSavedLlm(id: string, label: string): SavedLlmEntry[] {
     label: trimmed || suggestSavedLabel(list[i].cfg),
   };
   writeSaved(list);
+  notifyLlmChange();
   return list;
 }
 
@@ -183,19 +214,60 @@ export function removeSavedLlm(id: string): SavedLlmEntry[] {
       if (c && llmFingerprint(c) === id) localStorage.removeItem(KEY);
     }
   } catch { /* ignore */ }
+  if (_overrideId === id) _overrideId = null;
+  notifyLlmChange();
   return list;
 }
 
-/** 将已保存条目设为当前生效配置。 */
+/** 将已保存条目设为全局默认模型。 */
 export function activateSavedLlm(id: string): LlmConfig | null {
   const entry = readSavedRaw().find((e) => e.id === id);
   if (!entry) return null;
   const cfg = entry.cfg;
-  const ok = cfg.model && (isCliProvider(cfg.provider) || (cfg.baseURL && cfg.apiKey));
-  if (!ok) return null;
-  if (serverAllowsCli(cfg.provider) === false) return null;
+  if (!llmCfgUsable(cfg)) return null;
   localStorage.setItem(KEY, JSON.stringify(cfg));
+  _overrideId = null;
+  notifyLlmChange();
   return cfg;
+}
+
+/** 全局默认模型的 fingerprint；未设或已失效则为 null。 */
+export function defaultLlmId(): string | null {
+  const cfg = loadLlm();
+  return cfg ? llmFingerprint(cfg) : null;
+}
+
+export function savedLlmLabel(entry: SavedLlmEntry): string {
+  return entry.label?.trim() || suggestSavedLabel(entry.cfg);
+}
+
+/** 当前可实际调用的已保存模型（被闸的 CLI / 缺 key 的 API 排除）。 */
+export function usableSavedLlms(): SavedLlmEntry[] {
+  return loadSavedLlms().filter((e) => llmCfgUsable(e.cfg));
+}
+
+/**
+ * 解析本次调用该用哪条配置。
+ * 优先：显式 id → 会话临时选择 → 全局默认 → 列表里第一条可用。
+ */
+export function resolveLlm(id?: string | null): LlmConfig | null {
+  const pick = (want: string | null | undefined): LlmConfig | null => {
+    if (!want) return null;
+    const entry = loadSavedLlms().find((e) => e.id === want);
+    return entry && llmCfgUsable(entry.cfg) ? entry.cfg : null;
+  };
+  const fromArg = pick(id);
+  if (fromArg) return fromArg;
+  const fromOverride = pick(_overrideId);
+  if (fromOverride) return fromOverride;
+  const def = loadLlm();
+  if (def) return def;
+  return usableSavedLlms()[0]?.cfg ?? null;
+}
+
+export function resolveLlmId(id?: string | null): string | null {
+  const cfg = resolveLlm(id);
+  return cfg ? llmFingerprint(cfg) : null;
 }
 
 export interface ChatHandlers {
@@ -206,8 +278,14 @@ export interface ChatHandlers {
 // 流式调后端 /api/chat（NDJSON：每行一个事件 {type: tool|delta|done|error}）。
 // 边流边回调 onDelta/onTool；返回累积的最终 {content, trace, rounds}。
 // signal：调用方可传 AbortController.signal，用户关面板/换问题时中止请求（省订阅/API 额度）。
-export async function chatStream(messages: ChatMsg[], context: string, handlers: ChatHandlers = {}, signal?: AbortSignal): Promise<ChatResult> {
-  const llm = loadLlm();
+export async function chatStream(
+  messages: ChatMsg[],
+  context: string,
+  handlers: ChatHandlers = {},
+  signal?: AbortSignal,
+  llmOverride?: LlmConfig | null,
+): Promise<ChatResult> {
+  const llm = llmCfgUsable(llmOverride) ? llmOverride : resolveLlm();
   if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
 
   let resp: Response;
@@ -263,6 +341,6 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
 }
 
 // 非流式便捷包装（不需要逐字 UI 的调用方用它）。
-export function chat(messages: ChatMsg[], context: string): Promise<ChatResult> {
-  return chatStream(messages, context);
+export function chat(messages: ChatMsg[], context: string, llm?: LlmConfig | null): Promise<ChatResult> {
+  return chatStream(messages, context, {}, undefined, llm);
 }

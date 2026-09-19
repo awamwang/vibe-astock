@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { debateStream, type DebateStage } from "@/lib/agents";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
 import { addNote } from "@/lib/notes";
 import { ApiError } from "@/lib/api";
 import {
@@ -39,6 +40,7 @@ export function DebatePanel({ code, name }: Props) {
   const [saved, setSaved] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const llmPick = useLlmPick();
 
   // 切换标的：恢复该标的缓存；不自动开跑
   useEffect(() => {
@@ -108,7 +110,7 @@ export function DebatePanel({ code, name }: Props) {
         onStageDone: (stage, _label, content) =>
           setStages((s) => s.map((b) => (b.stage === stage && !b.done ? { ...b, content, done: true } : b))),
         onError: (message, stage) => setError(stage ? `${stage}：${message}` : message),
-      }, ctrl.signal);
+      }, ctrl.signal, llmPick.llm);
       setStatus("辩论完成");
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") setStatus("已中止");
@@ -165,6 +167,10 @@ export function DebatePanel({ code, name }: Props) {
               <option value={1}>一轮 · 各自陈述</option>
               <option value={2}>两轮 · 加交叉反驳</option>
             </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">模型</label>
+            <LlmSelect disabled={running} empty="link" />
           </div>
           {running ? (
             <button type="button" onClick={stop}

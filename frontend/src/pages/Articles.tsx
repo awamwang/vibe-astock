@@ -15,6 +15,7 @@ import {
   type ArticleDraftPayload, type ArticleMeta,
 } from "@/lib/api";
 import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
 import { buildArticlePrompt, parseArticleJson, type ArticleDraftFile } from "@/lib/articles";
 
 interface ArticleEditState {
@@ -54,6 +55,7 @@ export function Articles() {
   const qaScrollRef = useRef<HTMLDivElement>(null);
   const qaAbortRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const llmPick = useLlmPick();
 
   const refresh = useCallback(async () => {
     try {
@@ -235,6 +237,9 @@ export function Articles() {
       const result = await chatStream(
         [{ role: "user", content: prompt }],
         "你只输出合法 JSON，不要调用工具，不要解释。",
+        {},
+        undefined,
+        llmPick.llm,
       );
       const files = parseArticleJson(result.content, text);
       setDrafts(files);
@@ -350,7 +355,7 @@ export function Articles() {
       ].filter(Boolean).join("\n\n");
       await chatStream(history, context, {
         onDelta: (t) => { if (alive()) patchLast((c) => c + t); },
-      }, ac.signal);
+      }, ac.signal, llmPick.llm);
     } catch (e) {
       setQaMsgs((m) => m.filter((msg, i) => !(i === m.length - 1 && msg.role === "assistant" && !msg.content)));
       if (!ac.signal.aborted) setQaErr(e instanceof ApiError ? e.message : "问答失败");
@@ -421,6 +426,7 @@ export function Articles() {
               {organizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               AI 整理
             </button>
+            <LlmSelect compact disabled={organizing} />
             {!hasLlm() && (
               <Link to="/settings" className="text-xs text-muted-foreground hover:text-primary">
                 尚未接入 AI → 去配置
@@ -766,28 +772,31 @@ export function Articles() {
                     </div>
                   )}
                 </div>
-                <div className="flex items-end gap-2 pt-1">
-                  <textarea
-                    value={qaInput}
-                    onChange={(e) => setQaInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        void sendQa(qaInput);
-                      }
-                    }}
-                    rows={1}
-                    placeholder="就研报文章提问…"
-                    className="flex-1 resize-none rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void sendQa(qaInput)}
-                    disabled={qaLoading || !qaInput.trim()}
-                    className="rounded-lg bg-primary/15 p-2 text-primary hover:bg-primary/25 disabled:opacity-40"
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
+                <div className="space-y-1.5 pt-1">
+                  <LlmSelect compact disabled={qaLoading} className="w-full max-w-none" />
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      value={qaInput}
+                      onChange={(e) => setQaInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendQa(qaInput);
+                        }
+                      }}
+                      rows={1}
+                      placeholder="就研报文章提问…"
+                      className="flex-1 resize-none rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void sendQa(qaInput)}
+                      disabled={qaLoading || !qaInput.trim()}
+                      className="rounded-lg bg-primary/15 p-2 text-primary hover:bg-primary/25 disabled:opacity-40"
+                    >
+                      <Send className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </>
             )}

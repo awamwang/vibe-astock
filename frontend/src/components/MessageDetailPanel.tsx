@@ -31,6 +31,7 @@ import {
   keywordHint, targetHint, targetTitle,
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { openSectionPopup } from "@/lib/sectionPopup";
 import { isStockMatched } from "@/lib/stocks";
@@ -391,6 +392,7 @@ export function MessageDetailPanel({
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzingMode, setAnalyzingMode] = useState<"full" | "impact" | null>(null);
+  const llmPick = useLlmPick();
   const detailReqId = useRef(0);
 
   useEffect(() => {
@@ -536,7 +538,7 @@ export function MessageDetailPanel({
           applyUpdated(item);
           void loadDetail(item.id, item);
         },
-      }, undefined, mode);
+      }, undefined, mode, llmPick.llm);
       notify.success(mode === "impact" ? "AI 影响等级已重算" : "AI 分析完成");
     } catch (e) {
       notify.error(e instanceof ApiError ? e.message : mode === "impact" ? "重算影响等级失败" : "AI 分析失败");
@@ -708,6 +710,7 @@ export function MessageDetailPanel({
             >
               <Trash2 className="h-3.5 w-3.5" /> 删除
             </button>
+            <LlmSelect compact disabled={analyzing || editing} />
             <button
               type="button"
               disabled={analyzing || !hasLlm() || editing}

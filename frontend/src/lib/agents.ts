@@ -1,7 +1,7 @@
 // 多 agent 前端客户端：多空辩论（NDJSON 流）。
 
 import { ApiError } from "@/lib/api";
-import { loadLlm } from "@/lib/llm";
+import { llmCfgUsable, resolveLlm, type LlmConfig } from "@/lib/llm";
 import { streamNdjson, type NdjsonEvent } from "@/lib/ndjson";
 
 export type DebateStage = "bull" | "bear" | "bull_rebut" | "bear_rebut" | "referee";
@@ -16,8 +16,8 @@ export interface DebateHandlers {
   onError?: (message: string, stage?: DebateStage) => void;
 }
 
-function requireLlm() {
-  const llm = loadLlm();
+function requireLlm(override?: LlmConfig | null) {
+  const llm = llmCfgUsable(override) ? override : resolveLlm();
   if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
   return llm;
 }
@@ -54,7 +54,8 @@ export async function debateStream(
   rounds: number,
   handlers: DebateHandlers = {},
   signal?: AbortSignal,
+  llmOverride?: LlmConfig | null,
 ): Promise<void> {
-  const llm = requireLlm();
+  const llm = requireLlm(llmOverride);
   await streamNdjson("/api/debate", { code, rounds, llm }, (ev) => dispatchDebate(ev, handlers), signal);
 }

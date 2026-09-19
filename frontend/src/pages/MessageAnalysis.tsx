@@ -32,6 +32,7 @@ import {
 } from "@/lib/messages";
 import { hasLlm, messageAnalyzeRun } from "@/lib/messageAnalyze";
 import { chatStream } from "@/lib/llm";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
 import {
   buildArticleIngestPrompt,
   parseArticleIngestExtract,
@@ -675,6 +676,7 @@ export function MessageAnalysis() {
   }, [qInput, q, patchListQuery]);
 
   const [sources, setSources] = useState<MessageSourceInfo[]>([]);
+  const llmPick = useLlmPick();
   const [items, setItems] = useState<AnalyzedMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -1122,6 +1124,9 @@ export function MessageAnalysis() {
         const result = await chatStream(
           [{ role: "user", content: prompt }],
           "你只输出合法 JSON，不要调用工具，不要解释。",
+          {},
+          undefined,
+          llmPick.llm,
         );
         const extracted = parseArticleIngestExtract(result.content, text);
         const draftKey = `article-${Date.now()}`;
@@ -1496,7 +1501,7 @@ export function MessageAnalysis() {
           setCalendarItems((list) => list.map((x) => (x.id === item.id ? item : x)));
           setSelected((cur) => (cur?.id === item.id ? item : cur));
         },
-      }, undefined, mode);
+      }, undefined, mode, llmPick.llm);
       const label = mode === "impact" ? "重算 AI 级别" : "AI 分析";
       notify.success(`${label}完成：成功 ${result.ok} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
       if (result.failed) {
@@ -1789,6 +1794,7 @@ export function MessageAnalysis() {
               />
               <span className="w-10 shrink-0 text-xs tabular-nums text-foreground">{defaultEndDays} 天</span>
             </div>
+            <LlmSelect disabled={analyzing} />
             {selectedIds.size > 0 && (
               <>
                 {speechSupported && (
@@ -2350,7 +2356,8 @@ export function MessageAnalysis() {
               )}
             </div>
 
-            <div className="mt-4 flex shrink-0 flex-wrap justify-end gap-2 border-t border-border/60 pt-4">
+            <div className="mt-4 flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-4">
+              {ingestFormat === "article" && <LlmSelect compact disabled={previewLoading} />}
               <button
                 type="button"
                 disabled={previewLoading || commitLoading}

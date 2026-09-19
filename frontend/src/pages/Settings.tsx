@@ -149,7 +149,7 @@ export function Settings() {
     };
     saveLlm(cfg, savedName);
     afterSave(cfg);
-    toast.success("已保存到本地，全站「问 AI / 复盘」现在可用");
+    toast.success("已保存并设为全局默认，全站「问 AI / 复盘」现在可用");
   };
 
   const saveSubscription = () => {
@@ -167,7 +167,7 @@ export function Settings() {
     const cfg: LlmConfig = { provider: m.provider, baseURL: "", apiKey: "", model: m.id };
     saveLlm(cfg, savedName);
     afterSave(cfg);
-    toast.success(`已选「${m.name}」订阅，全站「问 AI / 复盘」将调用本机 ${m.name}`);
+    toast.success(`已将「${m.name}」设为全局默认，全站「问 AI / 复盘」将调用本机 ${m.name}`);
   };
 
   const switchSaved = (id: string) => {
@@ -181,7 +181,7 @@ export function Settings() {
     setActiveId(id);
     applyCfgToForm(cfg, entry?.label);
     setStaleBlocked(null);
-    toast.success(`已切换为「${entry ? entryLabel(entry) : cfg.model}」`);
+    toast.success(`已将「${entry ? entryLabel(entry) : cfg.model}」设为全局默认`);
   };
 
   const commitListName = (id: string, value: string) => {
@@ -243,7 +243,7 @@ export function Settings() {
 
   return (
     <div>
-      <PageHeader title="接入 AI" subtitle="配置一次，全站的「问 AI」「复盘」都能用你自己的模型" />
+      <PageHeader title="接入 AI" subtitle="添加模型后指定一个全局默认；各处「问 AI」也可临时改选其它已保存模型" />
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
@@ -254,7 +254,7 @@ export function Settings() {
         <GlassCard className="mb-4">
           <h3 className="mb-1 text-sm font-semibold">已保存模型</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            勾选即可切换当前使用的模型；名称可直接修改以便区分。每次点「保存」会写入本列表，重启后自动加载。
+            点选设为<strong className="font-medium text-foreground">全局默认</strong>；其余条目可在各处「问 AI」下拉里临时选用。名称可直接改以便区分。点下方「保存」会写入本列表，并成为新的默认。
           </p>
           <ul className="space-y-1.5">
             {savedList.map((entry) => {
@@ -266,11 +266,12 @@ export function Settings() {
                     on ? "border-primary/50 bg-primary/10" : "border-border hover:bg-muted/30"
                   }`}>
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="vr-default-llm"
                     checked={on}
                     onChange={() => switchSaved(entry.id)}
                     className="h-4 w-4 shrink-0 accent-primary"
-                    aria-label={`使用 ${entryLabel(entry)}`}
+                    aria-label={`设为默认：${entryLabel(entry)}`}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
@@ -286,7 +287,11 @@ export function Settings() {
                         className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium outline-none hover:border-border focus:border-primary/50 focus:bg-black/20"
                         title="修改名称"
                       />
-                      {on && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                      {on && (
+                        <span className="inline-flex items-center gap-0.5 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          <Check className="h-3 w-3" /> 默认
+                        </span>
+                      )}
                     </span>
                     <span className="mt-0.5 block truncate pl-5 text-[11px] text-muted-foreground">
                       {isCli

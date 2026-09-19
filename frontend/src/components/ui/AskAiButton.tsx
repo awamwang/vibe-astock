@@ -2,9 +2,10 @@ import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, X, Settings, Send, Loader2, Wrench, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
+import { chatStream, type ChatMsg } from "@/lib/llm";
 import { api, ApiError } from "@/lib/api";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
 import { loadUseExperienceMemory, saveUseExperienceMemory } from "@/lib/experience";
 
 interface Props {
@@ -34,7 +35,8 @@ interface ToolUse { name: string; arg: string }
 // AI 可自行调 A股数据工具作答。结论由用户模型给出，本产品不校准、不负责。
 export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Props) {
   const [open, setOpen] = useState(false);
-  const [configured, setConfigured] = useState(false);
+  const pick = useLlmPick();
+  const [configured, setConfigured] = useState(() => pick.configured);
   const [msgs, setMsgs] = useState<(ChatMsg & { tools?: ToolUse[] })[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,8 +47,8 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (open) setConfigured(hasLlm());
-  }, [open]);
+    if (open) setConfigured(pick.configured);
+  }, [open, pick.configured]);
 
   useEffect(() => {
     saveUseExperienceMemory(useMemory);
@@ -95,7 +97,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
       await chatStream(history, ctx, {
         onTool: (tool, args) => { if (alive()) patchLast((msg) => ({ ...msg, tools: [...(msg.tools || []), { name: tool, arg: argStr(args) }] })); },
         onDelta: (t) => { if (alive()) patchLast((msg) => ({ ...msg, content: msg.content + t })); },
-      }, ac.signal);
+      }, ac.signal, pick.llm);
     } catch (e) {
       // 出错/中止：去掉尾部空 assistant 气泡；主动中止不算错误，不提示
       setMsgs((m) => m.filter((msg, i) => !(i === m.length - 1 && msg.role === "assistant" && !msg.content)));
@@ -122,9 +124,9 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/50" onClick={close} />
           <aside className="glass relative m-3 flex w-full max-w-md flex-col rounded-2xl">
-            <div className="flex items-center justify-between border-b border-border/60 p-4">
-              <span className="flex items-center gap-2 font-semibold text-glow">
-                <Sparkles className="h-4 w-4 text-primary" /> 问 AI · 本页上下文
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 p-4">
+              <span className="flex min-w-0 items-center gap-2 font-semibold text-glow">
+                <Sparkles className="h-4 w-4 shrink-0 text-primary" /> 问 AI · 本页上下文
               </span>
               <button onClick={close} className="text-muted-foreground hover:text-foreground">
                 <X className="h-4 w-4" />
@@ -215,6 +217,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
                       管理
                     </Link>
                   </label>
+                  <LlmSelect compact disabled={loading} className="mb-2 w-full max-w-none" />
                   <div className="flex items-end gap-2">
                     <textarea
                       value={input}

@@ -8,7 +8,8 @@ import { Loader2, RefreshCw, Sparkles, TrendingUp, ChevronDown, X } from "lucide
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
-import { hasLlm, chatStream } from "@/lib/llm";
+import { LlmSelect, useLlmPick } from "@/components/ui/LlmSelect";
+import { chatStream } from "@/lib/llm";
 import { resolveZtKeyword } from "@/lib/zt-keywords";
 import { cn } from "@/lib/utils";
 
@@ -207,6 +208,9 @@ export function useDeepDive(ns: string, date: string): DeepDiveState {
   const [needConfig, setNeedConfig] = useState(false);
   const [batch, setBatch] = useState<DeepDiveState["batch"]>(null);
   const acRef = useRef<AbortController | null>(null);
+  const pick = useLlmPick();
+  const llmRef = useRef(pick.llm);
+  llmRef.current = pick.llm;
   const batchStopRef = useRef(false);
   const day = normDate(date);
 
@@ -242,7 +246,7 @@ export function useDeepDive(ns: string, date: string): DeepDiveState {
     setAiErr(null);
     setNeedConfig(false);
     if (expand) setOpen(item.key);
-    if (!hasLlm()) {
+    if (!llmRef.current) {
       setNeedConfig(true);
       if (!expand) setOpen(item.key); // 批量时也把配置提示亮出来
       return false;
@@ -266,7 +270,7 @@ export function useDeepDive(ns: string, date: string): DeepDiveState {
           if (!toolList.includes(label)) toolList = [...toolList, label];
           setTools((m) => ({ ...m, [item.key]: toolList }));
         },
-      }, ac.signal);
+      }, ac.signal, llmRef.current);
       saveRecord(item.key, text, toolList);
       return true;
     } catch (e) {
@@ -297,7 +301,7 @@ export function useDeepDive(ns: string, date: string): DeepDiveState {
     if (batch) return; // 已在批量中
     const todo = items.filter((it) => !analysis[it.key]);
     if (todo.length === 0) return;
-    if (!hasLlm()) {
+    if (!llmRef.current) {
       setNeedConfig(true);
       if (todo[0]) setOpen(todo[0].key);
       return;
@@ -356,6 +360,7 @@ export function DeepDivePanel({ dd, stockKey, colSpan, noteTitle, onRerun }: Pan
             <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <Sparkles className="h-3.5 w-3.5 text-primary" />
               AI 深入分析（由你配置的模型给出，非本产品观点，不构成投资建议）
+              <LlmSelect compact disabled={isRunning} />
               {(dd.tools[stockKey] || []).map((t) => (
                 <span key={t} className="rounded-full border border-secondary/40 bg-secondary/10 px-2 py-0.5">{t}</span>
               ))}
@@ -595,6 +600,7 @@ export function WatchlistAnalyzePanel({
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Sparkles className="h-3.5 w-3.5 text-primary" />
               <span className="text-xs text-muted-foreground">AI 分析（非本产品观点，不构成投资建议）</span>
+              <LlmSelect compact disabled={isRunning} />
               <div className="inline-flex rounded-lg border border-border/60 p-0.5">
                 {tabBtn("deep", "深度分析", Boolean(ddDeep.analysis[stockKey]))}
                 {tabBtn("short", "短线分析", Boolean(ddShort.analysis[stockKey]))}
@@ -724,6 +730,7 @@ export function RunAllButton({ dd, items, nameOf, selectedOnly }: RunAllProps) {
   if (dd.batch) {
     return (
       <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+        <LlmSelect compact disabled />
         <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
         批量分析中 {dd.batch.done}/{dd.batch.total}
         {dd.batch.current && <>· {nameOf ? nameOf(dd.batch.current) : dd.batch.current}</>}
@@ -737,17 +744,20 @@ export function RunAllButton({ dd, items, nameOf, selectedOnly }: RunAllProps) {
     );
   }
   return (
-    <button
-      onClick={() => dd.runAll(items)}
-      disabled={remaining === 0}
-      className="inline-flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      <Sparkles className="h-3 w-3" />
-      {remaining === 0
-        ? selectedOnly ? "所选已全部分析" : "已全部分析"
-        : selectedOnly
-          ? `一键分析所选（剩 ${remaining} 只）`
-          : `一键全部分析（剩 ${remaining} 只）`}
-    </button>
+    <span className="inline-flex items-center gap-2">
+      <LlmSelect compact />
+      <button
+        onClick={() => dd.runAll(items)}
+        disabled={remaining === 0}
+        className="inline-flex items-center gap-1 rounded-lg border border-primary/50 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Sparkles className="h-3 w-3" />
+        {remaining === 0
+          ? selectedOnly ? "所选已全部分析" : "已全部分析"
+          : selectedOnly
+            ? `一键分析所选（剩 ${remaining} 只）`
+            : `一键全部分析（剩 ${remaining} 只）`}
+      </button>
+    </span>
   );
 }

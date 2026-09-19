@@ -1723,6 +1723,55 @@ class TestOneSourceOfTruthForCliAvailability:
         assert body.index("const seq =") < body.index("await fetchCliAvailability")
 
 
+@pytest.mark.unit
+class TestDefaultLlmAndAskAiPicker:
+    """全局默认模型 + 问 AI 下拉选用已保存模型。"""
+
+    def test_llm_module_has_default_and_override(self):
+        import pathlib
+
+        s = pathlib.Path("frontend/src/lib/llm.ts").read_text(encoding="utf-8")
+        assert "export function defaultLlmId" in s
+        assert "export function resolveLlm" in s
+        assert "export function setLlmOverride" in s
+        assert "llmOverride?: LlmConfig | null" in s
+        chat = s[s.index("export async function chatStream"):s.index("export function chat(")]
+        assert "resolveLlm()" in chat
+        assert "llmCfgUsable(llmOverride)" in chat
+
+    def test_settings_marks_one_default(self):
+        import pathlib
+
+        s = pathlib.Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+        assert 'type="radio"' in s and 'name="vr-default-llm"' in s
+        assert "全局默认" in s
+        assert "设为默认" in s or "> 默认<" in s or ">默认</" in s
+
+    def test_ask_ai_surfaces_render_model_select(self):
+        import pathlib
+
+        files = [
+            "frontend/src/components/ui/AskAiButton.tsx",
+            "frontend/src/components/ui/DeepDive.tsx",
+            "frontend/src/pages/MessageAnalysis.tsx",
+            "frontend/src/components/MessageDetailPanel.tsx",
+            "frontend/src/pages/Articles.tsx",
+            "frontend/src/pages/ExperienceMemory.tsx",
+            "frontend/src/components/stock/DebatePanel.tsx",
+        ]
+        for rel in files:
+            text = pathlib.Path(rel).read_text(encoding="utf-8")
+            assert "LlmSelect" in text, f"{rel} 缺少已配置模型下拉"
+
+    def test_select_component_exists(self):
+        import pathlib
+
+        s = pathlib.Path("frontend/src/components/ui/LlmSelect.tsx").read_text(encoding="utf-8")
+        assert "usableSavedLlms" in s
+        assert "（默认）" in s
+        assert "setLlmOverride" in s
+
+
 class TestConfigErrorMustBubble:
     """配置错误不许被降级吞掉 —— 任务报成功、内容全空"""
 

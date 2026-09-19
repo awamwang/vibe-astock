@@ -2,7 +2,7 @@
 
 import { apiUrl } from "./base";
 import { ApiError, authHeaders, type AnalyzedMessage } from "./api";
-import { hasLlm, loadLlm } from "./llm";
+import { hasLlm, llmCfgUsable, resolveLlm, type LlmConfig } from "./llm";
 
 export interface MessageAnalyzeProgress {
   current: number;
@@ -31,8 +31,9 @@ export async function messageAnalyzeRun(
   handlers: MessageAnalyzeHandlers = {},
   signal?: AbortSignal,
   mode: "full" | "impact" = "full",
+  llmOverride?: LlmConfig | null,
 ): Promise<MessageAnalyzeRunResult> {
-  const llm = loadLlm();
+  const llm = llmCfgUsable(llmOverride) ? llmOverride : resolveLlm();
   if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
 
   let resp: Response;
