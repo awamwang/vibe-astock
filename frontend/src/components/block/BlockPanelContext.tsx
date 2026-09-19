@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { BlockDetailPanel } from "./BlockDetailPanel";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ThsBlockRef } from "@/lib/api";
+import type { ManagedBlockRow, ThsBlockRef } from "@/lib/api";
 import { thsBlockCodeSubtitle } from "@/lib/thsBlocks";
 
 export interface BlockPanelTarget {
@@ -11,6 +11,7 @@ export interface BlockPanelTarget {
   name: string;
   kind_label?: string;
   code?: string;
+  row?: ManagedBlockRow | null;
 }
 
 interface BlockPanelApi {
@@ -45,6 +46,7 @@ export function BlockPanelProvider({ children }: { children: ReactNode }) {
       name: (t.name || id).trim(),
       kind_label: t.kind_label,
       code: (t.code || "").trim() || undefined,
+      row: t.row || null,
     });
   }, []);
 
@@ -110,6 +112,7 @@ export function BlockPanelHost() {
           blockId={target.id}
           name={target.name}
           code={target.code}
+          row={target.row}
         />
       </div>
     </aside>

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { BlockStocksTable } from "@/components/block/BlockStocksTable";
 import {
   api, ApiError,
-  type ManagedBlockRow, type Quote, type ThemeAliasEntry, type ThsBlockStocksDetail,
+  type ManagedBlockRow, type Quote, type StyleIndexConsDetail, type ThemeAliasEntry, type ThsBlockStocksDetail,
 } from "@/lib/api";
 import {
   isBlockFollowed, setFollowBlocksCache, type FollowBlock,
@@ -46,14 +46,25 @@ function DetailSection({ label, children }: { label: string; children: ReactNode
 /** 同花顺成分股 / 关注用的类型：人气页签回退 ths_kind */
 export function thsStocksKind(row: Pick<ManagedBlockRow, "kind" | "ths_kind">): string {
   const k = (row.ths_kind || "").trim();
-  if (k && k !== "hot") return k;
-  if (row.kind && row.kind !== "hot") return row.kind;
+  if (k && k !== "hot" && k !== "style") return k;
+  if (row.kind && row.kind !== "hot" && row.kind !== "style") return row.kind;
   return "";
 }
 
-export function SourceBadges({ row }: { row: Pick<ManagedBlockRow, "has_ths" | "has_kpl"> }) {
+export function isStyleBlockRow(row?: Pick<ManagedBlockRow, "kind" | "origin" | "style_key"> | null): boolean {
+  if (!row) return false;
+  return !!row.style_key || row.kind === "style" || row.origin === "style";
+}
+
+export function SourceBadges({ row }: { row: Pick<ManagedBlockRow, "has_ths" | "has_kpl" | "kind" | "origin" | "style_key"> }) {
+  const isStyle = isStyleBlockRow(row);
   return (
     <span className="inline-flex flex-wrap gap-1">
+      {isStyle && (
+        <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+          风格
+        </span>
+      )}
       {row.has_ths && (
         <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
           同花顺
@@ -64,7 +75,7 @@ export function SourceBadges({ row }: { row: Pick<ManagedBlockRow, "has_ths" | "
           开盘啦
         </span>
       )}
-      {!row.has_ths && !row.has_kpl && (
+      {!isStyle && !row.has_ths && !row.has_kpl && (
         <span className="text-muted-foreground/50">—</span>
       )}
     </span>
@@ -143,6 +154,7 @@ export function BlockDetailPanel({
   const controlledAliases = aliasEntriesProp !== undefined;
   const controlledFollow = followBlocksProp !== undefined;
   const [detail, setDetail] = useState<ThsBlockStocksDetail | null>(null);
+  const [styleCons, setStyleCons] = useState<StyleIndexConsDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
@@ -168,6 +180,8 @@ export function BlockDetailPanel({
 
   const stocksKind = row ? thsStocksKind(row) : kind;
   const stocksId = row ? (row.id || "") : blockId;
+  const isStyle = isStyleBlockRow(row) || kind === "style";
+  const styleKey = (row?.style_key || (isStyle ? blockId.replace(/^style:/, "") : "")).trim();
   /** 热点主题根（非森林虚拟根）可按整主题取成分股 */
   const isThemeRootStocks = !!row
     && row.block_type === "hot-theme"
@@ -175,18 +189,59 @@ export function BlockDetailPanel({
     && !!row.has_ths
     && !!stocksId
     && !!stocksKind;
-  const canLoadStocks = row
-    ? (row.node_type !== "branch" || isThemeRootStocks) && !!row.has_ths && !!stocksId && !!stocksKind
-    : !!stocksKind && !!stocksId;
+  const canLoadStocks = isStyle
+    ? false
+    : row
+      ? (row.node_type !== "branch" || isThemeRootStocks) && !!row.has_ths && !!stocksId && !!stocksKind
+      : !!stocksKind && !!stocksId;
   const isBranch = row?.node_type === "branch" && !isThemeRootStocks;
-  const isKplOnly = !!row && (!row.has_ths || !row.id || !stocksKind);
+  const isKplOnly = !isStyle && !!row && (!row.has_ths || !row.id || !stocksKind);
+  const canLoadStyleCons = isStyle && !isBranch && !!styleKey && (
+    row?.cons_available !== false || !!row?.has_ths
+  );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(false);
     setDetail(null);
+    setStyleCons(null);
     setQuotes({});
     setError(null);
+
+    if (isStyle && isBranch) return;
+    if (isStyle && row?.cons_available === false && !row?.has_ths) {
+      setStyleCons({
+        key: styleKey,
+        name: row?.name || name || styleKey,
+        code: row?.code || code || "",
+        available: false,
+        reason: row?.cons_reason || "没有可用的公开股票成分请求。",
+        source: row?.cons_source,
+        source_label: row?.cons_source_label,
+        note: row?.cons_note,
+        count: 0,
+        stocks: [],
+      });
+      return;
+    }
+    if (canLoadStyleCons) {
+      setLoading(true);
+      api.styleIndexCons(styleKey)
+        .then((data) => {
+          if (!cancelled) {
+            setStyleCons(data);
+            setError(null);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setStyleCons(null);
+            setError(e instanceof ApiError ? e.message : "加载失败");
+          }
+        })
+        .finally(() => { if (!cancelled) setLoading(false); });
+      return () => { cancelled = true; };
+    }
 
     if (!canLoadStocks) return;
 
@@ -223,7 +278,7 @@ export function BlockDetailPanel({
 
     load().finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [canLoadStocks, stocksKind, stocksId]);
+  }, [canLoadStocks, canLoadStyleCons, stocksKind, stocksId, isStyle, isBranch, styleKey, row?.cons_available, row?.cons_reason, row?.cons_source, row?.cons_source_label, row?.cons_note, row?.name, row?.code, name, code]);
 
   useEffect(() => {
     if (controlledFollow) return;
@@ -254,8 +309,8 @@ export function BlockDetailPanel({
   }, [kind, blockId, row?.id, row?.kind, row?.name]);
 
   const codes = useMemo(
-    () => (detail?.stocks || []).map((s) => s.code).filter(Boolean),
-    [detail?.stocks],
+    () => (styleCons?.stocks || detail?.stocks || []).map((s) => s.code).filter(Boolean),
+    [styleCons?.stocks, detail?.stocks],
   );
 
   useEffect(() => {
@@ -281,7 +336,9 @@ export function BlockDetailPanel({
   const codeSub = thsBlockCodeSubtitle({ id: stocksId || blockId, code: displayCode || null });
   const followKind = stocksKind || kind;
   const followId = stocksId || blockId;
-  const canFollow = !!followKind && !!followId && (!row || (!!row.has_ths && !!row.id));
+  const canFollow = !!followKind && !!followId && followKind !== "style"
+    && !String(followId).startsWith("style")
+    && (!row || (!!row.has_ths && !!row.id));
   const followed = canFollow && isBlockFollowed(followKind, followId, followBlocks);
   const aliasesByCanonical = useMemo(
     () => buildAliasesByCanonical(aliasEntries),
@@ -404,7 +461,9 @@ export function BlockDetailPanel({
     }
   }, [canFollow, followKind, followId, displayName, followed, setFollowBlocks]);
 
-  const stockCount = row?.stock_count ?? detail?.count;
+  const stockCount = isStyle
+    ? (styleCons?.count ?? (row?.cons_available === false ? 0 : undefined))
+    : (row?.stock_count ?? detail?.count);
 
   return (
     <div className="space-y-4">
@@ -457,14 +516,38 @@ export function BlockDetailPanel({
           <div className="text-foreground">{kindLabel}</div>
           {row?.code && row.code !== detailTitle && (
             <>
-              <div className="text-muted-foreground">同花顺行情码</div>
+              <div className="text-muted-foreground">{isStyle ? "公开代码" : "同花顺行情码"}</div>
               <div className="font-mono text-foreground">{row.code}</div>
             </>
           )}
-          {row?.id && row.id !== detailTitle && row.id !== row.code && (
+          {row?.id && row.id !== detailTitle && row.id !== row.code && !String(row.id).startsWith("style:") && (
             <>
               <div className="text-muted-foreground">同花顺本地 ID</div>
               <div className="font-mono text-muted-foreground">{row.id}</div>
+            </>
+          )}
+          {row?.style_key && (
+            <>
+              <div className="text-muted-foreground">风格 key</div>
+              <div className="font-mono text-muted-foreground">{row.style_key}</div>
+            </>
+          )}
+          {row?.style_group_label && (
+            <>
+              <div className="text-muted-foreground">风格分组</div>
+              <div className="text-foreground">{row.style_group_label}</div>
+            </>
+          )}
+          {(row?.cons_source_label || styleCons?.source_label) && (
+            <>
+              <div className="text-muted-foreground">成分来源</div>
+              <div className="text-foreground">{styleCons?.source_label || row?.cons_source_label}</div>
+            </>
+          )}
+          {row?.ths_kind && isStyle && (
+            <>
+              <div className="text-muted-foreground">同花顺类型</div>
+              <div className="text-foreground">{thsBlockKindLabel(row.ths_kind)}</div>
             </>
           )}
           {row?.kpl_code && row.kpl_code !== detailTitle && (
@@ -695,6 +778,40 @@ export function BlockDetailPanel({
         <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
           分组节点不含成分股，请展开并选择叶子板块。
         </p>
+      ) : isStyle ? (
+        <DetailSection label="成分股">
+          <p className="mb-2 text-xs text-muted-foreground">
+            {styleCons?.source === "ths"
+              ? "口径：公开源名单不可用，按同花顺同名/别名板块成分补位。"
+              : "口径：公开成分源（东财板块 / 中证 cons.xls / 国证样本文件），不是同花顺本地 INI。"}
+            {row && !row.has_ths && (
+              <span> 未匹配到同花顺同名板块。</span>
+            )}
+          </p>
+          {styleCons?.note || row?.cons_note ? (
+            <p className="mb-2 text-xs text-muted-foreground">{styleCons?.note || row?.cons_note}</p>
+          ) : null}
+          {loading || (canLoadStyleCons && !styleCons && !error) ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> 加载成分股…
+            </div>
+          ) : styleCons?.available && styleCons.stocks.length ? (
+            <>
+              <p className="mb-2 text-xs text-muted-foreground">
+                共 <strong className="text-foreground">{styleCons.count}</strong> 只
+              </p>
+              <BlockStocksTable
+                key={`style-${styleKey}`}
+                stocks={styleCons.stocks}
+                quotes={quotes}
+              />
+            </>
+          ) : (
+            <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
+              {styleCons?.reason || row?.cons_reason || error || "没有可用的公开股票成分请求。"}
+            </p>
+          )}
+        </DetailSection>
       ) : isKplOnly ? (
         <p className="rounded-lg bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
           仅开盘啦类型的板块暂无同花顺成分股；可在短线盘面用人气/点查查看。

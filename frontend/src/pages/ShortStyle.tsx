@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { Loader2, RefreshCw, LayoutGrid } from "lucide-react";
+import { Boxes, Loader2, RefreshCw, LayoutGrid } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Caliber } from "@/components/ui/Caliber";
@@ -25,6 +26,10 @@ import { delayUntilNextUnixSlot } from "@/lib/wallClock";
 import { fetchShortSpriteConfig, pingShortSprite } from "@/lib/shortSprite";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
+import { useBlockPanelOptional } from "@/components/block/BlockPanelContext";
+import { BlockResolveScope, useBlockResolve } from "@/components/block/BlockResolveContext";
+import { blockMatchedClass, isBlockMatched } from "@/lib/thsBlocks";
+import { api, type ManagedBlockRow } from "@/lib/api";
 
 const CUM_EXCESS_GROUPS = new Set([
   "board", "size", "attribute", "growth_value", "dividend", "finance", "sector", "other",
@@ -65,28 +70,132 @@ function Tag({ children, className }: { children: string; className: string }) {
   );
 }
 
-function itemMetricBits(it: StyleIndexItem): string[] {
-  const bits = [
-    `上场差 ${formatStyleDelta(it.change_pct_delta)}`,
-    `位次 ${formatRankDelta(it.excess_rank_delta)}`,
-    `z ${formatZscore(it.zscore)}`,
-  ];
-  if (CUM_EXCESS_GROUPS.has(it.group) && it.key !== "csi_all") {
-    bits.push(`累计超额 ${it.cum_excess == null ? "不足" : formatStylePct(it.cum_excess)}`);
-  }
-  if (it.close_extreme != null) {
-    bits.push(`近20场收盘 ${it.close_extreme}`);
-  }
-  return bits;
+function syntheticStyleRow(item: {
+  key: string;
+  name: string;
+  code?: string;
+  group?: string;
+}): ManagedBlockRow {
+  return {
+    kind: "style",
+    kind_label: "风格指数",
+    origin: "style",
+    sources: ["style"],
+    has_ths: false,
+    has_kpl: false,
+    style_key: item.key,
+    style_group: item.group,
+    name: item.name,
+    code: item.code || "",
+    id: `style:${item.key}`,
+    node_type: "leaf",
+    tree_path: item.name,
+  };
+}
+
+/** 短线风格名：经板块处理（名称解析）后，右键打开风格板块详情 */
+function StyleIndexName({
+  item,
+  row,
+}: {
+  item: { key: string; name: string; code?: string; group?: string };
+  row?: ManagedBlockRow | null;
+}) {
+  const panel = useBlockPanelOptional();
+  const resolved = useBlockResolve(item.name);
+  const matched = isBlockMatched(resolved);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onDown = (e: Event) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) close();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menu]);
+
+  const openDetail = () => {
+    if (!panel) return;
+    const target = row ?? syntheticStyleRow(item);
+    panel.open({
+      kind: "style",
+      id: target.id || `style:${item.key}`,
+      name: item.name,
+      code: item.code || target.code,
+      kind_label: "风格指数",
+      row: target,
+    });
+    setMenu(null);
+  };
+
+  const onContextMenu = (e: MouseEvent) => {
+    if (!panel) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onContextMenu={onContextMenu}
+        className={cn(
+          "truncate bg-transparent p-0 text-left text-sm",
+          panel && "cursor-context-menu",
+          matched && blockMatchedClass(true),
+        )}
+        title={panel
+          ? (matched
+            ? `已映射同花顺${resolved?.block?.kind_label || "板块"} · 右键查看板块详情`
+            : "右键查看板块详情")
+          : undefined}
+      >
+        {item.name}
+      </button>
+      {menu && panel && createPortal(
+        <div
+          ref={menuRef}
+          className="fixed z-[80] min-w-[10.5rem] overflow-hidden rounded-lg border border-border bg-card py-1 text-sm text-foreground shadow-lg"
+          style={{
+            left: Math.min(menu.x, window.innerWidth - 180),
+            top: Math.min(menu.y, window.innerHeight - 80),
+          }}
+          role="menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60"
+            onClick={openDetail}
+          >
+            <Boxes className="h-3.5 w-3.5 text-primary" /> 查看板块详情
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
 }
 
 function GroupCard({
-  group, hotspotKeys, leadKey, spriteWatchKeys,
+  group, hotspotKeys, leadKey, spriteWatchKeys, styleByKey,
 }: {
   group: StyleIndexGroup;
   hotspotKeys: Set<string>;
   leadKey: string | undefined;
   spriteWatchKeys: Set<string>;
+  styleByKey: Map<string, ManagedBlockRow>;
 }) {
   return (
     <GlassCard className="p-4">
@@ -100,7 +209,7 @@ function GroupCard({
             <div className="flex items-baseline justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-baseline">
-                  <span className="truncate text-sm">{it.name}</span>
+                  <StyleIndexName item={it} row={styleByKey.get(it.key)} />
                   {hotspotKeys.has(it.key) && (
                     <Tag className="bg-danger/15 text-danger">热点</Tag>
                   )}
@@ -144,6 +253,21 @@ function GroupCard({
       </div>
     </GlassCard>
   );
+}
+
+function itemMetricBits(it: StyleIndexItem): string[] {
+  const bits = [
+    `上场差 ${formatStyleDelta(it.change_pct_delta)}`,
+    `位次 ${formatRankDelta(it.excess_rank_delta)}`,
+    `z ${formatZscore(it.zscore)}`,
+  ];
+  if (CUM_EXCESS_GROUPS.has(it.group) && it.key !== "csi_all") {
+    bits.push(`累计超额 ${it.cum_excess == null ? "不足" : formatStylePct(it.cum_excess)}`);
+  }
+  if (it.close_extreme != null) {
+    bits.push(`近20场收盘 ${it.close_extreme}`);
+  }
+  return bits;
 }
 
 function RotationSummary({
@@ -363,6 +487,7 @@ export function ShortStyle() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [styleRows, setStyleRows] = useState<ManagedBlockRow[]>([]);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -396,6 +521,16 @@ export function ShortStyle() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api.blocksManageStyle()
+      .then((data) => {
+        if (!cancelled) setStyleRows(data.rows || []);
+      })
+      .catch(() => { /* 风格目录失败时仍可用合成行打开详情 */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const liveNow = session?.phase === "盘中" || session?.phase === "集合竞价";
   useEffect(() => {
     if (!autoRefresh) return;
@@ -424,6 +559,21 @@ export function ShortStyle() {
   }, [autoRefresh, liveNow, load]);
 
   const names = useMemo(() => itemByKey(snap?.groups ?? []), [snap]);
+  const styleByKey = useMemo(() => {
+    const m = new Map<string, ManagedBlockRow>();
+    for (const r of styleRows) {
+      if (r.style_key) m.set(r.style_key, r);
+    }
+    return m;
+  }, [styleRows]);
+  const blockNames = useMemo(() => {
+    const out: string[] = [];
+    for (const g of snap?.groups ?? []) {
+      for (const it of g.items) out.push(it.name);
+    }
+    for (const u of snap?.unavailable ?? []) out.push(u.name);
+    return out;
+  }, [snap]);
   const hotspotKeys = useMemo(
     () => new Set((snap?.preference?.status === "ok" ? snap.preference.hotspots : []).map((h) => h.key)),
     [snap],
@@ -448,6 +598,7 @@ export function ShortStyle() {
   }, [snap]);
 
   return (
+    <BlockResolveScope names={blockNames}>
     <div>
       <PageHeader
         title="短线风格"
@@ -545,6 +696,7 @@ export function ShortStyle() {
               hotspotKeys={hotspotKeys}
               leadKey={leadByGroup.get(g.id)}
               spriteWatchKeys={spriteWatchKeys}
+              styleByKey={styleByKey}
             />
           ))}
         </div>
@@ -555,10 +707,13 @@ export function ShortStyle() {
           <h3 className="mb-2 text-sm font-semibold text-muted-foreground">未接入（同花顺专有或公开源没有）</h3>
           <ul className="space-y-1.5 text-[12px] text-muted-foreground">
             {snap.unavailable.map((u) => (
-              <li key={u.key}>
-                <span className="text-foreground/80">{u.name}</span>
-                <span className="mx-1.5 text-muted-foreground/40">·</span>
-                {u.reason}
+              <li key={u.key} className="flex flex-wrap items-baseline gap-x-1.5">
+                <StyleIndexName
+                  item={{ key: u.key, name: u.name, code: "", group: "unavailable" }}
+                  row={styleByKey.get(u.key)}
+                />
+                <span className="text-muted-foreground/40">·</span>
+                <span>{u.reason}</span>
               </li>
             ))}
           </ul>
@@ -567,5 +722,6 @@ export function ShortStyle() {
 
       <Disclaimer />
     </div>
+    </BlockResolveScope>
   );
 }

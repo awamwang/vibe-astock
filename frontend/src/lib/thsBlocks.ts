@@ -20,6 +20,7 @@ export const BLOCK_MANAGE_KINDS = [
   { value: "daily", label: "每日动态", thsKind: "daily" as const, fused: false as const },
   { value: "theme", label: "热点主题", thsKind: "theme" as const, fused: false as const },
   { value: "hot", label: "人气", kplKind: "hot" as const, fused: false as const },
+  { value: "style", label: "风格指数", catalog: "style" as const, fused: false as const },
 ] as const;
 
 export type ThsBlockKind = (typeof THS_BLOCK_KINDS)[number]["value"];
@@ -53,9 +54,10 @@ export function manageTabHasThsTree(tab: string): boolean {
 }
 
 /** @deprecated 融合后页签不再按来源前缀区分 */
-export function manageTabOrigin(tab: string): "ths" | "kpl" | "fused" | null {
+export function manageTabOrigin(tab: string): "ths" | "kpl" | "fused" | "style" | null {
   const hit = BLOCK_MANAGE_KINDS.find((k) => k.value === tab);
   if (!hit) return null;
+  if ("catalog" in hit) return "style";
   if (hit.fused) return "fused";
   if ("thsKind" in hit && !("kplKind" in hit)) return "ths";
   if ("kplKind" in hit && !("thsKind" in hit)) return "kpl";
@@ -304,7 +306,9 @@ export function blockTreeNodeId(row: {
   id?: string;
   kpl_code?: string;
   name?: string;
+  style_key?: string;
 }): string {
+  if (row.style_key) return `style:${row.style_key}`;
   if (row.id) return row.id;
   if (row.kpl_code) return `kpl:${row.kpl_code}`;
   return `name:${row.name || ""}`;
@@ -339,6 +343,62 @@ export function buildSyntheticBlockTree(
     name: rootLabel,
     node_type: "branch",
     children,
+  };
+}
+
+/** 按 parent_id 还原分组树（风格指数等合成层级） */
+export function buildParentLinkedTree(
+  rows: Array<{
+    id?: string;
+    kpl_code?: string;
+    name?: string;
+    node_type?: string;
+    parent_id?: string | null;
+    style_key?: string;
+  }>,
+  rootLabel: string,
+  rootId: string,
+): ThsTreeNode {
+  type Linked = ThsTreeNode & { parentId?: string | null };
+  const byId = new Map<string, Linked>();
+  const order: string[] = [];
+  for (const r of rows) {
+    const id = blockTreeNodeId(r);
+    if (!id || byId.has(id)) continue;
+    byId.set(id, {
+      id,
+      name: r.name || id,
+      node_type: r.node_type === "branch" ? "branch" : "leaf",
+      children: [],
+      parentId: r.parent_id || null,
+    });
+    order.push(id);
+  }
+  const roots: ThsTreeNode[] = [];
+  for (const id of order) {
+    const node = byId.get(id);
+    if (!node) continue;
+    const pid = node.parentId;
+    const parent = pid ? byId.get(pid) : undefined;
+    if (parent) {
+      parent.node_type = "branch";
+      parent.children = parent.children || [];
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const strip = (n: ThsTreeNode): ThsTreeNode => ({
+    id: n.id,
+    name: n.name,
+    node_type: n.node_type,
+    children: n.children?.length ? n.children.map(strip) : undefined,
+  });
+  return {
+    id: rootId,
+    name: rootLabel,
+    node_type: "branch",
+    children: roots.map(strip),
   };
 }
 

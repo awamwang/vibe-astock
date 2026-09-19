@@ -961,10 +961,13 @@ export const api = {
   thsBlocksIndexInfo: () => get<BlockIndexInfo>("/ths-blocks/index-info"),
   /** 板块管理：同花顺 + 开盘啦融合（开盘啦自动日更最多一次） */
   blocksManage: () => get<BlocksManageSnapshot>("/blocks-manage"),
+  blocksManageStyle: () => get<{ kind: string; kind_label: string; rows: ManagedBlockRow[] }>("/blocks-manage/style"),
   blocksManageRefresh: (opts: { ths_dir?: string; refresh_ths?: boolean } = {}) =>
     request<BlocksManageSnapshot>("/blocks-manage/refresh", "POST", opts),
   blocksManageRefreshKpl: () =>
     request<BlocksManageSnapshot>("/blocks-manage/refresh/kpl", "POST"),
+  styleIndexCons: (key: string) =>
+    get<StyleIndexConsDetail>(`/market/style-indices/cons?key=${encodeURIComponent(key)}`),
   stocksResolve: (queries: StockResolveQuery[]) =>
     request<StockResolveResult>("/stocks/resolve", "POST", { queries }),
   stocksIndexInfo: () => get<StockIndexInfo>("/stocks/index-info"),
@@ -1124,8 +1127,8 @@ export interface ThsBlockRow {
 /** 板块管理融合行：同花顺 + 开盘啦字段并集，缺失留空 */
 export interface ManagedBlockRow extends ThsBlockRow {
   /** 行所属原始来源类型体系 */
-  origin?: "ths" | "kpl" | "";
-  sources: Array<"ths" | "kpl">;
+  origin?: "ths" | "kpl" | "style" | "";
+  sources: Array<"ths" | "kpl" | "style">;
   has_ths: boolean;
   has_kpl: boolean;
   /** 同花顺原始类型；开盘啦页签取成分股/关注用 */
@@ -1140,6 +1143,15 @@ export interface ManagedBlockRow extends ThsBlockRow {
   kpl_speed?: number | null;
   kpl_m_net?: number | null;
   kpl_sort?: number | null;
+  /** 短线风格指数目录 key */
+  style_key?: string;
+  style_group?: string;
+  style_group_label?: string;
+  cons_available?: boolean;
+  cons_source?: "em_bk" | "csindex" | "cnindex" | string | null;
+  cons_source_label?: string | null;
+  cons_reason?: string | null;
+  cons_note?: string | null;
 }
 
 export interface KplBlocksMeta {
@@ -1197,6 +1209,21 @@ export interface ThsBlocksSnapshot {
 export interface ThsBlockStockItem {
   code: string;
   market: string;
+  name?: string;
+}
+
+export interface StyleIndexConsDetail {
+  key: string;
+  name: string;
+  code: string;
+  group?: string;
+  available: boolean;
+  reason?: string | null;
+  source?: string | null;
+  source_label?: string | null;
+  note?: string | null;
+  count: number;
+  stocks: ThsBlockStockItem[];
 }
 
 export interface ThsBlockRef {

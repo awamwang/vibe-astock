@@ -3,6 +3,7 @@
 概念 / 行业 / 地域：跨来源按「完全同名 + 板块别名族」并入同一页签（字段并集）；
 自定义 / 热点主题：同花顺页签，并与全部开盘啦板块（概念/行业/地域/人气）同名匹配补字段；
 每日动态仅同花顺；人气仅开盘啦。
+风格指数：短线风格目录为主，按名称/别名匹配同花顺；成分走公开源，点开再取，匹配到同花顺时可补位。
 合并后保留 ``kpl_name``（开盘啦原始名称）。
 开盘啦侧经 ``kpl_blocks.ensure`` 初始化，自动日更最多一次。
 """
@@ -30,6 +31,10 @@ THS_ONLY_KEYS = (
 KPL_ONLY_KEYS = (
     ("hot", "hot", "人气"),
 )
+# 短线风格指数目录（公开源成分 + 按名称匹配同花顺）
+STYLE_KIND = "style"
+STYLE_KIND_LABEL = "风格指数"
+STYLE_ROOT_ID = "__style_root__"
 
 def _ths_snapshot() -> dict[str, Any]:
     try:
@@ -49,7 +54,7 @@ def _ths_snapshot() -> dict[str, Any]:
 def _blank_unified(*, name: str = "") -> dict[str, Any]:
     return {
         "name": name,
-        "origin": "",  # ths | kpl —— 行所属原始来源类型体系
+        "origin": "",  # ths | kpl | style —— 行所属原始来源类型体系
         "sources": [],
         "has_ths": False,
         "has_kpl": False,
@@ -549,8 +554,189 @@ def _build_kpl_hot(
     return out
 
 
+def _lookup_ths_leaf(ths_map: dict[str, dict], name: str) -> dict | None:
+    """按同名 / 别名族查找同花顺叶子。"""
+    for key in _equivalence_keys(name):
+        hit = ths_map.get(key)
+        if hit:
+            return hit
+    return None
+
+
+def _build_style(*, ths_snap: dict[str, Any]) -> list[dict]:
+    """风格指数页签：目录叶子平铺，不造合成分组树。"""
+    from . import style_cons, style_indices  # noqa: PLC0415
+
+    ths_map = _ths_leaf_by_name(ths_snap)
+    group_label_by_id = {gid: label for gid, label in style_indices.GROUPS}
+    out: list[dict] = []
+
+    def _append_leaf(
+        *,
+        key: str,
+        name: str,
+        group: str,
+        group_label: str,
+        code: str,
+        spec: dict[str, Any],
+    ) -> None:
+        row = _blank_unified(name=name)
+        row["origin"] = "style"
+        row["sources"] = ["style"]
+        row["kind"] = STYLE_KIND
+        row["kind_label"] = STYLE_KIND_LABEL
+        row["code"] = code
+        row["style_key"] = key
+        row["style_group"] = group
+        row["style_group_label"] = group_label
+        row["node_type"] = "leaf"
+        row["tree_path"] = (
+            f"{STYLE_KIND_LABEL} › {group_label} › {name}"
+            if group_label else f"{STYLE_KIND_LABEL} › {name}"
+        )
+        row["parent_id"] = STYLE_ROOT_ID
+        row["depth"] = 1
+        row["cons_available"] = bool(spec.get("cons_available"))
+        row["cons_source"] = spec.get("cons_source")
+        row["cons_source_label"] = spec.get("cons_source_label")
+        row["cons_reason"] = spec.get("cons_reason")
+        row["cons_note"] = spec.get("cons_note")
+        ths_hit = _lookup_ths_leaf(ths_map, name)
+        if ths_hit:
+            _apply_ths(row, ths_hit, native=False)
+            row["kind"] = STYLE_KIND
+            row["kind_label"] = STYLE_KIND_LABEL
+            row["code"] = code
+            row["origin"] = "style"
+            if "style" not in row["sources"]:
+                row["sources"].insert(0, "style")
+            if not row.get("id"):
+                row["id"] = str(ths_hit.get("id") or f"style:{key}")
+        else:
+            row["id"] = f"style:{key}"
+        out.append(row)
+
+    for item in style_indices.ITEMS:
+        spec = style_cons.classify(item.key, code=item.code, group=item.group)
+        _append_leaf(
+            key=item.key,
+            name=item.name,
+            group=item.group,
+            group_label=group_label_by_id.get(item.group) or item.group,
+            code=item.code,
+            spec=spec,
+        )
+
+    unavail_label = "未接入"
+    for item in style_indices.UNAVAILABLE:
+        key = str(item.get("key") or "")
+        name = str(item.get("name") or key)
+        spec = style_cons.classify(key, reason=str(item.get("reason") or ""))
+        _append_leaf(
+            key=key,
+            name=name,
+            group="unavailable",
+            group_label=unavail_label,
+            code="",
+            spec=spec,
+        )
+    return out
+
+
+def _ths_ref_for_style_key(key: str, *, ths_snap: dict[str, Any] | None = None) -> tuple[str, str] | None:
+    """风格目录名 / 别名命中的同花顺叶子 (kind, id)。"""
+    from . import style_indices  # noqa: PLC0415
+
+    name = ""
+    item = next((it for it in style_indices.ITEMS if it.key == key), None)
+    if item is not None:
+        name = item.name
+    else:
+        unavail = next((u for u in style_indices.UNAVAILABLE if str(u.get("key")) == key), None)
+        if unavail:
+            name = str(unavail.get("name") or "")
+    if not name:
+        return None
+    hit = _lookup_ths_leaf(_ths_leaf_by_name(ths_snap or _ths_snapshot()), name)
+    if not hit:
+        return None
+    ths_kind = str(hit.get("kind") or "").strip()
+    ths_id = str(hit.get("id") or "").strip()
+    if not ths_kind or not ths_id or ths_id.startswith("style:") or ths_kind in {"hot", "style"}:
+        return None
+    return ths_kind, ths_id
+
+
+def _map_ths_cons_stocks(raw: list[Any] | None) -> list[dict[str, str]]:
+    from . import style_cons  # noqa: PLC0415
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in raw or []:
+        if not isinstance(row, dict):
+            continue
+        code = style_cons._stock_code(row.get("code"))
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        name = str(row.get("name") or "").strip()
+        if name in {"nan", "None"}:
+            name = ""
+        out.append({"code": code, "name": name, "market": style_cons._market_of(code)})
+    return out
+
+
+def fetch_style_cons(key: str) -> dict[str, Any]:
+    """点开风格成分：公开源优先，名单不可用时按同花顺同名/别名补位。"""
+    from . import style_cons  # noqa: PLC0415
+
+    k = str(key or "").strip()
+    out = style_cons.fetch(k)
+    if style_cons.public_cons_usable(out):
+        return out
+    ref = _ths_ref_for_style_key(k)
+    if not ref:
+        return out
+    ths_kind, ths_id = ref
+    try:
+        from ths_block.service import get_block_stocks  # noqa: PLC0415
+
+        detail = get_block_stocks(kind=ths_kind, block_id=ths_id)
+    except Exception as exc:  # noqa: BLE001
+        if out.get("available"):
+            return out
+        reason = out.get("reason") or "没有可用的公开股票成分请求。"
+        return {**out, "reason": f"{reason} 同花顺同名补位未取到：{exc}"}
+    stocks = _map_ths_cons_stocks(detail.get("stocks") if isinstance(detail, dict) else None)
+    if not stocks:
+        if out.get("available"):
+            return out
+        reason = out.get("reason") or "没有可用的公开股票成分请求。"
+        return {**out, "reason": f"{reason} 已匹配同花顺板块，但本地成分股为空。"}
+    note_bits = [str(x) for x in (out.get("note"),) if x]
+    note_bits.append("公开源名单不可用，按同花顺同名/别名板块成分补位。")
+    return {
+        "key": out.get("key") or k,
+        "name": out.get("name") or k,
+        "code": out.get("code") or "",
+        "group": out.get("group") or "",
+        "available": True,
+        "reason": None,
+        "source": "ths",
+        "source_label": "同花顺板块成分（名称/别名补位）",
+        "note": " ".join(note_bits),
+        "count": len(stocks),
+        "stocks": stocks,
+    }
+
+
+def style_catalog_rows() -> list[dict]:
+    """只构建风格指数页签（同花顺缓存 + 风格目录），不拉开盘啦。"""
+    return _build_style(ths_snap=_ths_snapshot())
+
+
 def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[str, list[dict]]:
-    """产出融合页签：概念/行业/地域跨源合并；自定义可匹配全部开盘啦；每日/人气分列。"""
+    """产出融合页签：概念/行业/地域跨源合并；自定义可匹配全部开盘啦；每日/人气/风格分列。"""
     merged: dict[str, list[dict]] = {}
     ths_kinds = ths_snap.get("kinds") or {}
     kpl_kinds = kpl_snap.get("kinds") or {}
@@ -590,6 +776,8 @@ def build_merged(*, ths_snap: dict[str, Any], kpl_snap: dict[str, Any]) -> dict[
             merged[key] = _build_kpl_hot(kpl_rows=kpl_rows, ths_snap=ths_snap)
         else:
             merged[key] = []
+
+    merged[STYLE_KIND] = _build_style(ths_snap=ths_snap)
 
     return merged
 

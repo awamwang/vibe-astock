@@ -608,3 +608,182 @@ def test_custom_color_fields_pass_through():
     assert colored["color_order"] == 4
     assert colored["color_priority"] == 1789693020
     assert merged["custom"][1].get("color") in (None, "")
+
+
+def test_merge_style_catalog_matches_ths_and_keeps_cons_meta():
+    ths_snap = {
+        "updated_at": "t",
+        "kinds": {
+            "conception": {
+                "rows": [{
+                    "kind": "conception",
+                    "kind_label": "概念",
+                    "id": "D815",
+                    "name": "昨日涨停",
+                    "code": "885815",
+                    "node_type": "leaf",
+                    "tree_path": "概念 › 昨日涨停",
+                }],
+            },
+            "industry": {
+                "rows": [{
+                    "kind": "industry",
+                    "kind_label": "行业",
+                    "id": "BC10",
+                    "name": "银行",
+                    "node_type": "leaf",
+                    "tree_path": "行业 › 银行",
+                }],
+            },
+            "region": {"rows": []},
+            "custom": {"rows": []},
+            "daily": {"rows": []},
+            "theme": {"rows": []},
+        },
+    }
+    merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap={"kinds": {}})
+    style_rows = merged["style"]
+    leaves = [r for r in style_rows if r.get("style_key")]
+    assert leaves
+    assert all(r.get("node_type") != "branch" for r in style_rows)
+    assert not any(str(r.get("id") or "").startswith("style_group:") for r in style_rows)
+
+    yzt = next(r for r in leaves if r["style_key"] == "yzt")
+    assert yzt["origin"] == "style"
+    assert yzt["kind"] == "style"
+    assert yzt["code"] == "BK0815"
+    assert yzt["has_ths"] is True
+    assert yzt["ths_kind"] == "conception"
+    assert yzt["id"] == "D815"
+    assert yzt["cons_available"] is True
+    assert yzt["cons_source"] == "em_bk"
+    assert yzt["style_group_label"] == "打板风格"
+    assert yzt["parent_id"] == block_manage.STYLE_ROOT_ID
+
+    bank = next(r for r in leaves if r["style_key"] == "bank")
+    assert bank["has_ths"] is True
+    assert bank["ths_kind"] == "industry"
+    assert bank["id"] == "BC10"
+
+    hs300 = next(r for r in leaves if r["style_key"] == "hs300")
+    assert hs300["cons_source"] == "csindex"
+    assert hs300["code"] == "000300"
+    assert hs300["has_ths"] is False
+    assert hs300["id"] == "style:hs300"
+
+    cyb = next(r for r in leaves if r["style_key"] == "cyb")
+    assert cyb["cons_source"] == "cnindex"
+    assert cyb["code"] == "399006"
+
+    hsi = next(r for r in leaves if r["style_key"] == "hsi")
+    assert hsi["cons_available"] is False
+    assert "恒生" in (hsi.get("cons_reason") or "")
+
+    a50 = next(r for r in leaves if r["style_key"] == "a50")
+    assert a50["cons_available"] is False
+    assert "期指" in (a50.get("cons_reason") or "")
+
+    emotion = next(r for r in leaves if r["style_key"] == "ths_emotion")
+    assert emotion["cons_available"] is False
+    assert emotion["name"] == "同花顺情绪指数"
+    assert "公开" in (emotion.get("cons_reason") or "")
+
+
+def _csi_singleton_payload(key="csi500"):
+    return {
+        "key": key,
+        "name": "中证500",
+        "code": "000905",
+        "group": "benchmark",
+        "available": True,
+        "reason": None,
+        "source": "csindex",
+        "source_label": "中证成分文件",
+        "note": None,
+        "count": 1,
+        "stocks": [{"code": "000905", "name": "中证500", "market": "SZ"}],
+    }
+
+
+def test_fetch_style_cons_falls_back_to_ths_name_match(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("duanxian.style_cons.fetch", lambda key: {
+        "key": key, "name": "昨日涨停", "code": "BK0815", "group": "board",
+        "available": False, "reason": "公开源失败", "source": "em_bk",
+        "source_label": "东财板块成分", "note": None, "count": 0, "stocks": [],
+    })
+    monkeypatch.setattr("duanxian.block_manage._ths_snapshot", lambda: {
+        "kinds": {"conception": {"rows": [{
+            "kind": "conception", "id": "D815", "name": "昨日涨停", "node_type": "leaf",
+        }]}}
+    })
+    monkeypatch.setattr(
+        "ths_block.service.get_block_stocks",
+        lambda **_k: {"stocks": [{"code": "600519", "name": "贵州茅台"}]},
+    )
+    out = block_manage.fetch_style_cons("yzt")
+    assert out["available"] is True
+    assert out["source"] == "ths"
+    assert out["count"] == 1
+    assert out["stocks"][0]["code"] == "600519"
+    assert "补位" in (out.get("note") or "")
+
+
+def test_fetch_style_cons_falls_back_when_csindex_is_singleton(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("duanxian.style_cons.fetch", lambda key: _csi_singleton_payload(key))
+    monkeypatch.setattr("duanxian.block_manage._ths_snapshot", lambda: {
+        "kinds": {"conception": {"rows": [{
+            "kind": "conception", "id": "D905", "name": "中证500", "node_type": "leaf",
+        }]}}
+    })
+    monkeypatch.setattr(
+        "ths_block.service.get_block_stocks",
+        lambda **_k: {"stocks": [
+            {"code": "000009", "name": "中国宝安"},
+            {"code": "000012", "name": "南玻A"},
+        ]},
+    )
+    out = block_manage.fetch_style_cons("csi500")
+    assert out["available"] is True
+    assert out["source"] == "ths"
+    assert out["count"] == 2
+
+
+def test_fetch_style_cons_matches_ths_via_alias(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "duanxian.theme_normalize.load_aliases",
+        lambda: {"中证500指数": "中证500"},
+    )
+    monkeypatch.setattr("duanxian.style_cons.fetch", lambda key: _csi_singleton_payload(key))
+    monkeypatch.setattr("duanxian.block_manage._ths_snapshot", lambda: {
+        "kinds": {"conception": {"rows": [{
+            "kind": "conception", "id": "D905", "name": "中证500指数", "node_type": "leaf",
+        }]}}
+    })
+    monkeypatch.setattr(
+        "ths_block.service.get_block_stocks",
+        lambda **kw: {"stocks": [{"code": "000009", "name": "中国宝安"}]},
+    )
+    out = block_manage.fetch_style_cons("csi500")
+    assert out["source"] == "ths"
+    assert out["stocks"][0]["code"] == "000009"
+
+
+def test_fetch_style_cons_keeps_usable_public(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("duanxian.style_cons.fetch", lambda key: {
+        "key": key, "name": "昨日涨停", "code": "BK0815", "group": "board",
+        "available": True, "reason": None, "source": "em_bk",
+        "source_label": "东财板块成分", "note": None, "count": 2,
+        "stocks": [
+            {"code": "600519", "name": "贵州茅台", "market": "SH"},
+            {"code": "000001", "name": "平安银行", "market": "SZ"},
+        ],
+    })
+
+    def boom(**_k):
+        raise AssertionError("公开源可用时不应补位同花顺")
+
+    monkeypatch.setattr("ths_block.service.get_block_stocks", boom)
+    out = block_manage.fetch_style_cons("yzt")
+    assert out["source"] == "em_bk"
+    assert out["count"] == 2
+

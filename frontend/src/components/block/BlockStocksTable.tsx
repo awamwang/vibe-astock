@@ -64,7 +64,7 @@ export function BlockStocksTable({ stocks, quotes }: Props) {
                   <StockLabel code={s.code} variant="codeOnly" />
                 </td>
                 <td className="px-3 py-2">
-                  <StockLabel code={s.code} name={qt?.name} variant="nameOnly" />
+                  <StockLabel code={s.code} name={qt?.name || s.name} variant="nameOnly" />
                 </td>
                 <td className={cn(
                   "px-3 py-2 text-right tabular-nums",

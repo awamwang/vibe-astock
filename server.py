@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from duanxian import (
     block_manage, board_emotion_resonance, focus_blocks, kpl_blocks, live_emotion, live_zt_effect,
     mood_block, overseas, preflight, reflection, review_store, screenshot_parse, risk_stance,
-    short_board, short_sprite, style_indices, trade_calendar, trade_budget, trade_store,
+    short_board, short_sprite, style_cons, style_indices, trade_calendar, trade_budget, trade_store,
 )
 from duanxian.review_store import md_to_html as _md_to_html, strip_prefix as _strip_prefix
 from duanxian.config import make_llm
@@ -470,6 +470,15 @@ def api_market_style_indices():
     return out
 
 
+@app.get("/api/market/style-indices/cons")
+def api_market_style_indices_cons(key: str = ""):
+    """短线风格指数成分股：点开再取。不可用则带原因，不给空列表冒充。"""
+    k = str(key or "").strip()
+    if not k:
+        return JSONResponse({"error": "缺少 key"}, status_code=400)
+    return block_manage.fetch_style_cons(k)
+
+
 @app.get("/api/market/short-sprite")
 def api_market_short_sprite():
     """短线精灵 snapshot（随带 tick）。只读现有盘面/风格快照，不新开上游。"""
@@ -543,6 +552,13 @@ def api_blocks_manage_refresh_kpl():
         return block_manage.snapshot(ensure_kpl=True, force_kpl=True)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": f"开盘啦目录刷新失败：{e}"}, status_code=502)
+
+
+@app.get("/api/blocks-manage/style")
+def api_blocks_manage_style():
+    """风格指数页签：目录 + 按名称匹配同花顺。不拉开盘啦。"""
+    rows = block_manage.style_catalog_rows()
+    return {"kind": "style", "kind_label": "风格指数", "rows": rows}
 
 
 @app.get("/api/market/overseas")

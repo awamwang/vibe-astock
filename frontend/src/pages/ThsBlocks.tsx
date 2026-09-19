@@ -52,7 +52,8 @@ const EMPTY_FOLLOWED_TREE_SECTIONS: {
   rowById: Map<string, ManagedBlockRow>;
 }[] = [];
 
-function managedRowKey(row: Pick<ManagedBlockRow, "kind" | "id" | "kpl_code" | "name">): string {
+function managedRowKey(row: Pick<ManagedBlockRow, "kind" | "id" | "kpl_code" | "name" | "style_key">): string {
+  if (row.style_key) return `style|${row.style_key}`;
   if (row.id) return `${row.kind}|${row.id}`;
   return `${row.kind}|kpl:${row.kpl_code || row.name}`;
 }
@@ -235,7 +236,9 @@ function ThsBlockTreeItem({
   const row = rowById.get(node.id);
   const active = selectedId === node.id;
   const stockCount = row?.stock_count;
-  const followed = row ? followedIds.has(`${row.kind}|${row.id}`) : false;
+  const followed = row && row.id
+    ? followedIds.has(`${thsStocksKind(row) || row.kind}|${row.id}`)
+    : false;
   const aliases = aliasesForBlockName(node.name, aliasesByCanonical);
   const aliasText = aliases.length ? aliases.join("、") : "";
 
@@ -305,13 +308,13 @@ function ThsBlockTreeItem({
             {row ? thsBlockPrimaryCode(row) : node.id}
           </span>
         </button>
-        {row && (
+        {row && row.has_ths && row.id && thsStocksKind(row) ? (
           <FollowBlockButton
             followed={followed}
             onToggle={() => onToggleFollow(row)}
             className="opacity-70 group-hover:opacity-100"
           />
-        )}
+        ) : null}
       </div>
       {isBranch && isOpen && (node.children ?? []).map((child) => (
         <ThsBlockTreeItem
@@ -535,7 +538,7 @@ export function ThsBlocks() {
   /** 当前来源下可选的类型页签（概念/行业/地域不按来源拆分） */
   const visibleTypeTabs = useMemo(() => {
     if (sourceFilter === "ths") {
-      return BLOCK_MANAGE_KINDS.filter((k) => "thsKind" in k);
+      return BLOCK_MANAGE_KINDS.filter((k) => "thsKind" in k || "catalog" in k);
     }
     if (sourceFilter === "kpl") {
       return BLOCK_MANAGE_KINDS.filter((k) => "kplKind" in k);
@@ -690,6 +693,7 @@ export function ThsBlocks() {
       `__root_${kindFilter}__`,
       kplKindForTab ? `__kpl_${kplKindForTab}_root__` : "",
       "__hot_root__",
+      "__style_root__",
     ].filter(Boolean)));
   }, [kindFilter, kplKindForTab, canShowTree, viewMode, kindEntry?.tree, kindEntry?.tree_mode, isFollowedView, followedTreeSections]);
 
@@ -723,9 +727,11 @@ export function ThsBlocks() {
       root = buildSyntheticBlockTree(
         allRows,
         label,
-        kplKindForTab && !thsKindForTab
-          ? `__kpl_${kplKindForTab}_root__`
-          : `__root_${kindFilter}__`,
+        kindFilter === "style"
+          ? "__style_root__"
+          : kplKindForTab && !thsKindForTab
+            ? `__kpl_${kplKindForTab}_root__`
+            : `__root_${kindFilter}__`,
       );
     }
     return filterThsTree(root, {
@@ -748,6 +754,7 @@ export function ThsBlocks() {
         (row.id || "").toLowerCase().includes(query)
         || (row.code || "").toLowerCase().includes(query)
         || (row.kpl_code || "").toLowerCase().includes(query)
+        || (row.style_key || "").toLowerCase().includes(query)
         || (row.name || "").toLowerCase().includes(query)
         || (row.tree_path || "").toLowerCase().includes(query)
         || subtype.toLowerCase().includes(query)
@@ -841,7 +848,7 @@ export function ThsBlocks() {
 
   const emptyThs = !thsSnap?.updated_at;
   const emptyKpl = !snapshot?.kpl?.available;
-  const emptyCache = emptyThs && emptyKpl;
+  const emptyCache = emptyThs && emptyKpl && kindFilter !== "style";
   const linkerDown = snapshot?.linker_unavailable;
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const visibleCount = filteredRows.length;
@@ -858,7 +865,7 @@ export function ThsBlocks() {
               <h1 className="text-xl font-bold text-foreground">板块管理</h1>
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              概念 / 行业 / 地域按名称跨来源融合；开盘啦目录每日自动最多拉取一次，可分别强制刷新同花顺或开盘啦。
+              概念 / 行业 / 地域按名称跨来源融合；风格指数按名称和别名匹配同花顺，成分走公开源，匹配到的可补位同花顺名单。开盘啦目录每日自动最多拉取一次，可分别强制刷新同花顺或开盘啦。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -940,9 +947,10 @@ export function ThsBlocks() {
             {BLOCK_MANAGE_KINDS.map((k) => {
               const hasThs = "thsKind" in k;
               const hasKpl = "kplKind" in k;
+              const isStyleTab = "catalog" in k;
               const tabVisible =
                 sourceFilter === "all"
-                || (sourceFilter === "ths" && hasThs)
+                || (sourceFilter === "ths" && (hasThs || isStyleTab))
                 || (sourceFilter === "kpl" && hasKpl);
               const fused = Boolean(k.fused);
               const rows = snapshot?.merged?.[k.value] || [];
@@ -961,6 +969,7 @@ export function ThsBlocks() {
                 return undefined;
               })();
               const loaded = (count ?? 0) > 0
+                || isStyleTab
                 || (hasThs && k.thsKind != null && thsSnap?.kinds?.[k.thsKind] != null)
                 || (hasKpl && k.kplKind != null && !!snapshot?.kpl?.kinds?.[k.kplKind]);
               const hasErr = hasThs && k.thsKind != null
@@ -980,13 +989,15 @@ export function ThsBlocks() {
                     active
                       ? fused
                         ? "border-primary/50 bg-primary/10 text-primary"
-                        : hasThs && !hasKpl
-                          ? "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-300"
-                          : "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                        : isStyleTab
+                          ? "border-violet-500/50 bg-violet-500/10 text-violet-800 dark:text-violet-300"
+                          : hasThs && !hasKpl
+                            ? "border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-300"
+                            : "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
                       : "border-border bg-background text-muted-foreground hover:text-foreground",
                     hasErr && "border-amber-500/50",
                   )}
-                  title={fused ? "同花顺与开盘啦按名称融合" : hasThs ? "同花顺" : "开盘啦"}
+                  title={isStyleTab ? "短线风格指数，按名称匹配同花顺" : fused ? "同花顺与开盘啦按名称融合" : hasThs ? "同花顺" : "开盘啦"}
                 >
                   <span>{k.label}</span>
                   {count != null && (
@@ -1162,7 +1173,7 @@ export function ThsBlocks() {
                 <div className="flex items-center justify-center gap-2 p-12 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" /> 加载中…
                 </div>
-              ) : linkerDown && emptyKpl && emptyThs ? (
+              ) : linkerDown && emptyKpl && emptyThs && kindFilter !== "style" ? (
                 <div className="p-12 text-center text-sm text-amber-700 dark:text-amber-300">
                   {linkerMessage}
                 </div>
