@@ -347,6 +347,52 @@ def _width_ok_for_hotspot(item: dict) -> bool:
     return up / (up + down) >= 0.5
 
 
+def items_by_key(packed: dict) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for g in packed.get("groups") or []:
+        for it in g.get("items") or []:
+            out[it["key"]] = it
+    return out
+
+
+def rank_hotspot_candidates(by_key: dict[str, dict], csi: float) -> list[dict]:
+    """风格热点候选集按超额降序、目录序稳定。宽基、外围、中证全指不参赛。"""
+    candidates = [
+        it for it in by_key.values()
+        if it.get("available")
+        and it.get("group") in HOTSPOT_GROUP_IDS
+        and it["key"] != "csi_all"
+    ]
+    return sorted(
+        candidates,
+        key=lambda it: (
+            -(it["change_pct"] - csi),
+            _ITEM_ORDER.get(it["key"], 10**6),
+        ),
+    )
+
+
+def packed_quotes(packed: dict) -> dict[str, dict]:
+    """装配结果 → 存档用报价（涨幅、最新价、涨跌家数）。"""
+    out: dict[str, dict] = {}
+    for it in items_by_key(packed).values():
+        if not it.get("available"):
+            continue
+        out[it["key"]] = {
+            "change_pct": it.get("change_pct"),
+            "price": it.get("price"),
+            "up": it.get("up"),
+            "down": it.get("down"),
+        }
+    return out
+
+
+def _empty_rotation() -> dict:
+    from . import style_rotation as sr
+
+    return sr.empty_rotation()
+
+
 def _empty_preference(status: str = "absent") -> dict:
     return {
         "status": status,
@@ -360,11 +406,7 @@ def _empty_preference(status: str = "absent") -> dict:
 
 def derive_preference(packed: dict) -> dict:
     """从装配后的分组算出风格偏好。不打网络。"""
-    groups = packed.get("groups") or []
-    by_key: dict[str, dict] = {}
-    for g in groups:
-        for it in g.get("items") or []:
-            by_key[it["key"]] = it
+    by_key = items_by_key(packed)
 
     if not packed.get("available"):
         return _empty_preference("absent")
@@ -406,20 +448,8 @@ def derive_preference(packed: dict) -> dict:
 
     hotspots: list[dict] = []
     hotspot_keys: set[str] = set()
-    if status == "ok":
-        candidates = [
-            it for it in by_key.values()
-            if it.get("available")
-            and it.get("group") in HOTSPOT_GROUP_IDS
-            and it["key"] != "csi_all"
-        ]
-        ranked = sorted(
-            candidates,
-            key=lambda it: (
-                -(it["change_pct"] - csi),
-                _ITEM_ORDER.get(it["key"], 10**6),
-            ),
-        )
+    if status == "ok" and csi is not None:
+        ranked = rank_hotspot_candidates(by_key, csi)
         for it in ranked[:HOTSPOT_TAKE]:
             if not _width_ok_for_hotspot(it):
                 continue
@@ -427,7 +457,7 @@ def derive_preference(packed: dict) -> dict:
             hotspot_keys.add(it["key"])
 
     group_leads = []
-    for g in groups:
+    for g in packed.get("groups") or []:
         gid = g.get("id")
         available = [it for it in (g.get("items") or []) if it.get("available")]
         if not available:
@@ -478,13 +508,15 @@ def assemble(quotes: dict[str, dict]) -> dict:
 def snapshot() -> dict:
     calendar_today = china_now().strftime("%Y-%m-%d")
     # 场次不能按小时缓存：盘前 as_of 还是上一场，活过 09:15 会把凌晨快照一直当盘中用。
-    as_of, _prev, is_live = trade_calendar.resolve_as_of(calendar_today)
+    as_of, prev, is_live = trade_calendar.resolve_as_of(calendar_today)
     settled = trade_calendar.is_settled(as_of)
     raw_ttl = _TTL if (is_live and not settled) else _OFFSESSION_TTL
     ttl = trade_calendar.ttl_until_session_boundary(raw_ttl)
     catalog = ",".join(i.key for i in ITEMS)
 
     def build():
+        from . import style_rotation as sr
+
         try:
             quotes = _load_quotes()
         except Exception:  # noqa: BLE001
@@ -493,6 +525,7 @@ def snapshot() -> dict:
         packed["date"] = as_of
         packed["is_live"] = is_live
         packed["updated"] = china_now().strftime("%Y-%m-%d %H:%M")
+        sr.apply_to_snapshot(packed, as_of=as_of, prev=prev, settled=settled)
         return packed
 
     return _cached(f"snap:{as_of}:{is_live}:{settled}:{catalog}", ttl, build) or {
@@ -506,4 +539,5 @@ def snapshot() -> dict:
         "unavailable": [dict(x) for x in UNAVAILABLE],
         "updated": china_now().strftime("%Y-%m-%d %H:%M"),
         "preference": _empty_preference("absent"),
+        "rotation": _empty_rotation(),
     }

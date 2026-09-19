@@ -12,6 +12,11 @@ export interface StyleIndexItem {
   note: string | null;
   available: boolean;
   width_flag?: "价升面窄" | "价跌面宽" | null;
+  change_pct_delta?: number | null;
+  excess_rank_delta?: number | null;
+  zscore?: number | null;
+  cum_excess?: number | null;
+  close_extreme?: "新高" | "新低" | "都不是" | "不足" | null;
 }
 
 export interface StyleIndexGroup {
@@ -49,6 +54,21 @@ export interface StyleIndicesSnapshot {
   groups: StyleIndexGroup[];
   unavailable: StyleIndexUnavailable[];
   preference?: StylePreference;
+  rotation?: StyleRotation;
+}
+
+export type StyleRotationStatus = "ok" | "partial" | "absent";
+
+export interface StyleRotation {
+  status: StyleRotationStatus;
+  this: { date: string } | null;
+  against: { date: string } | null;
+  live_deferred: boolean;
+  hotspot_enter: string[];
+  hotspot_leave: string[];
+  spearman: { value: number | null; n: number; status: "ok" | "不足" };
+  z_n: number;
+  close_n: number;
 }
 
 export function fetchStyleIndices() {
@@ -59,4 +79,20 @@ export function formatStylePct(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return "—";
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(2)}%`;
+}
+
+export function formatStyleDelta(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "不足";
+  return formatStylePct(v);
+}
+
+export function formatRankDelta(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "不足";
+  return v > 0 ? `+${v}` : String(v);
+}
+
+export function formatZscore(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "不足";
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(2)}`;
 }

@@ -17,6 +17,31 @@ def _q(pct, price=10.0, up=None, down=None):
     return {"change_pct": pct, "price": price, "up": up, "down": down, "code": "x"}
 
 
+def _prev(date: str):
+    import datetime as _dt
+    d = _dt.datetime.strptime(date, "%Y-%m-%d")
+    for i in range(1, 10):
+        p = d - _dt.timedelta(days=i)
+        if p.weekday() < 5:
+            return p.strftime("%Y-%m-%d")
+    return None
+
+
+def _weekday_ending_local(end_date: str, n: int = 10):
+    import datetime as _dt
+    d = _dt.datetime.strptime(end_date, "%Y-%m-%d")
+    out = []
+    cur = d
+    guard = 0
+    while len(out) < n and guard < 80:
+        if cur.weekday() < 5:
+            out.append(cur.strftime("%Y-%m-%d"))
+        cur -= _dt.timedelta(days=1)
+        guard += 1
+    out.reverse()
+    return out
+
+
 @pytest.mark.unit
 class TestCatalog:
     def test_keys_unique(self):
@@ -89,8 +114,9 @@ class TestAssemble:
 @pytest.mark.unit
 class TestSnapshotCache:
     @pytest.fixture(autouse=True)
-    def _iso(self, monkeypatch):
+    def _iso(self, monkeypatch, tmp_path):
         from duanxian import style_indices as si
+        from duanxian import style_rotation as sr
 
         si._reset_runtime_state()
         monkeypatch.setattr(si, "_load_quotes", lambda: {"sh": _q(-0.41)})
@@ -100,6 +126,9 @@ class TestSnapshotCache:
         )
         monkeypatch.setattr(si.trade_calendar, "is_settled", lambda _d: False)
         monkeypatch.setattr(si.trade_calendar, "ttl_until_session_boundary", lambda ttl: ttl)
+        monkeypatch.setattr(sr, "_CACHE_DIR", str(tmp_path / "style_arch"))
+        monkeypatch.setattr(si.trade_calendar, "prev_trade_date", _prev)
+        monkeypatch.setattr(si.trade_calendar, "trade_dates_ending_at", lambda end, n=10: _weekday_ending_local(end, n))
         yield
         si._reset_runtime_state()
 
@@ -200,6 +229,17 @@ class TestHttpAndFrontend:
         fake = assemble({"yzt_yz": _q(0.11)})
         fake["date"] = "2026-09-17"
         fake["is_live"] = True
+        fake["rotation"] = {
+            "status": "absent",
+            "this": None,
+            "against": None,
+            "live_deferred": True,
+            "hotspot_enter": [],
+            "hotspot_leave": [],
+            "spearman": {"value": None, "n": 0, "status": "不足"},
+            "z_n": 10,
+            "close_n": 20,
+        }
         monkeypatch.setattr(server.style_indices, "snapshot", lambda: fake)
         monkeypatch.setattr(si, "snapshot", lambda: fake)
         r = TestClient(server.app).get("/api/market/style-indices")
@@ -212,6 +252,9 @@ class TestHttpAndFrontend:
         assert pref["status"] == "partial"
         assert pref["hotspots"] == []
         assert pref["board_group"]["vs"] == "不足"
+        rot = body["rotation"]
+        assert rot["status"] == "absent"
+        assert rot["hotspot_enter"] == []
 
     def test_sidebar_and_route(self):
         import pathlib
@@ -243,27 +286,51 @@ class TestHttpAndFrontend:
         assert "东财小盘" in page
         assert "不是赚钱效应" in page
         assert "不是风格轮动" in page
+        assert "相邻已定稿" in page
+        assert "不是相对昨收" in page
+        assert "缺日不插值" in page
+        assert "N=10" in page
+        assert "N=20" in page
+        assert "不是突破" in page
+        assert "风格热点进入" in page
+        assert "上场已定稿" in page
+        assert "Spearman" in page
         assert "短线情绪" not in page
         assert "市场情绪" not in page
         assert "情绪共振" not in page
         assert "主线龙头" not in page
+        assert "情绪周期" not in page
+        assert "题材主线轮动" not in page
+        assert "风格异动指数" not in page
+        assert "跌破" not in page
+        assert "买入" not in page
         resonance = pathlib.Path("frontend/src/pages/ShortResonance.tsx").read_text(encoding="utf-8")
         assert "风格偏好" not in resonance
         assert "风格热点" not in resonance
         assert "大小盘价差" not in resonance
+        assert "风格轮动" not in resonance
+        assert "Spearman" not in resonance
+        assert "热点进入" not in resonance
         assert "AskAiButton" in page
         assert "风格热点是哪些" in page
         assert "大小盘价差怎么读" in page
         assert "打板风格组和中证全指是否同向" in page
+        assert "风格热点谁进入谁离开" in page
         assert "风格热点：" in page
         assert "大小盘价差（东财小盘 − 大盘）" in page
         assert "打板风格组相对中证全指" in page
+        assert "对照日期" in page
+        assert "z-score" in page
+        assert "收盘新高/新低" in page
+        assert "风格热点进入" in page
         assert "change_pct -" not in page
         assert "small - large" not in page
         server_src = pathlib.Path("server.py").read_text(encoding="utf-8")
         assert server_src.count('@app.get("/api/market/style-indices")') == 1
         assert "/api/market/style-preference" not in server_src
+        assert "/api/market/style-rotation" not in server_src
         assert "style-preference" not in router
+        assert "style-rotation" not in router
         for rel in (
             "duanxian/trade_budget.py",
             "duanxian/risk_stance.py",
@@ -274,6 +341,7 @@ class TestHttpAndFrontend:
             assert "风格偏好" not in text
             assert "风格热点" not in text
             assert "大小盘价差" not in text
+            assert "风格轮动" not in text
 
 
 @pytest.mark.unit
