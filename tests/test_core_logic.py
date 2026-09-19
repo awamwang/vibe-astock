@@ -4744,7 +4744,8 @@ class TestThemeNormalize:
         assert "type: string" in fe
         assert "row.type" in page
         assert "上涨关键词" in page
-        assert "仓位预算档位" in page
+        assert "情绪周期阈值" in page
+        assert "情绪周期仓位预算" in page
         assert "整体仓位" in page
         assert "单独仓位" in page
         assert "提示词" in page

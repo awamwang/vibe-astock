@@ -41,8 +41,8 @@ const CONFIG_SECTIONS: {
   { id: "message-manual-marks", label: "自定义消息标记", icon: Pencil, hint: "个股日记快捷标题" },
   { id: "theme-aliases", label: "板块别名", icon: GitMerge, hint: "归类到同花顺板块名" },
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
-  { id: "trade-thresholds", label: "定档阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
-  { id: "trade-phases", label: "仓位预算档位", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
+  { id: "trade-thresholds", label: "情绪周期阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
+  { id: "trade-phases", label: "情绪周期仓位预算", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
   { id: "short-sprite", label: "短线精灵", icon: Zap, hint: "涨速/突破/跌破阈值" },
 ];
 
@@ -411,7 +411,7 @@ export function ZtKeywordsSettings() {
         }
       } catch (e) {
         if (!cancelled) {
-          toast.error(e instanceof Error ? e.message : "读取定档阈值失败");
+          toast.error(e instanceof Error ? e.message : "读取情绪周期阈值失败");
         }
       } finally {
         if (!cancelled) setThLoading(false);
@@ -514,7 +514,7 @@ export function ZtKeywordsSettings() {
     try {
       const cfg = await api.saveTradeThresholdConfig(payload);
       applyThresholdCfg(cfg);
-      toast.success("定档阈值已保存；请到「持仓与预算」重算场次");
+      toast.success("情绪周期阈值已保存；请到「持仓与预算」重算场次");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -527,7 +527,7 @@ export function ZtKeywordsSettings() {
     try {
       const cfg = await api.resetTradeThresholdConfig();
       applyThresholdCfg(cfg);
-      toast.success("已恢复默认定档阈值");
+      toast.success("已恢复默认情绪周期阈值");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "恢复失败");
     } finally {
@@ -926,7 +926,7 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、消息关注词、自定义消息标记、板块别名、定档阈值，以及仓位预算六档的总仓、单票与提示词"
+        subtitle="上涨关键词、消息关注词、自定义消息标记、板块别名、情绪周期阈值，以及情绪周期仓位预算的总仓、单票与提示词"
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -1526,7 +1526,7 @@ export function ZtKeywordsSettings() {
           {activeSection === "trade-thresholds" && (
       <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <SlidersHorizontal className="h-4 w-4 text-primary" /> 定档阈值
+          <SlidersHorizontal className="h-4 w-4 text-primary" /> 情绪周期阈值
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           按情绪档位分组（退潮 → 过热 → 高潮 → 冰点 → S 区间），与定档判定顺序一致。
@@ -1537,7 +1537,7 @@ export function ZtKeywordsSettings() {
         </p>
 
         {thLoading || !thCfg ? (
-          <p className="text-xs text-muted-foreground">正在读取定档阈值…</p>
+          <p className="text-xs text-muted-foreground">正在读取情绪周期阈值…</p>
         ) : (
           <div className="space-y-5">
             {thCfg.groups.map((g) => (
@@ -1610,7 +1610,7 @@ export function ZtKeywordsSettings() {
           {activeSection === "trade-phases" && (
       <GlassCard className="mb-0">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <SlidersHorizontal className="h-4 w-4 text-primary" /> 仓位预算档位
+          <SlidersHorizontal className="h-4 w-4 text-primary" /> 情绪周期仓位预算
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           总仓、单票、提示词可分别改。未改时总仓用内置默认，单票为总仓一半。
@@ -1618,7 +1618,7 @@ export function ZtKeywordsSettings() {
         </p>
 
         {phaseLoading ? (
-          <p className="text-xs text-muted-foreground">正在读取仓位档位…</p>
+          <p className="text-xs text-muted-foreground">正在读取情绪周期仓位预算…</p>
         ) : (
           <div className="divide-y divide-border/60">
             {phaseDrafts.map((row) => (
