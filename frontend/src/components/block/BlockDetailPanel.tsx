@@ -14,7 +14,8 @@ import { keywordsSettingsTo } from "@/lib/settingsNav";
 import {
   aliasesForBlockName, buildAliasesByCanonical, normalizeThemeTag,
   themeAliasEntriesFromConfig, thsBlockCodeSubtitle, thsBlockKindLabel,
-  thsCustomSubtypeLabel, THS_NODE_TYPE_LABEL,
+  thsBlockNameColorStyle, thsCustomSubtypeLabel, THS_NODE_TYPE_LABEL,
+  normalizeThsBlockColor,
 } from "@/lib/thsBlocks";
 import { cn } from "@/lib/utils";
 
@@ -409,7 +410,15 @@ export function BlockDetailPanel({
     <div className="space-y-4">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold text-foreground">{displayName || "—"}</h2>
+          <h2
+            className={cn(
+              "text-lg font-semibold",
+              !normalizeThsBlockColor(row?.color) && "text-foreground",
+            )}
+            style={thsBlockNameColorStyle(row?.color)}
+          >
+            {displayName || "—"}
+          </h2>
           {row && <SourceBadges row={row} />}
           {row?.node_type && (
             <span className={cn(
@@ -499,6 +508,26 @@ export function BlockDetailPanel({
             <>
               <div className="text-muted-foreground">Hex ID</div>
               <div className="font-mono text-foreground">{row.hex_id}</div>
+            </>
+          )}
+          {normalizeThsBlockColor(row?.color) && (
+            <>
+              <div className="text-muted-foreground">板块颜色</div>
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-3.5 w-3.5 rounded-sm border border-border/60"
+                  style={{ backgroundColor: normalizeThsBlockColor(row?.color) }}
+                />
+                <span
+                  className="font-mono"
+                  style={thsBlockNameColorStyle(row?.color)}
+                >
+                  {normalizeThsBlockColor(row?.color)}
+                </span>
+                {row?.color_order != null && (
+                  <span className="text-muted-foreground">顺序 {row.color_order}</span>
+                )}
+              </div>
             </>
           )}
           {row?.query_key && (

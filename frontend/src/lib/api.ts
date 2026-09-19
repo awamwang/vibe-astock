@@ -1107,6 +1107,12 @@ export interface ThsBlockRow {
   query_key?: string;
   hex_id?: string;
   stock_count?: number;
+  /** 同花顺自定义板块颜色（#RRGGBB） */
+  color?: string;
+  /** 板块颜色对话框显示顺序，从 1 起；未着色不返回 */
+  color_order?: number;
+  /** 颜色设置时间戳，越大越优先 */
+  color_priority?: number;
   /** 热点主题：在线 theme_key */
   theme_key?: string;
   /** 热点主题：本地根板块 ID */

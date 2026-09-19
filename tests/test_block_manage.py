@@ -564,3 +564,47 @@ def test_custom_matches_all_kpl_kinds(monkeypatch: pytest.MonkeyPatch):
     only = next(r for r in custom if r["id"] == "282")
     assert only["has_kpl"] is False
     assert only["kpl_code"] == ""
+
+
+def test_custom_color_fields_pass_through():
+    """融合行保留同花顺自定义板块颜色与排序字段。"""
+    ths_snap = {
+        "kinds": {
+            "conception": {"rows": []},
+            "industry": {"rows": []},
+            "region": {"rows": []},
+            "custom": {
+                "rows": [
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "278",
+                        "name": "ABF",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                        "color": "#FF8F90",
+                        "color_order": 4,
+                        "color_priority": 1789693020,
+                        "tree_order": 0,
+                    },
+                    {
+                        "kind": "custom",
+                        "kind_label": "自定义",
+                        "id": "281",
+                        "name": "无色",
+                        "node_type": "flat",
+                        "custom_type": "static",
+                        "tree_order": 1,
+                    },
+                ],
+            },
+            "daily": {"rows": []},
+            "theme": {"rows": []},
+        },
+    }
+    merged = block_manage.build_merged(ths_snap=ths_snap, kpl_snap={"kinds": {}})
+    colored = merged["custom"][0]
+    assert colored["color"] == "#FF8F90"
+    assert colored["color_order"] == 4
+    assert colored["color_priority"] == 1789693020
+    assert merged["custom"][1].get("color") in (None, "")

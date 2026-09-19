@@ -71,6 +71,9 @@ def _blank_unified(*, name: str = "") -> dict[str, Any]:
         "theme_key": None,
         "root_id": None,
         "block_type": None,
+        "color": None,
+        "color_order": None,
+        "color_priority": None,
         "kpl_code": "",
         "kpl_name": "",  # 开盘啦原始名称（合并后展示名可能已是同花顺/标准名）
         "kpl_kind": "",
@@ -133,6 +136,7 @@ def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False
             "kind", "kind_label", "id", "code", "node_type", "tree_path",
             "depth", "parent_id", "tree_order", "custom_type", "dynamic_kind",
             "query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type",
+            "color", "color_order", "color_priority",
         ):
             if key in ths and ths[key] is not None:
                 row[key] = ths[key]
@@ -142,6 +146,7 @@ def _apply_ths(row: dict[str, Any], ths: dict[str, Any], *, native: bool = False
         for key in (
             "id", "code", "custom_type", "dynamic_kind",
             "query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type",
+            "color", "color_order", "color_priority",
         ):
             if key in ths and ths[key] is not None and row.get(key) in (None, ""):
                 row[key] = ths[key]

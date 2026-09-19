@@ -25,9 +25,9 @@ import {
   aliasesForBlockName, attachOrphanLeavesToTree, blockTreeNodeId,
   buildAliasesByCanonical, buildSyntheticBlockTree, collectThsBranchIds,
   collectThsNodeIds, filterThsTree, manageTabKplKind, manageTabThsKind,
-  parseThsTree, sortRowsByTreeOrder,
-  themeAliasEntriesFromConfig, thsBlockKindLabel, thsBlockPrimaryCode,
-  thsCustomSubtypeLabel,
+  parseThsTree, sortRowsByColorOrder, sortRowsByTreeOrder,
+  themeAliasEntriesFromConfig, thsBlockKindLabel, thsBlockNameColorStyle,
+  thsBlockPrimaryCode, thsCustomSubtypeLabel, normalizeThsBlockColor,
 } from "@/lib/thsBlocks";
 import { keywordsSettingsTo } from "@/lib/settingsNav";
 
@@ -39,7 +39,7 @@ const notify = {
 const selectCls =
   "rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground";
 
-type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype" | "kpl_code";
+type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype" | "kpl_code" | "color_order";
 type ViewMode = "tree" | "list";
 type SourceFilter = "all" | "ths" | "kpl";
 /** 关注为虚拟类型：跨 kind 展示已关注板块，树视图按原层级裁剪 */
@@ -101,7 +101,14 @@ const FollowedOrKindTable = memo(function FollowedOrKindTable({
         <tr className="border-b border-border/60 text-left">
           <SortTh col="id" label="同花顺码" sortCol={sort} order={order} onSort={onSort} />
           <SortTh col="kpl_code" label="开盘啦码" sortCol={sort} order={order} onSort={onSort} />
-          <SortTh col="name" label="名称" sortCol={sort} order={order} onSort={onSort} />
+          <SortTh
+            col="name"
+            label="名称"
+            sortCol={sort}
+            order={order}
+            onSort={onSort}
+            hint={showSubtypeCol ? "自定义板块默认按同花顺颜色对话框顺序" : undefined}
+          />
           <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">来源</th>
           <th className="px-3 py-2.5 text-xs font-semibold text-muted-foreground">别名</th>
           {showSubtypeCol && (
@@ -143,8 +150,14 @@ const FollowedOrKindTable = memo(function FollowedOrKindTable({
               <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
                 {row.kpl_code || "—"}
               </td>
-              <td className="px-4 py-2.5 font-medium text-foreground">
-                <span style={{ paddingLeft: depth > 0 ? `${depth * 12}px` : undefined }}>
+              <td className="px-4 py-2.5 font-medium">
+                <span
+                  className={normalizeThsBlockColor(row.color) ? undefined : "text-foreground"}
+                  style={{
+                    paddingLeft: depth > 0 ? `${depth * 12}px` : undefined,
+                    ...thsBlockNameColorStyle(row.color),
+                  }}
+                >
                   {row.name || "—"}
                 </span>
                 {row.stock_count != null && (
@@ -266,7 +279,13 @@ function ThsBlockTreeItem({
               <Boxes className="h-3.5 w-3.5 text-primary/70" />
             )}
           </span>
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate font-medium",
+              !normalizeThsBlockColor(row?.color) && "text-foreground",
+            )}
+            style={thsBlockNameColorStyle(row?.color)}
+          >
             {node.name || node.id}
           </span>
           {aliasText && (
@@ -532,6 +551,15 @@ export function ThsBlocks() {
     }
   }, [sourceFilter, visibleTypeTabs, kindFilter, isFollowedView]);
 
+  useEffect(() => {
+    if (kindFilter === "custom") {
+      setSort("color_order");
+      setOrder("asc");
+      return;
+    }
+    setSort((prev) => (prev === "color_order" ? "name" : prev));
+  }, [kindFilter]);
+
   /** 关注视图：从融合行解析已关注；普通视图：当前类型页签，可再按来源筛行 */
   const allRows = useMemo(() => {
     const matchSource = (row: ManagedBlockRow) => {
@@ -729,6 +757,9 @@ export function ThsBlocks() {
     });
     if (viewMode === "tree" && canShowTree && !query && nodeFilter === "all") {
       return sortRowsByTreeOrder(rows);
+    }
+    if (sort === "color_order") {
+      return sortRowsByColorOrder(rows, order);
     }
     rows = [...rows].sort((a, b) => {
       let av: string;
@@ -1108,6 +1139,9 @@ export function ThsBlocks() {
                   {sourceFilter === "ths" && <span> · 筛选同花顺</span>}
                   {sourceFilter === "kpl" && <span> · 筛选开盘啦</span>}
                   {viewMode === "tree" && canShowTree && <span> · 树形浏览</span>}
+                  {kindFilter === "custom" && sort === "color_order" && viewMode === "list" && (
+                    <span> · 按同花顺颜色顺序</span>
+                  )}
                 </p>
                 {viewMode === "tree" && canShowTree && (
                   <div className="flex items-center gap-2 text-xs">
@@ -1195,7 +1229,13 @@ export function ThsBlocks() {
                                     <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                                       <Boxes className="h-3.5 w-3.5 text-primary/70" />
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                    <span
+                                      className={cn(
+                                        "min-w-0 flex-1 truncate font-medium",
+                                        !normalizeThsBlockColor(row.color) && "text-foreground",
+                                      )}
+                                      style={thsBlockNameColorStyle(row.color)}
+                                    >
                                       {row.name || row.id}
                                     </span>
                                     {aliasText && (

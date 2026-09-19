@@ -143,6 +143,32 @@ def _normalize_blocks(
     return names, meta
 
 
+def _normalize_block_color(value: Any) -> str | None:
+    """同花顺自定义板块颜色：``#RRGGBB``，非法值丢弃。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if len(text) != 7 or not text.startswith("#"):
+        return None
+    try:
+        int(text[1:], 16)
+    except ValueError:
+        return None
+    return f"#{text[1:].upper()}"
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
+
+
 def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     custom_type = meta.get("custom_type")
@@ -157,6 +183,15 @@ def _custom_row_fields(meta: dict[str, Any]) -> dict[str, Any]:
     for key in ("query_key", "hex_id", "stock_count", "theme_key", "root_id", "block_type"):
         if key in meta and meta[key] is not None:
             out[key] = meta[key]
+    color = _normalize_block_color(meta.get("color"))
+    if color:
+        out["color"] = color
+        color_order = _as_int(meta.get("color_order"))
+        if color_order is not None:
+            out["color_order"] = color_order
+        color_priority = _as_int(meta.get("color_priority"))
+        if color_priority is not None:
+            out["color_priority"] = color_priority
     return out
 
 
@@ -257,6 +292,32 @@ def _flatten_tree(
     return rows
 
 
+def _ordered_list_block_ids(
+    kind: str,
+    blocks: dict[str, str],
+    blocks_meta: dict[str, dict[str, Any]],
+) -> list[str]:
+    """flat 列表顺序：自定义已着色按 color_order 靠前，其余保持原相对顺序。"""
+    ids = list(blocks.keys())
+    if kind != "custom":
+        return sorted(ids, key=lambda bid: (blocks.get(bid) or "", bid))
+    colored: list[str] = []
+    rest: list[str] = []
+    for bid in ids:
+        meta = blocks_meta.get(bid) or {}
+        if _normalize_block_color(meta.get("color")):
+            colored.append(bid)
+        else:
+            rest.append(bid)
+
+    def _color_key(bid: str) -> tuple[int, str, str]:
+        order = _as_int((blocks_meta.get(bid) or {}).get("color_order"))
+        return (order if order is not None else 10**9, blocks.get(bid) or "", bid)
+
+    colored.sort(key=_color_key)
+    return colored + rest
+
+
 def _rows_from_list(
     kind: str,
     kind_label: str,
@@ -266,7 +327,8 @@ def _rows_from_list(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     meta_map = blocks_meta or {}
-    for block_id, name in sorted(blocks.items(), key=lambda x: (x[1], x[0])):
+    for index, block_id in enumerate(_ordered_list_block_ids(kind, blocks, meta_map)):
+        name = blocks.get(block_id) or ""
         row: dict[str, Any] = {
             "kind": kind,
             "kind_label": kind_label,
@@ -274,6 +336,7 @@ def _rows_from_list(
             "name": name,
             "node_type": "flat",
             "tree_path": name,
+            "tree_order": index,
         }
         if kind == "custom" or block_id in meta_map:
             row.update(_custom_row_fields(meta_map.get(block_id) or {}))
@@ -597,6 +660,12 @@ def _fetch_kind_entry(ths_dir: str, kind: str) -> tuple[dict[str, Any], list[str
     }
     if blocks_meta:
         entry["blocks_meta"] = blocks_meta
+    for count_key in ("custom_static_count", "custom_dynamic_count"):
+        if list_payload.get(count_key) is not None:
+            try:
+                entry[count_key] = int(list_payload[count_key])
+            except (TypeError, ValueError):
+                pass
 
     kind_key = str(entry["kind"])
     kind_label = str(entry["kind_label"])

@@ -126,6 +126,9 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
                     "custom_type": "static",
                     "hex_id": "116",
                     "stock_count": 2,
+                    "color": "#ff8f90",
+                    "color_order": 4,
+                    "color_priority": 1789693020,
                 },
                 "233": {
                     "name": "营业部动态",
@@ -219,8 +222,12 @@ def test_cache_refresh_with_mock_linker(tmp_path: Path, monkeypatch: pytest.Monk
     static_row = next(r for r in custom_rows if r["id"] == "278")
     assert static_row["custom_type"] == "static"
     assert static_row["hex_id"] == "116"
+    assert static_row["color"] == "#FF8F90"
+    assert static_row["color_order"] == 4
+    assert static_row["color_priority"] == 1789693020
     assert "code" not in static_row
     dynamic_row = next(r for r in custom_rows if r["id"] == "233")
+    assert "color" not in dynamic_row
     assert dynamic_row["custom_type"] == "dynamic"
     assert dynamic_row["dynamic_kind"] == "broker"
     assert dynamic_row["query_key"] == "测试营业部"
@@ -656,4 +663,43 @@ def test_theme_daily_limit_reuses_archive(tmp_path: Path, monkeypatch: pytest.Mo
 
     block_service.refresh_kind(kind="theme", force=True)
     assert calls["list"] > first_calls
+
+
+def test_custom_rows_sort_colored_first_by_color_order():
+    """已着色自定义板块按 color_order 靠前，颜色规范为大写 #RRGGBB。"""
+    rows = block_service._rows_from_list(
+        "custom",
+        "自定义板块",
+        {
+            "281": "无色甲",
+            "280": "电解铝",
+            "278": "ABF",
+            "282": "无色乙",
+        },
+        blocks_meta={
+            "278": {
+                "name": "ABF",
+                "custom_type": "static",
+                "color": "#ff8f90",
+                "color_order": 5,
+                "color_priority": 10,
+            },
+            "280": {
+                "name": "电解铝",
+                "custom_type": "dynamic",
+                "color": "#00E600",
+                "color_order": 4,
+                "color_priority": 20,
+            },
+            "281": {"name": "无色甲", "custom_type": "static"},
+            "282": {"name": "无色乙", "custom_type": "static", "color": "not-a-color"},
+        },
+    )
+    assert [r["id"] for r in rows] == ["280", "278", "281", "282"]
+    assert rows[0]["color"] == "#00E600"
+    assert rows[0]["color_order"] == 4
+    assert rows[1]["color"] == "#FF8F90"
+    assert rows[1]["tree_order"] == 1
+    assert "color" not in rows[2]
+    assert "color" not in rows[3]
 

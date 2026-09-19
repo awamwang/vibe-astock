@@ -253,6 +253,21 @@ export function parseThsTree(raw: Record<string, unknown> | undefined): ThsTreeN
   };
 }
 
+/** 同花顺自定义板块颜色：合法 ``#RRGGBB`` 才返回大写值 */
+export function normalizeThsBlockColor(value?: string | null): string | undefined {
+  const text = String(value || "").trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(text)) return undefined;
+  return `#${text.slice(1).toUpperCase()}`;
+}
+
+/** 板块名称文字色；未着色则不覆盖主题色 */
+export function thsBlockNameColorStyle(
+  color?: string | null,
+): { color: string } | undefined {
+  const hex = normalizeThsBlockColor(color);
+  return hex ? { color: hex } : undefined;
+}
+
 /** 按 tree_order 保持 DFS 顺序筛选表格行 */
 export function sortRowsByTreeOrder<T extends ThsBlockRow>(rows: T[]): T[] {
   return [...rows].sort((a, b) => {
@@ -261,6 +276,27 @@ export function sortRowsByTreeOrder<T extends ThsBlockRow>(rows: T[]): T[] {
     if (ao !== bo) return ao - bo;
     return a.name.localeCompare(b.name, "zh-CN");
   });
+}
+
+/** 自定义板块：已着色按 color_order 靠前，其余保持原相对顺序 */
+export function sortRowsByColorOrder<T extends ThsBlockRow>(
+  rows: T[],
+  order: "asc" | "desc" = "asc",
+): T[] {
+  const colored: T[] = [];
+  const rest: T[] = [];
+  for (const row of rows) {
+    if (normalizeThsBlockColor(row.color)) colored.push(row);
+    else rest.push(row);
+  }
+  colored.sort((a, b) => {
+    const ao = a.color_order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.color_order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return (a.name || "").localeCompare(b.name || "", "zh-CN");
+  });
+  if (order === "desc") colored.reverse();
+  return [...colored, ...rest];
 }
 
 /** 树节点 / 行展示用 ID：同花顺 id 优先，否则开盘啦合成 */
