@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Boxes, ChevronDown, ChevronRight, Folder, FolderOpen,
-  LayoutList, Loader2, Network, RefreshCw, Search, Star,
+  LayoutList, Loader2, Network, RefreshCw, Star,
 } from "lucide-react";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { toast } from "sonner";
 import {
   BlockDetailPanel, FollowBlockButton, SourceBadges, thsStocksKind,
@@ -37,8 +38,6 @@ const notify = {
 
 const selectCls =
   "rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground";
-const inputCls =
-  "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
 
 type SortKey = "id" | "name" | "node_type" | "tree_path" | "subtype" | "kpl_code";
 type ViewMode = "tree" | "list";
@@ -323,23 +322,15 @@ export function ThsBlocks() {
   const [kindFilter, setKindFilter] = useState<string>("conception");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [q, setQ] = useState("");
-  /** 实际用于列表/树筛选；中文输入法合成结束前不更新，避免拼音阶段反复过滤大表 */
-  const [qFilter, setQFilter] = useState("");
   const [nodeFilter, setNodeFilter] = useState<"all" | "leaf" | "branch">("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortKey>("name");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
-  const searchComposingRef = useRef(false);
 
   const [selected, setSelected] = useState<ManagedBlockRow | null>(null);
   const [followBlocks, setFollowBlocks] = useState<FollowBlock[]>([]);
   const [aliasEntries, setAliasEntries] = useState<ThemeAliasEntry[]>([]);
-
-  const applySearchInput = useCallback((value: string, commitFilter: boolean) => {
-    setQ(value);
-    if (commitFilter) setQFilter(value);
-  }, []);
 
   const thsSnap = snapshot?.ths ?? null;
 
@@ -617,7 +608,7 @@ export function ThsBlocks() {
         else if (row.kpl_code) codeById.set(nid, row.kpl_code);
       }
       const pruned = filterThsTree(root, {
-        query: qFilter,
+        query: q,
         nodeFilter,
         codeById,
         aliasesByName: aliasesByCanonical,
@@ -632,7 +623,7 @@ export function ThsBlocks() {
       });
     }
     return sections;
-  }, [isFollowedView, thsSnap, followBlocks, qFilter, nodeFilter, aliasesByCanonical, sourceFilter, snapshot]);
+  }, [isFollowedView, thsSnap, followBlocks, q, nodeFilter, aliasesByCanonical, sourceFilter, snapshot]);
 
   /** 有同花顺树或可合成挂根树时均可树形浏览；筛选不强制切视图 */
   const canShowTree = isFollowedView
@@ -710,15 +701,15 @@ export function ThsBlocks() {
       );
     }
     return filterThsTree(root, {
-      query: qFilter,
+      query: q,
       nodeFilter,
       codeById,
       aliasesByName: aliasesByCanonical,
     });
-  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, qFilter, nodeFilter, allRows, aliasesByCanonical, kindFilter, kplKindForTab, thsKindForTab]);
+  }, [isFollowedView, viewMode, kindEntry?.tree, kindEntry?.tree_mode, q, nodeFilter, allRows, aliasesByCanonical, kindFilter, kplKindForTab, thsKindForTab]);
 
   const filteredRows = useMemo((): ManagedBlockRow[] => {
-    const query = qFilter.trim().toLowerCase();
+    const query = q.trim().toLowerCase();
     let rows: ManagedBlockRow[] = allRows.filter((row) => {
       if (nodeFilter === "leaf" && row.node_type === "branch") return false;
       if (nodeFilter === "branch" && row.node_type !== "branch") return false;
@@ -759,7 +750,7 @@ export function ThsBlocks() {
       return order === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [allRows, qFilter, nodeFilter, sort, order, viewMode, canShowTree, aliasesByCanonical]);
+  }, [allRows, q, nodeFilter, sort, order, viewMode, canShowTree, aliasesByCanonical]);
 
   /** 关注视图中无树结构的类型（自定义 / 每日动态等），树形模式下附在裁剪树之后 */
   const followedFlatGroups = useMemo(() => {
@@ -824,7 +815,7 @@ export function ThsBlocks() {
   const linkerMessage = snapshot?.linker_message || "依赖于第三方工具，目前无法请求";
   const visibleCount = filteredRows.length;
   /** 搜索/筛选变化时强制重挂载列表，避免大表格增量调和后 DOM 与「共 N 条」不一致 */
-  const listMountKey = `${kindFilter}|${sourceFilter}|${nodeFilter}|${qFilter.trim()}`;
+  const listMountKey = `${kindFilter}|${sourceFilter}|${nodeFilter}|${q.trim()}`;
 
   return (
     <div className="space-y-6">
@@ -1059,30 +1050,13 @@ export function ThsBlocks() {
           <div className="glass min-w-0 overflow-hidden rounded-2xl xl:col-span-3">
             <div className="border-b border-border/60 p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="relative min-w-[200px] flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    className={inputCls}
-                    placeholder="搜索代码、名称、别名、树路径…"
-                    value={q}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      applySearchInput(value, !searchComposingRef.current);
-                    }}
-                    onCompositionStart={() => {
-                      searchComposingRef.current = true;
-                    }}
-                    onCompositionEnd={(e) => {
-                      searchComposingRef.current = false;
-                      applySearchInput(e.currentTarget.value, true);
-                    }}
-                    onBlur={(e) => {
-                      // 防止合成异常未触发 compositionEnd 时筛选词落后于输入框
-                      searchComposingRef.current = false;
-                      applySearchInput(e.currentTarget.value, true);
-                    }}
-                  />
-                </div>
+                <SearchInput
+                  className="min-w-[200px] flex-1"
+                  value={q}
+                  onChange={setQ}
+                  placeholder="搜索代码、名称、别名、树路径…"
+                  aria-label="搜索板块"
+                />
                 <select
                   className={selectCls}
                   value={nodeFilter}

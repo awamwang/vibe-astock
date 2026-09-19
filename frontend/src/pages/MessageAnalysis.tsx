@@ -7,10 +7,11 @@ import {
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  Search, RefreshCw, Loader2, ChevronDown,
+  RefreshCw, Loader2, ChevronDown,
   Plus, Trash2, Sparkles, Newspaper, Radio, X, Star,
   RotateCcw, LayoutList, CalendarDays, Volume2, Square, Gauge,
 } from "lucide-react";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { MessageCalendar, CALENDAR_PER_DAY } from "@/components/MessageCalendar";
 import { MessageDetailPanel } from "@/components/MessageDetailPanel";
 import { MessageStockPopupButton } from "@/components/MessageStockPip";
@@ -161,7 +162,7 @@ const EFFECT_BADGE: Record<string, string> = {
 const selectCls =
   "rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground";
 const inputCls =
-  "w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground";
+  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground";
 
 /** 顶部操作按钮悬浮说明（支持换行） */
 function ActionHint({
@@ -1664,20 +1665,16 @@ export function MessageAnalysis() {
           <SectionLabel>筛选 · Filter</SectionLabel>
         </div>
         <div className="glass w-full rounded-2xl p-4 lg:p-5">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              className={inputCls}
-              placeholder="搜索标题、摘要、关键词…"
-              value={qInput}
-              onChange={(e) => setQInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                if (qInput !== q) patchListQuery({ q: qInput, page: 1 });
-                else void refreshMessages();
-              }}
-            />
-          </div>
+          <SearchInput
+            value={qInput}
+            onChange={setQInput}
+            onSubmit={(next) => {
+              if (next !== q) patchListQuery({ q: next, page: 1 });
+              else void refreshMessages();
+            }}
+            placeholder="搜索标题、摘要、关键词…"
+            aria-label="搜索消息"
+          />
           <div className="mt-3 flex flex-wrap items-center gap-2 lg:gap-3">
             <FilterMultiSelect
               placeholder="全部来源"

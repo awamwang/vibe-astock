@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   AlertCircle, Check, ChevronDown, ChevronUp, Copy, FileText, Trash2,
-  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw, Search,
+  Loader2, Send, Settings, Sparkles, Newspaper, ArrowRightLeft, Save, RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PaginationBar, usePagedList } from "@/components/ui/PaginationBar";
 import { cn } from "@/lib/utils";
@@ -621,15 +622,13 @@ export function Articles() {
             </div>
           </div>
           {articles.length > 0 && (
-            <div className="relative mb-3">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={listQuery}
-                onChange={(e) => setListQuery(e.target.value)}
-                placeholder="搜索标题、摘要、文件名…"
-                className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
-              />
-            </div>
+            <SearchInput
+              className="mb-3"
+              value={listQuery}
+              onChange={setListQuery}
+              placeholder="搜索标题、摘要、文件名…"
+              aria-label="搜索文章"
+            />
           )}
           {articles.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无文章。粘贴原文后点「AI 整理」开始归档。</p>

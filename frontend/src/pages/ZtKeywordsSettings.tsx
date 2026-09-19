@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap, Search } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { cn } from "@/lib/utils";
 import {
@@ -1695,17 +1696,15 @@ export function ZtKeywordsSettings() {
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           按短线风格的分类分区：每条序列单独设监控、语音、四阈和回差。不把短线风格指数整组当一条指标。
-          情绪温度、情绪分的突破/跌破按该行上阈/下阈的整数倍继续报。关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
+          打板、市值、短线属性、其他默认开监控；红利、宽基默认关。情绪温度、情绪分的突破/跌破按该行上阈/下阈的整数倍继续报。关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
         </p>
-        <div className="relative mb-3">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={spriteQuery}
-            onChange={(e) => setSpriteQuery(e.target.value)}
-            placeholder="搜索配置名称、key…"
-            className="w-full rounded-lg border border-border bg-black/20 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
-          />
-        </div>
+        <SearchInput
+          className="mb-3"
+          value={spriteQuery}
+          onChange={setSpriteQuery}
+          placeholder="搜索配置名称、key…"
+          aria-label="搜索短线精灵配置"
+        />
         {spriteLoading ? (
           <p className="text-xs text-muted-foreground">正在读取短线精灵配置…</p>
         ) : spriteGroups.length === 0 ? (
