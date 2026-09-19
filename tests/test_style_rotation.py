@@ -257,6 +257,10 @@ class TestCloseExtreme:
         assert m["new_high"]["close_extreme"] is None
         assert "yzt_yz" not in close_extreme_keys()
         assert "new_high" not in close_extreme_keys()
+        assert "small_growth" not in close_extreme_keys()
+        assert "value_stock" not in close_extreme_keys()
+        assert "cni_growth" in close_extreme_keys()
+        assert "csi_tech" in close_extreme_keys()
         assert m["sh"]["close_extreme"] == "新高"
         assert m["csi2000"]["close_extreme"] == "新高"
 

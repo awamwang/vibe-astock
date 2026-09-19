@@ -63,6 +63,30 @@ class TestCatalog:
         assert by_key["subnew"].code == "BK0501"
         assert by_key["st"].code == "BK0511"
         assert by_key["micro_sel"].code == "BK1644"
+        assert by_key["small_growth"].code == "BK1667"
+        assert by_key["small_value"].code == "BK1668"
+        assert by_key["value_stock"].code == "BK1640"
+        assert by_key["csi_info"].code == "000993"
+        assert by_key["csi_tech"].code == "931186"
+        assert by_key["tech_lead"].code == "931087"
+        assert by_key["cni_growth"].code == "399370"
+        assert by_key["cni_value"].code == "399371"
+        assert by_key["csi_cons"].code == "000932"
+        labels = dict(GROUPS)
+        assert labels["growth_value"] == "风格类型"
+        assert labels["other"] == "其他"
+        assert by_key["small_growth"].group == "other"
+        assert by_key["small_value"].group == "other"
+        assert by_key["value_stock"].group == "growth_value"
+        assert by_key["cni_growth"].group == "growth_value"
+        assert by_key["csi_tech"].group == "growth_value"
+        assert by_key["csi_cons"].group == "growth_value"
+        assert by_key["tech_lead"].group == "sector"
+        other = next(g for g, _ in GROUPS if g == "other")
+        assert other == "other"
+        assert by_key["csi_info"].secids == ("1.000993",)
+        assert by_key["csi_tech"].secids == ("2.931186",)
+        assert by_key["tech_lead"].secids == ("2.931087",)
         item_names = {i.name for i in ITEMS}
         assert "破净股" not in item_names
         assert "红利股" not in item_names
@@ -580,4 +604,25 @@ class TestPreference:
         })["preference"]
         assert pref["hotspots"][0]["key"] == "csi2000"
         assert pref["hotspots"][0]["excess"] == pytest.approx(1.2)
+
+    def test_growth_value_and_sector_can_be_hotspot(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "cni_growth": _q(1.5),
+            "csi_tech": _q(1.4),
+            "small": _q(0.1),
+        })["preference"]
+        keys = [h["key"] for h in pref["hotspots"]]
+        assert keys[0] == "cni_growth"
+        assert "csi_tech" in keys
+        assert pref["hotspots"][0]["excess"] == pytest.approx(1.5)
+
+    def test_other_small_growth_can_be_hotspot(self):
+        pref = assemble({
+            "csi_all": _q(0.0),
+            "small_growth": _q(1.8),
+            "small": _q(0.1),
+        })["preference"]
+        assert pref["hotspots"][0]["key"] == "small_growth"
+        assert pref["hotspots"][0]["excess"] == pytest.approx(1.8)
 

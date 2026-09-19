@@ -349,31 +349,43 @@ class TestOtherSeries:
         assert seq["vs_open"] == pytest.approx(0.05)
         assert [h for h in snap["hits"] if h["seq_id"] == "resonance"] == []
 
-    def test_style_shared_threshold_individual_hits(self, engine):
+    def test_style_watch_skips_unlisted_indices(self, engine):
         engine["feeds"]["st"] = _style(
             _item("zt_perf", "昨日涨停表现", 0.0),
-            _item("finance", "金融", 0.0),
+            _item("small", "小盘股", 0.0),
+            _item("bank", "银行", 0.0),
+            _item("a50", "富时A50期指连续", 0.0),
             _item("ghost", "幽灵", None, available=False),
         )
         ss.snapshot()
         engine["clock"].add(seconds=20)
         engine["feeds"]["st"] = _style(
             _item("zt_perf", "昨日涨停表现", 3.2),
-            _item("finance", "金融", 0.4),
+            _item("small", "小盘股", 3.2),
+            _item("bank", "银行", 3.2),
+            _item("a50", "富时A50期指连续", 3.2),
             _item("ghost", "幽灵", 9.0, available=False),
         )
         snap = ss.snapshot()
         ids = {h["seq_id"] for h in snap["new_hits"]}
-        assert "style:zt_perf" in ids
-        assert "style:finance" not in ids
+        assert "style:small" in ids
+        assert "style:bank" in ids
+        assert "style:a50" in ids
+        assert "style:zt_perf" not in ids
         assert "style:ghost" not in ids
-        hit = next(h for h in snap["new_hits"] if h["seq_id"] == "style:zt_perf")
-        assert hit["speech"] == "昨日涨停表现，涨幅突破3.2%"
-        assert hit["name"] == "昨日涨停表现"
         names = {s["id"] for s in snap["sequences"]}
+        assert "style:small" in names
+        assert "style:bank" in names
+        assert "style:a50" in names
+        assert "style:zt_perf" not in names
         assert "style:ghost" not in names
         assert "ths_emotion" not in names
         assert "style:ths_emotion" not in names
+        small = _seq(snap, "style:small")
+        assert small["group"] == "size"
+        assert small["group_label"] == "市值风格"
+        assert _seq(snap, "style:bank")["group_label"] == "金融板块"
+        assert _seq(snap, "style:a50")["group_label"] == "外围对照"
 
     def test_unavailable_catalog_stays_out(self, engine):
         engine["feeds"]["st"] = _style(
@@ -416,7 +428,12 @@ class TestConfigAndVoice:
         cfg = ss.export_config()
         keys = [r["key"] for r in cfg["rules"]]
         assert keys[:2] == ["consec_premium", "zt_premium"]
-        for key in ("mid", "low_price", "cyb", "small", "large", "micro"):
+        dedicated = (
+            "mid", "small", "large", "micro", "subnew", "low_price",
+            "value_stock", "cni_growth", "cni_value", "csi_tech", "csi_cons",
+            "cyb", "bank", "ins", "sec", "tech_lead", "a50",
+        )
+        for key in dedicated:
             assert key in keys
             assert key in cfg["defaults"]
             assert cfg["defaults"][key]["monitor"] is True
@@ -424,9 +441,9 @@ class TestConfigAndVoice:
             assert cfg["defaults"][key]["speed_down"] == pytest.approx(-1.0)
             assert cfg["defaults"][key]["break_up"] == pytest.approx(2.0)
             assert cfg["defaults"][key]["break_down"] == pytest.approx(-2.0)
-        assert cfg["defaults"]["style_indices"]["speed_up"] == pytest.approx(1.5)
-        assert cfg["defaults"]["style_indices"]["break_up"] == pytest.approx(3.0)
-        assert keys[-1] == "style_indices"
+        assert "style_indices" not in keys
+        assert "style_indices" not in cfg["defaults"]
+        assert keys[-1] == "a50"
         labels = {r["key"]: r["label"] for r in cfg["rules"]}
         assert labels["mid"] == "中盘股"
         assert labels["low_price"] == "低价股"
@@ -434,46 +451,58 @@ class TestConfigAndVoice:
         assert labels["small"] == "小盘股"
         assert labels["large"] == "大盘股"
         assert labels["micro"] == "微盘股"
+        assert labels["subnew"] == "次新股"
+        assert labels["value_stock"] == "价值股"
+        assert labels["csi_tech"] == "中证科技"
+        assert labels["tech_lead"] == "科技龙头"
+        assert labels["cni_growth"] == "国证成长"
+        assert labels["cni_value"] == "国证价值"
+        assert labels["csi_cons"] == "中证消费"
+        assert labels["bank"] == "银行"
+        assert labels["ins"] == "保险"
+        assert labels["sec"] == "证券"
+        assert labels["a50"] == "富时A50期指连续"
+        assert "small_growth" not in keys
+        assert "csi_info" not in keys
+        by_key = {r["key"]: r for r in cfg["rules"]}
+        assert by_key["consec_premium"]["group"] == "market"
+        assert by_key["consec_premium"]["group_label"] == "盘面"
+        assert by_key["mid"]["group_label"] == "市值风格"
+        assert by_key["value_stock"]["group_label"] == "风格类型"
+        assert by_key["csi_tech"]["group_label"] == "风格类型"
+        assert by_key["bank"]["group_label"] == "金融板块"
+        assert by_key["a50"]["group_label"] == "外围对照"
+        assert by_key["cyb"]["group_label"] == "宽基指数"
+        assert by_key["tech_lead"]["group_label"] == "行业指数"
 
-    def test_dedicated_style_watch_independent_of_shared_row(self, engine):
-        ss.save_rules({"style_indices": {"monitor": False}, "small": {"monitor": True}})
+    def test_legacy_style_indices_rule_ignored(self, engine):
+        merged = ss.save_rules({"style_indices": {"monitor": False}, "small": {"speed_up": 2.5}})
+        assert "style_indices" not in merged
+        assert merged["small"]["speed_up"] == pytest.approx(2.5)
+
+    def test_dedicated_style_watch_independent(self, engine):
+        ss.save_rules({"small": {"monitor": True}, "bank": {"monitor": False}})
         engine["feeds"]["st"] = _style(
             _item("small", "小盘股", 0.0),
+            _item("bank", "银行", 0.0),
             _item("zt_perf", "昨日涨停表现", 0.0),
         )
         ss.snapshot()
         engine["clock"].add(seconds=20)
         engine["feeds"]["st"] = _style(
             _item("small", "小盘股", 3.2),
+            _item("bank", "银行", 3.2),
             _item("zt_perf", "昨日涨停表现", 3.2),
         )
         snap = ss.snapshot()
         ids = {h["seq_id"] for h in snap["new_hits"]}
         assert "style:small" in ids
+        assert "style:bank" not in ids
         assert "style:zt_perf" not in ids
         assert _seq(snap, "style:small")["monitored"] is True
-        assert _seq(snap, "style:zt_perf")["monitored"] is False
+        assert _seq(snap, "style:bank")["monitored"] is False
         assert _seq(snap, "style:small")["thresholds"]["speed_up"] == pytest.approx(1.0)
         assert _seq(snap, "style:small")["thresholds"]["break_up"] == pytest.approx(2.0)
-
-    def test_dedicated_watch_off_does_not_follow_shared_row(self, engine):
-        ss.save_rules({"style_indices": {"monitor": True}, "small": {"monitor": False}})
-        engine["feeds"]["st"] = _style(
-            _item("small", "小盘股", 0.0),
-            _item("zt_perf", "昨日涨停表现", 0.0),
-        )
-        ss.snapshot()
-        engine["clock"].add(seconds=20)
-        engine["feeds"]["st"] = _style(
-            _item("small", "小盘股", 3.2),
-            _item("zt_perf", "昨日涨停表现", 3.2),
-        )
-        snap = ss.snapshot()
-        ids = {h["seq_id"] for h in snap["new_hits"]}
-        assert "style:small" not in ids
-        assert "style:zt_perf" in ids
-        assert _seq(snap, "style:small")["monitored"] is False
-        assert _seq(snap, "style:zt_perf")["monitored"] is True
 
 
 @pytest.mark.unit

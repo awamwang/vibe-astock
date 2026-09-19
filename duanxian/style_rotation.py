@@ -241,12 +241,13 @@ def derive_rotation(
 
 
 def close_extreme_keys() -> frozenset[str]:
-    """编制稳定、点位可比：宽基、红利官方指数、国证2000。换成分篮子不报。"""
+    """编制稳定、点位可比：宽基、红利官方指数、国证2000、官方成长/价值、行业指数。换成分篮子不报。"""
     from .style_indices import ITEMS
 
     return frozenset(
         it.key for it in ITEMS
-        if it.group in {"benchmark", "dividend"} or it.key == "csi2000"
+        if it.group in {"benchmark", "dividend", "sector"}
+        or it.key in {"csi2000", "cni_growth", "cni_value", "csi_tech", "csi_cons"}
     )
 
 

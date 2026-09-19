@@ -47,10 +47,13 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("board", "打板风格"),
     ("size", "市值风格"),
     ("attribute", "短线属性"),
+    ("growth_value", "风格类型"),
     ("dividend", "红利风格"),
     ("benchmark", "宽基指数"),
     ("finance", "金融板块"),
+    ("sector", "行业指数"),
     ("external", "外围对照"),
+    ("other", "其他"),
 )
 
 ITEMS: tuple[StyleItem, ...] = (
@@ -87,6 +90,14 @@ ITEMS: tuple[StyleItem, ...] = (
     StyleItem("zhongzi", "中字头", "attribute", "BK0505", ("90.BK0505",)),
     StyleItem("em_hot", "东财热股", "attribute", "BK1637", ("90.BK1637",),
               note="公开近似，不是同花顺热股"),
+    StyleItem("value_stock", "价值股", "growth_value", "BK1640", ("90.BK1640",),
+              note="东财概念"),
+    StyleItem("cni_growth", "国证成长", "growth_value", "399370", ("0.399370",), tencent="sz399370",
+              note="官方成长风格，不是东财概念"),
+    StyleItem("cni_value", "国证价值", "growth_value", "399371", ("0.399371",), tencent="sz399371",
+              note="官方价值风格，不是东财概念"),
+    StyleItem("csi_tech", "中证科技", "growth_value", "931186", ("2.931186",)),
+    StyleItem("csi_cons", "中证消费", "growth_value", "000932", ("1.000932",), tencent="sh000932"),
     StyleItem("div_csi", "中证红利", "dividend", "000922", ("1.000922",), tencent="sh000922",
               note="东财无「高股息股 / 高股息精选」同名板块，用中证红利作公开红利风格"),
     StyleItem("div_sse", "红利指数", "dividend", "000015", ("1.000015",), tencent="sh000015"),
@@ -105,11 +116,18 @@ ITEMS: tuple[StyleItem, ...] = (
               note="东财「保险Ⅱ」"),
     StyleItem("sec", "证券", "finance", "BK0473", ("90.BK0473",),
               note="东财「证券Ⅱ」"),
+    StyleItem("csi_info", "全指信息", "sector", "000993", ("1.000993",), tencent="sh000993",
+              note="中证全指信息，行业指数不是宽基"),
+    StyleItem("tech_lead", "科技龙头", "sector", "931087", ("2.931087",)),
     StyleItem("hsi", "恒生指数", "external", "HSI", ("100.HSI",), tencent="hkHSI"),
     StyleItem("kospi", "韩国综合指数", "external", "KS11", ("100.KS11",)),
     StyleItem("a50", "富时A50期指连续", "external", "CN00Y",
               ("100.CN00Y", "8.CN00Y", "104.CN00Y"),
               note="东财 A50 期指当月连续"),
+    StyleItem("small_growth", "小盘成长", "other", "BK1667", ("90.BK1667",),
+              note="东财概念，不是中证小盘成长"),
+    StyleItem("small_value", "小盘价值", "other", "BK1668", ("90.BK1668",),
+              note="东财概念，不是中证小盘价值"),
 )
 
 UNAVAILABLE: tuple[dict[str, str], ...] = (
@@ -285,7 +303,9 @@ def _load_quotes() -> dict[str, dict]:
     return keyed
 
 
-HOTSPOT_GROUP_IDS = frozenset({"board", "size", "attribute", "dividend", "finance"})
+HOTSPOT_GROUP_IDS = frozenset({
+    "board", "size", "attribute", "growth_value", "dividend", "finance", "sector", "other",
+})
 BOARD_GROUP_KEYS = (
     "yzt_yz", "yzt", "ylb_yz", "ylb", "ylb2plus", "yzt_first", "yzb",
 )

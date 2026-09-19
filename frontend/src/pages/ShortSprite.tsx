@@ -22,8 +22,8 @@ import {
 import { fetchMarketSession, type MarketSession } from "@/lib/liveBoard";
 
 const CALIBER =
-  "短线精灵只盯短线盘面、短线风格已有快照里的市场级序列：溢价、环境条上涨数/下跌数、情绪温度、情绪分、打板情绪共振默认分、短线风格指数当场涨幅。\n" +
-  "不盯个股，不盯人气榜/成交额榜/板块管理。命中是观察记录，不是买卖指令。\n" +
+  "短线精灵只盯短线盘面、短线风格已有快照里单独列出的市场级序列：溢价、环境条上涨数/下跌数、情绪温度、情绪分、打板情绪共振默认分，以及配置页上的指定风格项当场涨幅。\n" +
+  "不把短线风格指数整组当一条监控指标。不盯个股，不盯人气榜/成交额榜/板块管理。命中是观察记录，不是买卖指令。\n" +
   "开盘记录 = 该场次 09:30 之后第一条非空随盘快照。涨速 = 当前值 − 约 5 分钟前的值（点不足则空）；涨速命中记下该窗两端读数。突破/跌破是相对开盘记录的差穿过阈值边沿，不记窗。\n" +
   "情绪温度、情绪分的突破/跌破按阈值整数倍继续报（15、30、45…），每档边沿一次，回差后可再报。\n" +
   "上涨数/下跌数用环境条随盘家数，不是市场整体卡片上的 overview 家数。下跌数升高为绿。";
@@ -118,6 +118,21 @@ function EnableButton({
   );
 }
 
+function groupByLabel<T extends { group?: string; group_label?: string; kind?: string }>(
+  items: T[],
+  fallbackKind?: (item: T) => { id: string; label: string },
+): { id: string; label: string; items: T[] }[] {
+  const groups: { id: string; label: string; items: T[] }[] = [];
+  for (const item of items) {
+    const id = item.group || fallbackKind?.(item).id || "other";
+    const label = item.group_label || fallbackKind?.(item).label || "其他";
+    const last = groups[groups.length - 1];
+    if (last && last.id === id) last.items.push(item);
+    else groups.push({ id, label, items: [item] });
+  }
+  return groups;
+}
+
 function SeqRow({ seq }: { seq: SpriteSequence }) {
   const outside = Object.values(seq.outside).some(Boolean);
   const lastWindow = seq.last_hit ? speedWindowLabel(seq.last_hit) : null;
@@ -210,8 +225,12 @@ export function ShortSprite() {
     }
   };
 
-  const boardSeqs = useMemo(() => (snap?.sequences ?? []).filter((s) => s.kind === "board"), [snap]);
-  const styleSeqs = useMemo(() => (snap?.sequences ?? []).filter((s) => s.kind === "style"), [snap]);
+  const seqGroups = useMemo(
+    () => groupByLabel(snap?.sequences ?? [], (s) => (
+      s.kind === "board" ? { id: "market", label: "盘面" } : { id: "style", label: "短线风格" }
+    )),
+    [snap],
+  );
   const hitsNewestFirst = useMemo(() => [...(snap?.hits ?? [])].reverse(), [snap]);
 
   return (
@@ -259,12 +278,13 @@ export function ShortSprite() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <GlassCard className="p-4">
           <h3 className="mb-2 text-sm font-semibold text-muted-foreground">序列</h3>
-          <h4 className="mb-1 text-[11px] text-muted-foreground">盘面</h4>
-          {boardSeqs.map((s) => <SeqRow key={s.id} seq={s} />)}
-          <h4 className="mb-1 mt-3 text-[11px] text-muted-foreground">短线风格指数</h4>
-          {styleSeqs.length === 0
-            ? <p className="text-sm text-muted-foreground">暂无报价项</p>
-            : styleSeqs.map((s) => <SeqRow key={s.id} seq={s} />)}
+          {seqGroups.map((g, i) => (
+            <div key={g.id}>
+              <h4 className={cn("mb-1 text-[11px] text-muted-foreground", i > 0 && "mt-3")}>{g.label}</h4>
+              {g.items.map((s) => <SeqRow key={s.id} seq={s} />)}
+            </div>
+          ))}
+          {seqGroups.length === 0 && <p className="text-sm text-muted-foreground">暂无报价项</p>}
         </GlassCard>
         <GlassCard className="p-4">
           <h3 className="mb-2 text-sm font-semibold text-muted-foreground">本场次命中</h3>

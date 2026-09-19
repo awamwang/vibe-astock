@@ -1,7 +1,8 @@
 """短线精灵：随盘涨速 / 突破 / 跌破。
 
-只读环境条、昨涨停效应、打板情绪共振默认分、短线风格指数的现有 snapshot，
+只读环境条、昨涨停效应、打板情绪共振默认分、短线风格指定项的现有 snapshot，
 不新开行情源，无常驻轮询。检测算法在本模块；HTTP 只做薄封装。
+不把「短线风格指数」整组当一条监控指标。
 """
 
 from __future__ import annotations
@@ -141,14 +142,6 @@ BOARD_SPECS: tuple[dict[str, Any], ...] = (
     },
 )
 
-_STYLE_THRESH: dict[str, float] = {
-    "speed_up": 1.5,
-    "speed_down": -1.5,
-    "break_up": 3.0,
-    "break_down": -3.0,
-    "hysteresis": 0.3,
-}
-
 _STYLE_WATCH_THRESH: dict[str, float] = {
     "speed_up": 1.0,
     "speed_down": -1.0,
@@ -157,15 +150,8 @@ _STYLE_WATCH_THRESH: dict[str, float] = {
     "hysteresis": 0.3,
 }
 
-STYLE_SPEC: dict[str, Any] = {
-    "key": "style_indices",
-    "label": "短线风格指数",
-    "unit": "pct",
-    "reversed": False,
-    **_STYLE_THRESH,
-}
-
-# 单独成行的风格项；其余风格指数仍走 STYLE_SPEC 共用行。
+# 已删除「短线风格指数」共用行；只盯下列单独成行的风格项。
+# 顺序跟短线风格 GROUPS：市值 → 属性 → 风格类型 → 宽基 → 金融 → 行业 → 外围。
 STYLE_WATCH_SPECS: tuple[dict[str, Any], ...] = tuple(
     {
         "key": key,
@@ -176,14 +162,27 @@ STYLE_WATCH_SPECS: tuple[dict[str, Any], ...] = tuple(
     }
     for key, label in (
         ("mid", "中盘股"),
-        ("low_price", "低价股"),
-        ("cyb", "创业板指"),
         ("small", "小盘股"),
         ("large", "大盘股"),
         ("micro", "微盘股"),
+        ("subnew", "次新股"),
+        ("low_price", "低价股"),
+        ("value_stock", "价值股"),
+        ("cni_growth", "国证成长"),
+        ("cni_value", "国证价值"),
+        ("csi_tech", "中证科技"),
+        ("csi_cons", "中证消费"),
+        ("cyb", "创业板指"),
+        ("bank", "银行"),
+        ("ins", "保险"),
+        ("sec", "证券"),
+        ("tech_lead", "科技龙头"),
+        ("a50", "富时A50期指连续"),
     )
 )
 _STYLE_WATCH_BY_KEY = {s["key"]: s for s in STYLE_WATCH_SPECS}
+_LEGACY_RULE_KEYS = frozenset({"style_indices"})
+_BOARD_GROUP = ("market", "盘面")
 
 _RULE_KEYS = ("monitor", "voice", "speed_up", "speed_down", "break_up", "break_down", "hysteresis")
 _EVENT_SPEECH = {
@@ -273,7 +272,7 @@ def _default_rule(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _all_specs() -> tuple[dict[str, Any], ...]:
-    return (*BOARD_SPECS, *STYLE_WATCH_SPECS, STYLE_SPEC)
+    return (*BOARD_SPECS, *STYLE_WATCH_SPECS)
 
 
 def default_rules() -> dict[str, dict[str, Any]]:
@@ -346,6 +345,8 @@ def _overlay_from_raw(raw: object, *, strict: bool) -> dict[str, dict[str, Any]]
         k = str(key).strip()
         spec = specs.get(k)
         if spec is None:
+            if k in _LEGACY_RULE_KEYS:
+                continue
             if strict:
                 raise ShortSpriteConfigError(f"未知规则 {k!r}")
             continue
@@ -426,17 +427,31 @@ def reset_rules() -> dict[str, dict[str, Any]]:
     return default_rules()
 
 
+def _group_meta() -> dict[str, tuple[str, str]]:
+    from .style_indices import GROUPS, ITEMS
+
+    labels = dict(GROUPS)
+    out = {s["key"]: _BOARD_GROUP for s in BOARD_SPECS}
+    for it in ITEMS:
+        out[it.key] = (it.group, labels[it.group])
+    return out
+
+
 def export_config() -> dict[str, Any]:
     values = resolved_rules()
+    groups = _group_meta()
     rules = []
     for spec in _all_specs():
         key = spec["key"]
         rule = values[key]
+        gid, glabel = groups.get(key, _BOARD_GROUP)
         rules.append({
             "key": key,
             "label": spec["label"],
             "unit": spec["unit"],
             "reversed": bool(spec["reversed"]),
+            "group": gid,
+            "group_label": glabel,
             **rule,
             "defaults": _default_rule(spec),
         })
@@ -495,10 +510,7 @@ def _style_seq_id(key: str) -> str:
 
 def _config_key_for(seq_id: str) -> str:
     if seq_id.startswith("style:"):
-        item_key = seq_id[6:]
-        if item_key in _STYLE_WATCH_BY_KEY:
-            return item_key
-        return STYLE_SPEC["key"]
+        return seq_id[6:]
     return seq_id
 
 
@@ -563,7 +575,9 @@ def _extract(market: dict[str, dict]) -> tuple[dict[str, Any], dict[str, dict[st
             val = _finite(item.get("change_pct"))
             if val is None:
                 continue
-            spec = _STYLE_WATCH_BY_KEY.get(key) or STYLE_SPEC
+            spec = _STYLE_WATCH_BY_KEY.get(key)
+            if spec is None:
+                continue
             add(_style_seq_id(key), spec, val, name=str(item.get("name") or key))
 
     return meta, readings
@@ -772,11 +786,15 @@ def _copy_view(rules: dict[str, dict[str, Any]]) -> dict[str, Any]:
     now_meta = dict(_last_meta)
     readings = _last_readings
     now_ts = _epoch(_now()) if _session else 0.0
+    groups = _group_meta()
     sequences = []
     for seq_id, rec in readings.items():
         cfg_key = rec["config_key"]
-        spec = _specs_by_key().get(cfg_key) or STYLE_SPEC
+        spec = _specs_by_key().get(cfg_key)
+        if spec is None:
+            continue
         rule = rules.get(cfg_key) or _default_rule(spec)
+        gid, glabel = groups.get(cfg_key, _BOARD_GROUP)
         current = rec["value"]
         open_rec = _open.get(seq_id)
         open_val = open_rec["value"] if open_rec else None
@@ -809,6 +827,8 @@ def _copy_view(rules: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "id": seq_id,
             "name": rec["name"],
             "kind": rec["kind"],
+            "group": gid,
+            "group_label": glabel,
             "unit": rec["unit"],
             "reversed": rec["reversed"],
             "monitored": bool(rule["monitor"]),
@@ -902,7 +922,9 @@ def tick() -> dict[str, Any]:
                 current = rec["value"]
                 if current is None:
                     continue
-                spec = _specs_by_key().get(rec["config_key"]) or STYLE_SPEC
+                spec = _specs_by_key().get(rec["config_key"])
+                if spec is None:
+                    continue
                 rule = rules.get(rec["config_key"]) or _default_rule(spec)
                 arms = _armed.setdefault(seq_id, _armed_default())
                 speed, speed_from, speed_from_ts = _speed_for(seq_id, now_ts)

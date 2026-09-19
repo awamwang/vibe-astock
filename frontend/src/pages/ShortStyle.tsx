@@ -25,16 +25,20 @@ import { delayUntilNextUnixSlot } from "@/lib/wallClock";
 import { pingShortSprite } from "@/lib/shortSprite";
 import { SectionPopupButton } from "@/components/SectionPopupButton";
 
+const CUM_EXCESS_GROUPS = new Set([
+  "board", "size", "attribute", "growth_value", "dividend", "finance", "sector", "other",
+]);
+
 const CALIBER =
   "当场涨幅，对比前一交易日收盘。风格/行业板块走东财概念与行业列表，宽基与外围走东财 ulist，缺了再用腾讯指数补。当场涨幅不是风格轮动。\n" +
   "「昨日涨停表现」对应东财「昨日涨停_含一字」，不是赚钱效应中位数，也不是打板情绪。\n" +
   "风格偏好是当场派生：超额 = 当场涨幅 − 中证全指。只钉中证全指；缺中证全指时不报超额、风格热点、打板风格组同号，组内涨幅排序、大小盘价差、组内领涨仍可报。\n" +
   "大小盘价差 = 东财小盘股 − 大盘股；国证2000 − 沪深300 只作对照，不叫大小盘价差。微盘不改写大小盘价差。\n" +
   "打板风格组均值只含昨日涨停/连板/首板/炸板及一字、打二板变体，不含高换手、高振幅、触板。有效项少于 4 条为不足；组均值或中证全指绝对值小于 0.1% 为近平。\n" +
-  "风格热点来自打板风格、市值风格、短线属性、红利、金融，按超额前 5 再滤上涨占比；宽基与外围不参赛。有涨跌家数且涨幅符号与上涨占比 0.5 反侧时标价升面窄或价跌面宽。\n" +
+  "风格热点来自打板风格、市值风格、短线属性、风格类型、红利、金融、行业指数、其他，按超额前 5 再滤上涨占比；宽基与外围不参赛。有涨跌家数且涨幅符号与上涨占比 0.5 反侧时标价升面窄或价跌面宽。\n" +
   "风格轮动是相邻已定稿场次之间风格偏好的排序或超额位次变化。本场未定稿时对照最近两场已定稿，对照日期写在摘要上，不拿随盘当本场。缺上场存档则为不足，缺日不插值，不跳过中间场次。\n" +
   "涨幅差 = 本场定稿涨幅 − 上场已定稿涨幅，这里的上场涨幅是昨场涨幅，不是相对昨收。超额位次只在风格热点同一套候选上排，名次上升为正。\n" +
-  "Spearman 是这两场超额位次向量的相关，相关低只表示换得快。z-score 用该 key 近 N=10 个已定稿涨幅（不含本场）的均值与标准差；累计超额同窗、只在候选集上相对中证全指。收盘新高/新低相对近 N=20 个已定稿收盘价，只报宽基、红利官方指数、国证2000；收盘新高不是突破。未定稿本场不进入 z 窗或这 20 场。\n" +
+  "Spearman 是这两场超额位次向量的相关，相关低只表示换得快。z-score 用该 key 近 N=10 个已定稿涨幅（不含本场）的均值与标准差；累计超额同窗、只在候选集上相对中证全指。收盘新高/新低相对近 N=20 个已定稿收盘价，只报宽基、红利官方指数、国证2000、国证成长/价值、行业指数；收盘新高不是突破。未定稿本场不进入 z 窗或这 20 场。\n" +
   "同花顺专有指数（情绪 / 全A / 热股 / 平均股价 / 短期期货恐慌 / 高贝塔 / 高股息精选）公开源没有，页底列出未接入。中证全指、东财热股、中证红利只是公开近似，名字没有写成同花顺那条。\n" +
   "报价是延时行情。随盘场次按 Unix 20 秒墙钟槽刷新缓存。";
 
@@ -104,7 +108,7 @@ function GroupCard({
                 <div>上场已定稿涨幅差 {formatStyleDelta(it.change_pct_delta)}</div>
                 <div>超额位次 {formatRankDelta(it.excess_rank_delta)}</div>
                 <div>z（N=10）{formatZscore(it.zscore)}</div>
-                {["board", "size", "attribute", "dividend", "finance"].includes(it.group) && it.key !== "csi_all" && (
+                {CUM_EXCESS_GROUPS.has(it.group) && it.key !== "csi_all" && (
                   <div>累计超额（N=10）{it.cum_excess == null ? "不足" : formatStylePct(it.cum_excess)}</div>
                 )}
                 {it.close_extreme != null && (

@@ -81,6 +81,8 @@ type SpriteDraft = {
   key: string;
   label: string;
   unit: string;
+  group: string;
+  group_label: string;
   monitor: boolean;
   voice: boolean;
   speed_up: string;
@@ -99,6 +101,8 @@ function spriteDraftsFromRules(rules: ShortSpriteRule[]): SpriteDraft[] {
     key: r.key,
     label: r.label,
     unit: r.unit,
+    group: r.group || "market",
+    group_label: r.group_label || "盘面",
     monitor: r.monitor,
     voice: r.voice,
     speed_up: numDraft(r.speed_up),
@@ -107,6 +111,16 @@ function spriteDraftsFromRules(rules: ShortSpriteRule[]): SpriteDraft[] {
     break_down: numDraft(r.break_down),
     hysteresis: numDraft(r.hysteresis),
   }));
+}
+
+function groupSpriteDrafts(rows: SpriteDraft[]): { id: string; label: string; rows: SpriteDraft[] }[] {
+  const groups: { id: string; label: string; rows: SpriteDraft[] }[] = [];
+  for (const row of rows) {
+    const last = groups[groups.length - 1];
+    if (last && last.id === row.group) last.rows.push(row);
+    else groups.push({ id: row.group, label: row.group_label, rows: [row] });
+  }
+  return groups;
 }
 
 type PhaseDraft = {
@@ -1656,55 +1670,58 @@ export function ZtKeywordsSettings() {
           <Zap className="h-4 w-4 text-primary" /> 短线精灵
         </h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          每条盘面序列单独设监控、语音、四阈和回差。中盘股、低价股、创业板指、小盘股、大盘股、微盘股各占一行。其余短线风格指数共用一行，命中仍按单条指数。
+          按短线风格的分类分区：每条序列单独设监控、语音、四阈和回差。不把短线风格指数整组当一条指标。
           情绪温度、情绪分的突破/跌破按该行上阈/下阈的整数倍继续报。关掉监控的不算命中。语音只在命中弹窗打开时播。命中是观察记录，不是买卖指令。
         </p>
         {spriteLoading ? (
           <p className="text-xs text-muted-foreground">正在读取短线精灵配置…</p>
         ) : (
-          <div className="space-y-3">
-            {spriteDrafts.map((row) => (
-              <div key={row.key} className="rounded-lg border border-border/50 px-3 py-2">
-                <div className="mb-2 flex flex-wrap items-center gap-3">
-                  <div className="text-sm font-medium">{row.label}</div>
-                  <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={row.monitor}
-                      onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, monitor: e.target.checked } : r))}
-                      disabled={spriteSaving}
-                    />
-                    监控
-                  </label>
-                  <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={row.voice}
-                      onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, voice: e.target.checked } : r))}
-                      disabled={spriteSaving}
-                    />
-                    语音
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  {([
-                    ["speed_up", "上速阈"],
-                    ["speed_down", "下速阈"],
-                    ["break_up", "突破上阈"],
-                    ["break_down", "跌破下阈"],
-                    ["hysteresis", "回差"],
-                  ] as const).map(([k, lab]) => (
-                    <label key={k} className="block text-[11px] text-muted-foreground">
-                      {lab}
-                      <input
-                        type="number"
-                        step="any"
-                        value={row[k]}
-                        onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, [k]: e.target.value } : r))}
-                        disabled={spriteSaving}
-                        className="mt-1 w-full rounded-lg border border-border bg-black/20 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
-                      />
-                    </label>
+          <div className="space-y-4">
+            {groupSpriteDrafts(spriteDrafts).map((g) => (
+              <div key={g.id}>
+                <h4 className="mb-1 text-[11px] font-semibold text-muted-foreground">{g.label}</h4>
+                <div className="divide-y divide-border/40 rounded-lg border border-border/50">
+                  {g.rows.map((row) => (
+                    <div key={row.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5">
+                      <div className="w-[10rem] shrink-0 whitespace-nowrap text-sm">{row.label}</div>
+                      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={row.monitor}
+                          onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, monitor: e.target.checked } : r))}
+                          disabled={spriteSaving}
+                        />
+                        监控
+                      </label>
+                      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={row.voice}
+                          onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, voice: e.target.checked } : r))}
+                          disabled={spriteSaving}
+                        />
+                        语音
+                      </label>
+                      {([
+                        ["speed_up", "上速"],
+                        ["speed_down", "下速"],
+                        ["break_up", "突破"],
+                        ["break_down", "跌破"],
+                        ["hysteresis", "回差"],
+                      ] as const).map(([k, lab]) => (
+                        <label key={k} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          {lab}
+                          <input
+                            type="number"
+                            step="any"
+                            value={row[k]}
+                            onChange={(e) => setSpriteDrafts((rows) => rows.map((r) => r.key === row.key ? { ...r, [k]: e.target.value } : r))}
+                            disabled={spriteSaving}
+                            className="h-7 w-[4.5rem] rounded border border-border bg-black/20 px-1 py-0 text-xs tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                          />
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </div>

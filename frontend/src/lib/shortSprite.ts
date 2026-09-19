@@ -29,6 +29,8 @@ export interface SpriteSequence {
   id: string;
   name: string;
   kind: "board" | "style";
+  group?: string;
+  group_label?: string;
   unit: SpriteUnit | string;
   reversed: boolean;
   monitored: boolean;
@@ -74,6 +76,8 @@ export interface ShortSpriteRule {
   label: string;
   unit: SpriteUnit | string;
   reversed: boolean;
+  group?: string;
+  group_label?: string;
   monitor: boolean;
   voice: boolean;
   speed_up: number;
