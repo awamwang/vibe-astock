@@ -151,35 +151,43 @@ _STYLE_WATCH_THRESH: dict[str, float] = {
 }
 
 # 已删除「短线风格指数」共用行；只盯下列单独成行的风格项。
-# 顺序跟短线风格 GROUPS：市值 → 属性 → 风格类型 → 宽基 → 金融 → 行业 → 外围。
-STYLE_WATCH_SPECS: tuple[dict[str, Any], ...] = tuple(
-    {
-        "key": key,
-        "label": label,
-        "unit": "pct",
-        "reversed": False,
-        **_STYLE_WATCH_THRESH,
-    }
-    for key, label in (
-        ("mid", "中盘股"),
-        ("small", "小盘股"),
-        ("large", "大盘股"),
-        ("micro", "微盘股"),
-        ("subnew", "次新股"),
-        ("low_price", "低价股"),
-        ("value_stock", "价值股"),
-        ("cni_growth", "国证成长"),
-        ("cni_value", "国证价值"),
-        ("csi_tech", "中证科技"),
-        ("csi_cons", "中证消费"),
-        ("cyb", "创业板指"),
-        ("bank", "银行"),
-        ("ins", "保险"),
-        ("sec", "证券"),
-        ("tech_lead", "科技龙头"),
-        ("a50", "富时A50期指连续"),
-    )
-)
+# 打板 / 市值 / 短线属性 / 其他：整组入册，默认监控。
+# 红利 / 宽基：整组入册，默认关闭。
+# 风格类型 / 金融 / 行业 / 外围：仍只盯原先指定项，默认监控。
+# 顺序跟短线风格 ITEMS（GROUPS 序）。
+_STYLE_WATCH_ON_GROUPS = frozenset({"board", "size", "attribute", "other"})
+_STYLE_WATCH_OFF_GROUPS = frozenset({"dividend", "benchmark"})
+_STYLE_WATCH_EXTRA_ON = frozenset({
+    "value_stock", "cni_growth", "cni_value", "csi_tech", "csi_cons",
+    "bank", "ins", "sec", "tech_lead", "a50",
+})
+
+
+def _style_item_watch_specs() -> tuple[dict[str, Any], ...]:
+    from .style_indices import ITEMS
+
+    out: list[dict[str, Any]] = []
+    for it in ITEMS:
+        if it.group in _STYLE_WATCH_ON_GROUPS:
+            monitor = True
+        elif it.group in _STYLE_WATCH_OFF_GROUPS:
+            monitor = False
+        elif it.key in _STYLE_WATCH_EXTRA_ON:
+            monitor = True
+        else:
+            continue
+        out.append({
+            "key": it.key,
+            "label": it.name,
+            "unit": "pct",
+            "reversed": False,
+            "monitor": monitor,
+            **_STYLE_WATCH_THRESH,
+        })
+    return tuple(out)
+
+
+STYLE_WATCH_SPECS: tuple[dict[str, Any], ...] = _style_item_watch_specs()
 _STYLE_WATCH_BY_KEY = {s["key"]: s for s in STYLE_WATCH_SPECS}
 _LEGACY_RULE_KEYS = frozenset({"style_indices"})
 _BOARD_GROUP = ("market", "盘面")
@@ -261,7 +269,7 @@ def _past_open(now: _dt.datetime) -> bool:
 
 def _default_rule(spec: dict[str, Any]) -> dict[str, Any]:
     return {
-        "monitor": True,
+        "monitor": bool(spec.get("monitor", True)),
         "voice": True,
         "speed_up": float(spec["speed_up"]),
         "speed_down": float(spec["speed_down"]),
