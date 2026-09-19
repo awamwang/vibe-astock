@@ -32,6 +32,7 @@ const REPO_URL = "https://github.com/awamwang/vibe-astock";
 const X_URL = "https://x.com/linsizhen";
 const X_HANDLE = "@linsizhen";
 const AUTHOR = "Simon 林";
+const APP_TITLE_SUFFIX = "Vibe-Astock·A股短线工具";
 
 type NavItem = { to: string; icon: LucideIcon; label: string; agent?: boolean };
 type NavGroupKey = keyof SidebarNavOrder;
@@ -64,10 +65,22 @@ const SETTINGS_NAV: NavItem[] = [
   { to: "/settings/about", icon: Info, label: "关于项目" },
 ];
 
+const ALL_NAV: NavItem[] = [...REVIEW_NAV, ...SETTINGS_NAV];
+
 const DEFAULT_ORDER: SidebarNavOrder = {
   review: REVIEW_NAV.map((n) => n.to),
   settings: SETTINGS_NAV.map((n) => n.to),
 };
+
+const PATH_TITLE_ALIASES: Record<string, string> = {
+  "/settings/backup": "/settings/data",
+};
+
+function documentTitleForPath(pathname: string): string {
+  const resolved = PATH_TITLE_ALIASES[pathname] ?? pathname;
+  const label = ALL_NAV.find((n) => n.to === resolved)?.label;
+  return label ? `${label}-${APP_TITLE_SUFFIX}` : APP_TITLE_SUFFIX;
+}
 
 const DND_MIME = "application/x-va-sidebar-nav";
 
@@ -103,6 +116,11 @@ function MainShell() {
 export function Layout() {
   const { pathname } = useLocation();
   const { dark, toggle } = useDarkMode();
+
+  useEffect(() => {
+    document.title = documentTitleForPath(pathname);
+  }, [pathname]);
+
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("va-sidebar") === "collapsed");
   const [navOrder, setNavOrder] = useState<SidebarNavOrder>(() => {
     const saved = loadSidebarNavOrder();
