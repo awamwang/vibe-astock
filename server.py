@@ -960,9 +960,17 @@ def api_trade_equity(request: Request, body: dict = Body(...)):
     try:
         eq = float(body.get("equity"))
         note = str(body.get("note") or "")
-        return trade_store.set_equity(eq, note)
+        account = trade_store.set_equity(eq, note)
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update()
+        return trade_store.load_account()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
+        return account
 
 
 @app.post("/api/trade/account/constants")
@@ -1001,11 +1009,19 @@ def api_trade_snapshot(request: Request, date: str | None = None, body: dict | N
                 ) if k in payload
             } or None
         note = payload.get("note")
-        return trade_store.snapshot_equity(
+        account = trade_store.snapshot_equity(
             date, mv, fields, note=None if note is None else str(note),
         )
     except (TypeError, ValueError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update(date=date)
+        return trade_store.load_account()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
+        return account
 
 
 @app.delete("/api/trade/account/snapshot")
@@ -1243,6 +1259,17 @@ def api_trade_screenshot_apply(request: Request, body: dict = Body(...)):
         account = trade_store.snapshot_equity(snap_date, mv, fields or None, note=note or None)
     except (TypeError, ValueError):
         account = account or trade_store.load_account()
+
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update(
+            date=snap_date,
+            holdings=list((portfolio or {}).get("holdings") or []),
+        )
+        account = trade_store.load_account()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
 
     return {
         "ok": True,
@@ -1838,6 +1865,69 @@ def api_trade_threshold_config_save(body: dict = Body(...)):
     from duanxian import trade_threshold_config as ttc
 
     return {"data": ttc.export_config()}
+
+
+@app.get("/api/config/risk-guard")
+def api_risk_guard_config_get():
+    from duanxian import risk_guard_config as rgc
+
+    return {"data": rgc.export_config()}
+
+
+@app.post("/api/config/risk-guard")
+def api_risk_guard_config_save(body: dict = Body(...)):
+    from duanxian.risk_guard_config import RiskGuardConfigError, save_values
+    from duanxian import risk_guard_config as rgc
+
+    try:
+        save_values((body or {}).get("thresholds"))
+    except RiskGuardConfigError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=400)
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
+    return {"data": rgc.export_config()}
+
+
+@app.post("/api/config/risk-guard/reset")
+def api_risk_guard_config_reset():
+    from duanxian import risk_guard_config as rgc
+
+    try:
+        rgc.reset_values()
+    except OSError as exc:
+        return JSONResponse({"error": str(exc), "detail": str(exc)}, status_code=500)
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
+    return {"data": rgc.export_config()}
+
+
+@app.get("/api/trade/risk-guard")
+def api_trade_risk_guard():
+    account = trade_store.load_account()
+    last = account.get("last_risk_guard") if isinstance(account.get("last_risk_guard"), dict) else None
+    return {"data": last or {"date": None, "hits": [], "global_no_buy": False}}
+
+
+@app.post("/api/trade/risk-guard/refresh")
+def api_trade_risk_guard_refresh(request: Request):
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        from duanxian import risk_guard as rg
+
+        return {"data": rg.sync_after_update()}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
 
 
 @app.post("/api/config/trade-thresholds/reset")

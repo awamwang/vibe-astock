@@ -169,6 +169,7 @@ def guard(
         "reduce_order": [],
         "daily_loss": None,
         "block_new_long_reasons": list(budget.get("block_new_long_reasons") or []),
+        "risk_guard": account.get("last_risk_guard") if isinstance(account.get("last_risk_guard"), dict) else None,
     }
     if not budget.get("available"):
         return out

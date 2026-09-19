@@ -45,7 +45,7 @@ Vibe-Astock 是 **单进程、本机自托管** 的 A 股短线复盘看板：Fa
 | 分区 | 路径 | 职责 |
 |------|------|------|
 | **宿主** | `server.py` | 进程生命周期、复盘/周报 HTTP、Origin 写闸、合并 VR 路由、服务 `frontend/dist` |
-| **短线引擎** | `duanxian/` | 场次（`trade_calendar`）、打板情绪（`live_emotion`）、环境条（`short_board`）、定稿日档案（`settled_archive`）、派生指标（`emotion_metrics` / `market_facts`）、复盘图（`review_graph`）、仓位预算（`risk_stance` / `trade_budget`）、插件钩子（`hooks`） |
+| **短线引擎** | `duanxian/` | 场次（`trade_calendar`）、打板情绪（`live_emotion`）、环境条（`short_board`）、定稿日档案（`settled_archive`）、派生指标（`emotion_metrics` / `market_facts`）、复盘图（`review_graph`）、仓位预算（`risk_stance` / `trade_budget`）、账户风控闸（`risk_guard`）、插件钩子（`hooks`） |
 | **VR 数据层** | `vr/` | 个股行情（`astock`）、持仓/自选、消息分析、同花顺板块、股票列表、辩论/聊天等 `/api/*` 端点；**保持可整树拷贝同步**（见 ADR-0001） |
 | **VR 宿主策略** | `duanxian/vr_host.py` | 路由合并、定稿涨停池钉住、CLI 白名单、用户数据防护、`vr_guard_error` |
 | **前端** | `frontend/src/` | React 19 + Vite；`lib/liveBoard.ts`（随盘）、`lib/agent.ts`（定稿档案）、`lib/api.ts`（传输） |
@@ -64,6 +64,7 @@ Vibe-Astock 是 **单进程、本机自托管** 的 A 股短线复盘看板：Fa
 | 连板股 | `vr` 侧榜单 | 客观公开名单，不进打板情绪比率 |
 | 派生情绪指标 | `emotion_metrics` + `settled_archive` | 复盘用赚钱效应、分档晋级、情绪周期等 |
 | 当日风险姿态 | `risk_stance` | 档位、上限、guard、读数组装 |
+| 账户风控闸 | `risk_guard` | 软/硬阈值、持仓快照、`global_no_buy` |
 
 ### 2.2 复盘数据流
 

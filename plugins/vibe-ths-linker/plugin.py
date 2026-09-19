@@ -351,6 +351,15 @@ class ThsLinkerBridge:
         else:
             self.request_reconnect()
 
+    def enqueue_sync_risk(self) -> None:
+        """入队风控同步，避免在 import_portfolio 回调栈里同步打 WS。"""
+        try:
+            self._cmd_queue.put_nowait(("sync_risk", None))
+        except queue.Full:
+            print("⚠️ [vibe-ths-linker] 命令队列已满，丢弃风控同步")
+        else:
+            self.request_reconnect()
+
     def _report_status(self, level: str, message: str, detail: str | None = None) -> None:
         from duanxian import plugin_status as ps
 
@@ -541,6 +550,8 @@ class ThsLinkerBridge:
             kind, payload = cmd
             if kind == "add_self_stock":
                 self._add_self_stocks(list(payload or []))
+            elif kind == "sync_risk":
+                self._sync_risk_control()
 
     def _add_self_stocks(self, codes: list[str]) -> None:
         """经 ths-linker WebSocket 向「我的自选」追加代码。"""
@@ -762,13 +773,25 @@ class ThsLinkerBridge:
 
             date = china_today()
         budget = ts.get_or_compute(date)
+        account = ts.load_account()
+        last = account.get("last_risk_guard") if isinstance(account.get("last_risk_guard"), dict) else {}
+        no_buy = bool(last.get("global_no_buy"))
+        reason = last.get("global_no_buy_reason")
+        meta = last.get("global_no_buy_meta") if isinstance(last.get("global_no_buy_meta"), dict) else {
+            "source": "risk_guard",
+            "level": 2 if no_buy else 0,
+        }
+        no_buy_fields = {
+            "global_no_buy": no_buy,
+            "global_no_buy_reason": reason,
+            "global_no_buy_meta": meta,
+        }
         if not budget.get("available"):
-            return None
+            return {"enabled": True, **no_buy_fields}
         cap_total = budget.get("cap_total")
         cap_single = budget.get("cap_single")
         if cap_total is None or cap_single is None:
-            return None
-        account = ts.load_account()
+            return {"enabled": True, **no_buy_fields}
         consts = account.get("constants") or {}
         phase = str(budget.get("phase") or "")
         forbid = [str(x) for x in (budget.get("forbid") or []) if str(x).strip()]
@@ -794,14 +817,16 @@ class ThsLinkerBridge:
         daily_limit = consts.get("daily_loss_limit")
         if daily_limit is not None:
             market_prompts.append(f"日亏上限 {float(daily_limit) * 100:.1f}%")
-        return {
+        body: dict[str, Any] = {
             "enabled": True,
             "total_position_limit_pct": round(float(cap_total) * 100, 2),
             "single_stock_limit_pct": round(float(cap_single) * 100, 2),
             "market_prompts": market_prompts,
             "stock_buy_prompts": stock_buy_prompts,
             "sell_prompts": sell_prompts,
+            **no_buy_fields,
         }
+        return body
 
     def _sync_risk_control(self) -> None:
         desired = self._build_vibe_risk()
@@ -824,6 +849,9 @@ class ThsLinkerBridge:
             "market_prompts": list(settings.get("market_prompts") or []),
             "stock_buy_prompts": list(settings.get("stock_buy_prompts") or []),
             "sell_prompts": list(settings.get("sell_prompts") or []),
+            "global_no_buy": settings.get("global_no_buy"),
+            "global_no_buy_reason": settings.get("global_no_buy_reason"),
+            "global_no_buy_meta": settings.get("global_no_buy_meta"),
         }
         if _json_sig(cur_compare) == sig:
             self._last_risk_sig = sig
@@ -908,6 +936,14 @@ def on_watchlist_add(_ctx, envelope: dict) -> None:
     bridge.enqueue_add_self_stocks([str(c) for c in codes])
 
 
+def on_risk_guard(_ctx, envelope: dict) -> None:
+    """硬闸命中/解除后入队风控 WebSocket 更新。"""
+    bridge = _BRIDGE
+    if bridge is None:
+        return
+    bridge.enqueue_sync_risk()
+
+
 def ensure_bridge_alive() -> bool:
     """供引擎按需调用：未就绪时打断重连退避，尽快恢复个股联动。"""
     bridge = _BRIDGE
@@ -934,5 +970,6 @@ PACK = HookPack(
     on_enable=on_enable,
     on_disable=on_disable,
     on_watchlist_add=on_watchlist_add,
+    on_risk_guard=on_risk_guard,
     enable_review_saved=False,
 )

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap } from "lucide-react";
+import { Plus, RotateCcw, Tags, Trash2, Lock, ArrowRight, GitMerge, SlidersHorizontal, Eye, ChevronRight, Save, AlertCircle, Pencil, Check, X, Zap, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -21,7 +21,7 @@ import {
   removeMessageManualMark,
   setMessageManualMarksCache,
 } from "@/lib/message-manual-marks";
-import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem } from "@/lib/api";
+import { api, type ThemeAliasEntry, type TradePhaseConfigRow, type SentimentSConfig, type TradeThresholdConfig, type BlockPendingItem, type RiskGuardConfig } from "@/lib/api";
 import { keywordsSettingsTo, parseKeywordsSection, type KeywordsSectionId } from "@/lib/settingsNav";
 import {
   fetchShortSpriteConfig,
@@ -43,6 +43,7 @@ const CONFIG_SECTIONS: {
   { id: "sentiment-s", label: "合成情绪分 S", icon: SlidersHorizontal, hint: "六档情绪算法" },
   { id: "trade-thresholds", label: "情绪周期阈值", icon: SlidersHorizontal, hint: "退潮/过热/高潮等" },
   { id: "trade-phases", label: "情绪周期仓位预算", icon: SlidersHorizontal, hint: "总仓/单票/提示词" },
+  { id: "risk-guard", label: "风控设置", icon: Shield, hint: "软/硬阈值" },
   { id: "short-sprite", label: "短线精灵", icon: Zap, hint: "涨速/突破/跌破阈值" },
 ];
 
@@ -184,6 +185,17 @@ function draftToValue(kind: string, raw: string, label: string, min: number, max
   return v;
 }
 
+function riskGuardDraftsFrom(cfg: RiskGuardConfig): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const g of cfg.groups || []) {
+    for (const row of g.rows || []) {
+      next[row.soft.key] = fieldToDraft(row.value_kind, row.soft.value);
+      next[row.hard.key] = fieldToDraft(row.value_kind, row.hard.value);
+    }
+  }
+  return next;
+}
+
 function refForField(
   cfg: TradeThresholdConfig | null,
   refKey: string,
@@ -244,6 +256,11 @@ export function ZtKeywordsSettings() {
   const [thDrafts, setThDrafts] = useState<Record<string, string>>({});
   const [thLoading, setThLoading] = useState(true);
   const [thSaving, setThSaving] = useState(false);
+
+  const [rgCfg, setRgCfg] = useState<RiskGuardConfig | null>(null);
+  const [rgDrafts, setRgDrafts] = useState<Record<string, string>>({});
+  const [rgLoading, setRgLoading] = useState(true);
+  const [rgSaving, setRgSaving] = useState(false);
 
   const [spriteDrafts, setSpriteDrafts] = useState<SpriteDraft[]>([]);
   const [spriteLoading, setSpriteLoading] = useState(true);
@@ -424,6 +441,26 @@ export function ZtKeywordsSettings() {
     let cancelled = false;
     (async () => {
       try {
+        const cfg = await api.riskGuardConfig();
+        if (!cancelled) {
+          setRgCfg(cfg);
+          setRgDrafts(riskGuardDraftsFrom(cfg));
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "读取风控设置失败");
+        }
+      } finally {
+        if (!cancelled) setRgLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
         const cfg = await fetchShortSpriteConfig();
         if (!cancelled) setSpriteDrafts(spriteDraftsFromRules(cfg.rules || []));
       } catch (e) {
@@ -532,6 +569,51 @@ export function ZtKeywordsSettings() {
       toast.error(e instanceof Error ? e.message : "恢复失败");
     } finally {
       setThSaving(false);
+    }
+  };
+
+  const persistRiskGuard = async () => {
+    if (!rgCfg) return;
+    const payload: Record<string, number> = {};
+    try {
+      for (const g of rgCfg.groups || []) {
+        for (const row of g.rows || []) {
+          payload[row.soft.key] = Number(draftToValue(
+            row.value_kind, rgDrafts[row.soft.key] ?? "", `${row.label}·软`, row.soft.min, row.soft.max,
+          ));
+          payload[row.hard.key] = Number(draftToValue(
+            row.value_kind, rgDrafts[row.hard.key] ?? "", `${row.label}·硬`, row.hard.min, row.hard.max,
+          ));
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "阈值不合法");
+      return;
+    }
+    setRgSaving(true);
+    try {
+      const cfg = await api.saveRiskGuardConfig(payload);
+      setRgCfg(cfg);
+      setRgDrafts(riskGuardDraftsFrom(cfg));
+      toast.success("风控设置已保存，将按新阈值重算闸");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setRgSaving(false);
+    }
+  };
+
+  const resetRiskGuard = async () => {
+    setRgSaving(true);
+    try {
+      const cfg = await api.resetRiskGuardConfig();
+      setRgCfg(cfg);
+      setRgDrafts(riskGuardDraftsFrom(cfg));
+      toast.success("已恢复默认风控阈值");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "恢复失败");
+    } finally {
+      setRgSaving(false);
     }
   };
 
@@ -926,7 +1008,7 @@ export function ZtKeywordsSettings() {
     <div>
       <PageHeader
         title="自定义配置"
-        subtitle="上涨关键词、消息关注词、自定义消息标记、板块别名、情绪周期阈值，以及情绪周期仓位预算的总仓、单票与提示词"
+        subtitle="上涨关键词、消息关注词、自定义消息标记、板块别名、情绪周期阈值、仓位预算档位，以及风控软/硬阈值"
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -1681,6 +1763,96 @@ export function ZtKeywordsSettings() {
             type="button"
             onClick={() => void resetPhases()}
             disabled={phaseSaving || phaseLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RotateCcw className="h-4 w-4" /> 恢复默认
+          </button>
+        </div>
+      </GlassCard>
+          )}
+
+          {activeSection === "risk-guard" && (
+      <GlassCard className="mb-0">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <Shield className="h-4 w-4 text-primary" /> 风控设置
+        </h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          软闸只在「持仓与预算」罗列提醒；硬闸同时发风控禁止买入（经同花联动推送，本系统不自动下单）。
+          亏损持仓累积的并集窗口固定 {rgCfg?.union_window_days ?? 3} 个有快照交易日，不随软硬改窗口。
+          保存后立即按新阈值重算闸。
+        </p>
+
+        {rgLoading || !rgCfg ? (
+          <p className="text-xs text-muted-foreground">正在读取风控设置…</p>
+        ) : (
+          <div className="space-y-5">
+            {rgCfg.groups.map((g) => (
+              <div key={g.id}>
+                <div className="mb-1 text-sm font-semibold text-foreground">{g.label}</div>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">{g.desc}</p>
+                <div className="divide-y divide-border/40 rounded-lg border border-border/50">
+                  {g.rows.map((row) => {
+                    const unit =
+                      row.value_kind === "ratio" ? "%"
+                        : row.id.includes("days") ? "天"
+                          : row.id.includes("holding") ? "只"
+                            : "";
+                    const step = row.value_kind === "ratio" ? "0.1" : "1";
+                    return (
+                      <div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                        <div className="min-w-[10rem] flex-1">
+                          <div className="text-sm text-foreground">
+                            {row.label}
+                            {unit ? <span className="ml-1 text-[11px] text-muted-foreground">({unit})</span> : null}
+                          </div>
+                          <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{row.desc}</div>
+                        </div>
+                        <label className="flex items-center gap-1 text-[11px] text-warning">
+                          软
+                          <input
+                            type="number"
+                            step={step}
+                            aria-label={`${row.label}软`}
+                            value={rgDrafts[row.soft.key] ?? ""}
+                            onChange={(e) => setRgDrafts((d) => ({ ...d, [row.soft.key]: e.target.value }))}
+                            disabled={rgSaving}
+                            className="w-[4.75rem] rounded-lg border border-border bg-black/20 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1 text-[11px] text-danger">
+                          硬
+                          <input
+                            type="number"
+                            step={step}
+                            aria-label={`${row.label}硬`}
+                            value={rgDrafts[row.hard.key] ?? ""}
+                            onChange={(e) => setRgDrafts((d) => ({ ...d, [row.hard.key]: e.target.value }))}
+                            disabled={rgSaving}
+                            className="w-[4.75rem] rounded-lg border border-border bg-black/20 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-primary/50 disabled:opacity-50"
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void persistRiskGuard()}
+            disabled={rgSaving || rgLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            保存阈值
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetRiskGuard()}
+            disabled={rgSaving || rgLoading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:opacity-50"
           >
             <RotateCcw className="h-4 w-4" /> 恢复默认

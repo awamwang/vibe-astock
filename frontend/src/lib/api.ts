@@ -504,6 +504,50 @@ export interface TradeGuard {
     pnl_pct: number; limit: number; hit: boolean;
   } | null;
   block_new_long_reasons: string[];
+  risk_guard?: RiskGuardResult | null;
+}
+export interface RiskGuardHit {
+  gate: string;
+  label: string;
+  level: "soft" | "hard";
+  message: string;
+  codes?: string[];
+  ratio?: number;
+  streak?: number;
+  window_dates?: string[];
+}
+export interface RiskGuardResult {
+  date: string | null;
+  hits: RiskGuardHit[];
+  global_no_buy: boolean;
+  global_no_buy_reason?: string | null;
+  global_no_buy_meta?: {
+    source?: string;
+    level?: number;
+    liquidate?: boolean;
+    codes?: string[];
+  };
+  book_loss_skipped?: boolean;
+}
+export interface RiskGuardConfigSide {
+  key: string;
+  value: number;
+  min: number;
+  max: number;
+}
+export interface RiskGuardConfigRow {
+  id: string;
+  label: string;
+  desc: string;
+  value_kind: "ratio" | "count";
+  soft: RiskGuardConfigSide;
+  hard: RiskGuardConfigSide;
+}
+export interface RiskGuardConfig {
+  schema: number;
+  union_window_days: number;
+  groups: { id: string; label: string; desc: string; rows: RiskGuardConfigRow[] }[];
+  thresholds: Record<string, number>;
 }
 export interface TradeSizeResult {
   ok: boolean; reason?: string; amount: number;
@@ -832,6 +876,13 @@ export const api = {
     request<TradeThresholdConfig>("/config/trade-thresholds", "POST", { thresholds }),
   resetTradeThresholdConfig: () =>
     request<TradeThresholdConfig>("/config/trade-thresholds/reset", "POST", {}),
+  riskGuardConfig: () => get<RiskGuardConfig>("/config/risk-guard"),
+  saveRiskGuardConfig: (thresholds: Record<string, number>) =>
+    request<RiskGuardConfig>("/config/risk-guard", "POST", { thresholds }),
+  resetRiskGuardConfig: () =>
+    request<RiskGuardConfig>("/config/risk-guard/reset", "POST", {}),
+  tradeRiskGuard: () => get<RiskGuardResult>("/trade/risk-guard"),
+  refreshRiskGuard: () => request<RiskGuardResult>("/trade/risk-guard/refresh", "POST", {}),
   proxyConfig: () => get<ProxyConfig>("/config/proxy"),
   saveProxyConfig: (body: { enabled: boolean; url: string }) =>
     request<ProxyConfig>("/config/proxy", "POST", body),

@@ -97,6 +97,7 @@ class HookPack:
     on_watchlist_change: Callable[[HookContext, dict], None] | None = None
     on_message_analyzed: Callable[[HookContext, dict], None] | None = None
     on_short_sprite_hits: Callable[[HookContext, dict], None] | None = None
+    on_risk_guard: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 
 
@@ -194,7 +195,16 @@ class HookRegistry:
                 mv = float(fields["stock_market_value"])
             ts.snapshot_equity(snap_date, mv, fields or None, note=note or None)
         except (TypeError, ValueError):
-            pass
+            snap_date = None
+        try:
+            from . import risk_guard as rg
+
+            rg.sync_after_update(
+                date=snap_date,
+                holdings=list((portfolio or {}).get("holdings") or []),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
         return ImportResult(True, "portfolio", f"{len(holdings)} 笔")
 
     def import_account(self, payload: dict) -> ImportResult:
@@ -229,6 +239,12 @@ class HookRegistry:
             if allowed:
                 ts.set_constants(**allowed)
 
+        try:
+            from . import risk_guard as rg
+
+            rg.sync_after_update()
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
         return ImportResult(True, "account", "已更新")
 
     def override_budget_phase(self, date: str, phase: str, reason: str = "") -> None:
@@ -881,6 +897,22 @@ def build_short_sprite_hits_payload(
     }
 
 
+def build_risk_guard_payload(result: dict) -> dict:
+    body = dict(result or {})
+    return {
+        "$schema": hs.RISK_GUARD,
+        "schema_version": hs.SCHEMA_VERSION,
+        "date": body.get("date"),
+        "hits": list(body.get("hits") or []),
+        "global_no_buy": bool(body.get("global_no_buy")),
+        "global_no_buy_reason": body.get("global_no_buy_reason"),
+        "global_no_buy_meta": body.get("global_no_buy_meta") or {
+            "source": "risk_guard",
+            "level": 0,
+        },
+    }
+
+
 def build_message_analyzed_payload(analyzed: dict) -> dict:
     """从分析消息 dict 抽出插件出站字段。"""
     body = dict(analyzed or {})
@@ -1214,6 +1246,22 @@ class HookRunner:
                 lp,
                 _ctx(day, "short_sprite.hits", lp),
                 _envelope("short_sprite.hits", day, payload, lp),
+            )
+        return n
+
+    def emit_risk_guard(self, date: str, result: dict) -> int:
+        """向已实现 on_risk_guard 的插件派发评估结果（含解除时的 global_no_buy=false）。"""
+        payload = build_risk_guard_payload(result)
+        n = 0
+        for lp in self.plugins:
+            if lp.pack.on_risk_guard is None:
+                continue
+            n += 1
+            _safe_call(
+                lp.pack.on_risk_guard,
+                lp,
+                _ctx(date, "risk.guard", lp),
+                _envelope("risk.guard", date, payload, lp),
             )
         return n
 

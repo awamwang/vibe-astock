@@ -186,6 +186,15 @@ class HoldingIn(BaseModel):
     upsert: bool = False  # True：按代码覆盖；False：同代码加权合并加仓
 
 
+def _sync_risk_guard() -> None:
+    try:
+        from duanxian import risk_guard as rg
+
+        rg.sync_after_update()
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 风控评估失败：{type(exc).__name__}: {exc}")
+
+
 @app.get("/api/portfolio")
 def portfolio_get():
     """持仓 + 实时盈亏（浮动盈亏红涨绿跌）。"""
@@ -209,6 +218,7 @@ def portfolio_add(h: HoldingIn):
     else:
         out = pf.add_holding(code, h.shares, h.cost)
     watchtower.poke()  # 每日盯盘：持仓变化立即重建快照
+    _sync_risk_guard()
     return {"data": out}
 
 
@@ -216,6 +226,7 @@ def portfolio_add(h: HoldingIn):
 def portfolio_remove(code: str = Query(...)):
     out = pf.remove_holding(code.strip())
     watchtower.poke()  # 每日盯盘：持仓变化立即重建快照
+    _sync_risk_guard()
     return {"data": out}
 
 
@@ -280,7 +291,9 @@ def portfolio_close(c: CloseIn):
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(400, "清仓日期格式应为 YYYY-MM-DD") from None
-    return {"data": pf.close_position(code, date, c.price, c.shares, c.cost)}
+    out = pf.close_position(code, date, c.price, c.shares, c.cost)
+    _sync_risk_guard()
+    return {"data": out}
 
 
 @app.delete("/api/portfolio/close")
@@ -292,7 +305,9 @@ def portfolio_close_remove(index: int = Query(...)):
 def portfolio_refresh():
     """手动刷新：立即重拉行情算盈亏。"""
     try:
-        return {"data": pf.get_portfolio()}
+        data = pf.get_portfolio()
+        _sync_risk_guard()
+        return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"刷新失败：{e}") from e
 

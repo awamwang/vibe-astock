@@ -195,6 +195,7 @@ def ensure_profile_initialized() -> dict[str, list[str]]:
     seeds: list[tuple[Path, dict]] = [
         (cfg / "trade_phases.json", {"schema": 1, "phases": []}),
         (cfg / "trade_thresholds.json", {"schema": 1, "thresholds": {}}),
+        (cfg / "risk_guard.json", {"schema": 1, "thresholds": {}}),
         (
             cfg / "sentiment_s.json",
             {"schema": 1, "method": "hard_rules", "fusionintel_api_key": ""},

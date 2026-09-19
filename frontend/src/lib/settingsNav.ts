@@ -6,6 +6,7 @@ export const KEYWORDS_SECTION_IDS = [
   "sentiment-s",
   "trade-thresholds",
   "trade-phases",
+  "risk-guard",
   "short-sprite",
 ] as const;
 

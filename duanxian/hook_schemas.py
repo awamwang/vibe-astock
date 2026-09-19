@@ -19,6 +19,7 @@ WATCHLIST_CHANGE = f"{SCHEMA_BASE}/watchlist-change/1.0.0"
 MESSAGE_PUSH = f"{SCHEMA_BASE}/message-push/1.0.0"
 MESSAGE_ANALYZED = f"{SCHEMA_BASE}/message-analyzed/1.0.0"
 SHORT_SPRITE_HITS = f"{SCHEMA_BASE}/short-sprite-hits/1.0.0"
+RISK_GUARD = f"{SCHEMA_BASE}/risk-guard/1.0.0"
 EXPERIENCE_IMPORT = f"{SCHEMA_BASE}/experience-import/1.0.0"
 ARTICLE_PUSH = f"{SCHEMA_BASE}/article-push/1.0.0"
 

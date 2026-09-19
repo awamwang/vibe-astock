@@ -95,6 +95,7 @@ sequenceDiagram
 | `watchlist.change` | `on_watchlist_change` | 自选 add / remove / replace | `watchlist-change/1.0.0` |
 | `message.analyzed` | `on_message_analyzed` | AI/规则分析落盘后 | `message-analyzed/1.0.0` |
 | `short_sprite.hits` | `on_short_sprite_hits` | 短线精灵 `tick()` 本拍有新命中、日缓存落盘后 | `short-sprite-hits/1.0.0` |
+| `risk.guard` | `on_risk_guard` | 账户/持仓/风控阈值更新后 `sync_after_update`；手动刷新 | `risk-guard/1.0.0` |
 
 信封层统一使用 `envelope/1.0.0`。
 

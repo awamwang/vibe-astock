@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Loader2, Plus, Trash2, Upload, Wallet } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Loader2, Plus, Shield, Trash2, Upload, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { TradeBudgetCard } from "@/components/TradeBudgetCard";
 import { PortfolioJsonImport } from "@/components/PortfolioJsonImport";
 import { api, type PortfolioData, type TradeAccount, type TradeGuard, type TradePhaseRow, type TradeSizeResult } from "@/lib/api";
+import { keywordsSettingsTo } from "@/lib/settingsNav";
 import { cn } from "@/lib/utils";
 import { DOWN_TEXT, UP_TEXT } from "@/lib/colors";
 import { StockLabel } from "@/components/stock/StockLabel";
@@ -120,6 +121,19 @@ export function TradeBudgetPage() {
       await load(date || undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "刷新预算失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshRiskGuard() {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.refreshRiskGuard();
+      await load(date || undefined);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "重算风控闸失败");
     } finally {
       setBusy(false);
     }
@@ -321,6 +335,8 @@ export function TradeBudgetPage() {
   }
 
   const blocks = useMemo(() => guard?.block_new_long_reasons || [], [guard]);
+  const riskGuard = guard?.risk_guard;
+  const riskHits = riskGuard?.hits || [];
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
@@ -539,6 +555,68 @@ export function TradeBudgetPage() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="glass rounded-2xl p-5">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Shield className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-bold">风控命中</h3>
+          <Link
+            to={keywordsSettingsTo("risk-guard")}
+            className="ml-auto text-[12px] text-primary underline-offset-2 hover:underline"
+          >
+            风控设置
+          </Link>
+          <button
+            type="button"
+            onClick={() => void refreshRiskGuard()}
+            disabled={busy}
+            className="rounded-lg border border-border px-2.5 py-1 text-[12px] disabled:opacity-50"
+          >
+            重算闸
+          </button>
+        </div>
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          软闸只提醒；硬闸发风控禁止买入。本系统不自动卖出。
+          {riskGuard?.date ? ` 评估日 ${riskGuard.date}` : ""}
+        </p>
+        {riskGuard?.global_no_buy && (
+          <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
+            已禁止买入{riskGuard.global_no_buy_reason ? `：${riskGuard.global_no_buy_reason}` : ""}
+          </div>
+        )}
+        {riskGuard?.book_loss_skipped && (
+          <p className="mb-2 text-[12px] text-muted-foreground">当日无账号快照，总仓位亏损闸未计算。</p>
+        )}
+        {riskHits.length === 0 ? (
+          <p className="text-[13px] text-muted-foreground">当前无风控命中。</p>
+        ) : (
+          <ul className="space-y-2">
+            {riskHits.map((h) => (
+              <li
+                key={`${h.gate}-${h.level}-${h.message}`}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-[13px]",
+                  h.level === "hard"
+                    ? "border-danger/30 bg-danger/10 text-danger"
+                    : "border-warning/30 bg-warning/10 text-warning",
+                )}
+              >
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide">
+                    {h.level === "hard" ? "硬" : "软"}
+                  </span>
+                  <span>{h.message}</span>
+                </div>
+                {(h.codes || []).length > 0 && (
+                  <div className="mt-1 text-[11px] opacity-80">
+                    代码 {(h.codes || []).join("、")}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* 减仓顺序 */}

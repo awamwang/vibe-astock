@@ -27,6 +27,7 @@
 | `on_watchlist_change` | `watchlist.change` | [附录 A.11](#a11-on_watchlist_change) |
 | `on_message_analyzed` | `message.analyzed` | [附录 A.12](#a12-on_message_analyzed) |
 | `on_short_sprite_hits` | `short_sprite.hits` | [附录 A.13](#a13-on_short_sprite_hits) |
+| `on_risk_guard` | `risk.guard` | [附录 A.14](#a14-on_risk_guard) |
 
 ### 写入接口（插件 → 引擎）
 
@@ -640,6 +641,55 @@ python -m duanxian.plugin_cli list
 
 ---
 
+### A.14 `on_risk_guard` {#a14-on_risk_guard}
+
+| 项 | 说明 |
+|---|---|
+| **中文作用** | 账户风控闸评估完成后通知插件。硬闸命中或解除都派发；软闸命中也会带在 `hits` 里，但只有硬闸才把 `global_no_buy` 置为 true。未实现该回调的插件不会收到事件。 |
+| **HookPack 字段** | `on_risk_guard` |
+| **事件名** | `risk.guard` |
+| **触发时机** | 账户权益、账号快照、持仓（含 VR 增删/导入、截图确认）更新后 `risk_guard.sync_after_update`；自定义配置保存/恢复风控阈值后；`POST /api/trade/risk-guard/refresh`。 |
+| **对应页面** | [持仓与预算](/trade) 风控命中；[自定义配置 · 风控设置](/settings/keywords?section=risk-guard) |
+| **对应 API** | `GET /api/trade/risk-guard`、`POST /api/trade/risk-guard/refresh`、`GET/POST /api/config/risk-guard` |
+| **回调签名** | `on_risk_guard(ctx: HookContext, envelope: dict) -> None` |
+
+**`envelope["payload"]` 结构**（`$schema` = `risk-guard/1.0.0`）：
+
+```json
+{
+  "$schema": "https://vibe-astock.dev/schemas/hook/risk-guard/1.0.0",
+  "schema_version": "1.0.0",
+  "date": "2026-09-18",
+  "hits": [
+    {
+      "gate": "single_holding_loss",
+      "label": "单只持仓亏损",
+      "level": "hard",
+      "message": "单只持仓亏损硬闸：000001 浮盈 -7.00%（≥ 6%）",
+      "codes": ["000001"],
+      "ratio": -0.07
+    }
+  ],
+  "global_no_buy": true,
+  "global_no_buy_reason": "单只持仓亏损硬闸：000001 浮盈 -7.00%（≥ 6%）",
+  "global_no_buy_meta": {
+    "source": "risk_guard",
+    "level": 2
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `hits` | 本次评估全部软/硬命中；硬闸命中时对应软闸也会列出。 |
+| `global_no_buy` | 任一硬闸命中为 `true`；全部解除为 `false`（解除时仍派发，便于下游清掉禁止买入）。 |
+| `global_no_buy_reason` | 全部硬命中 `message` 以中文分号拼接；无硬命中为 `null`。 |
+| `global_no_buy_meta.source` | 固定 `risk_guard`。硬闸 `level` 为 2，解除为 0。触及亏损持仓累积硬闸时另有 `liquidate: true` 与仍浮亏的 `codes`（提示清仓，不是已经卖出）。 |
+
+ths-linker 收到后 **入队** 风控 WebSocket `risk_control` 更新，不要在回调里同步打 WS（会与 `import_portfolio` 同栈嵌套）。定时风控同步必须带上 `global_no_buy` 三件套，以免把硬闸冲掉。本期不在本系统自动下单。
+
+---
+
 ## 附录 B：写入接口（插件 → 引擎）
 
 ---
@@ -1093,6 +1143,7 @@ class HookPack:
     on_watchlist_change: Callable[[HookContext, dict], None] | None = None
     on_message_analyzed: Callable[[HookContext, dict], None] | None = None
     on_short_sprite_hits: Callable[[HookContext, dict], None] | None = None
+    on_risk_guard: Callable[[HookContext, dict], None] | None = None
     enable_review_saved: bool = True
 ```
 

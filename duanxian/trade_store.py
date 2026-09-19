@@ -63,6 +63,8 @@ def _default_account() -> dict:
         "account_fields": {},
         "updated_at": None,
         "snapshots": {},
+        "holdings_snapshots": {},
+        "last_risk_guard": None,
         "constants": {
             "risk_per_trade": tb.DEFAULT_RISK_PER_TRADE,
             "daily_loss_limit": tb.DEFAULT_DAILY_LOSS_LIMIT,
@@ -160,6 +162,10 @@ def load_account() -> dict:
             base["constants"] = {**base["constants"], **d["constants"]}
         if isinstance(d.get("snapshots"), dict):
             base["snapshots"] = d["snapshots"]
+        if isinstance(d.get("holdings_snapshots"), dict):
+            base["holdings_snapshots"] = d["holdings_snapshots"]
+        if isinstance(d.get("last_risk_guard"), dict):
+            base["last_risk_guard"] = d["last_risk_guard"]
         if isinstance(d.get("account_fields"), dict):
             base["account_fields"] = normalize_account_fields(d["account_fields"])
         return base
@@ -208,6 +214,29 @@ def set_account_fields(fields: dict, *, note: Optional[str] = None, replace: boo
             d["equity_note"] = str(note)
         elif not (d.get("equity_note") or "").strip():
             d["equity_note"] = format_account_summary(d.get("account_fields") or {})
+        return save_account(d)
+
+
+def set_holdings_snapshot(date: str, holdings: list[dict]) -> dict:
+    """某日持仓快照整份覆盖，不与同日旧名单并集。"""
+    date = str(date)
+    rows = [h for h in (holdings or []) if isinstance(h, dict) and str(h.get("code") or "").strip()]
+    with _LOCK:
+        d = load_account()
+        snaps = dict(d.get("holdings_snapshots") or {})
+        snaps[date] = {
+            "asof": china_now().strftime("%Y-%m-%d %H:%M:%S"),
+            "holdings": rows,
+        }
+        d["holdings_snapshots"] = snaps
+        return save_account(d)
+
+
+def set_last_risk_guard(result: dict) -> dict:
+    """写入最近一次风控评估（供定时同步读取）。"""
+    with _LOCK:
+        d = load_account()
+        d["last_risk_guard"] = dict(result or {})
         return save_account(d)
 
 

@@ -674,6 +674,50 @@ class TestHookRunner:
         assert payload["hits"][0]["id"] == "hit1"
         assert payload["hits"][0]["speech"] == "连板溢价，涨幅突破3.2%"
 
+    def test_emit_risk_guard_only_to_registered_plugins(self):
+        from duanxian import hook_schemas as hs
+        from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin, build_risk_guard_payload
+
+        seen: list[dict] = []
+
+        def _on_guard(ctx, envelope):
+            seen.append(envelope["payload"])
+            assert ctx.event == "risk.guard"
+
+        with_hook = LoadedPlugin(
+            id="with",
+            path="/x",
+            pack=HookPack(
+                name="with",
+                version="1.0.0",
+                schema_bundle="t/1",
+                on_risk_guard=_on_guard,
+            ),
+        )
+        without = LoadedPlugin(
+            id="without",
+            path="/y",
+            pack=HookPack(name="without", version="1.0.0", schema_bundle="t/1"),
+        )
+        runner = HookRunner([with_hook, without], HookRegistry())
+        result = {
+            "date": "2026-09-18",
+            "hits": [{"gate": "book_loss", "level": "hard", "message": "总仓位亏损硬闸"}],
+            "global_no_buy": True,
+            "global_no_buy_reason": "总仓位亏损硬闸",
+            "global_no_buy_meta": {"source": "risk_guard", "level": 2},
+        }
+        n = runner.emit_risk_guard("2026-09-18", result)
+        assert n == 1
+        assert len(seen) == 1
+        payload = seen[0]
+        assert payload["$schema"] == hs.RISK_GUARD
+        assert payload["global_no_buy"] is True
+        assert payload["global_no_buy_meta"]["source"] == "risk_guard"
+        cleared = build_risk_guard_payload({"date": "2026-09-18", "hits": [], "global_no_buy": False})
+        assert cleared["global_no_buy"] is False
+        assert cleared["global_no_buy_meta"]["source"] == "risk_guard"
+
     def test_callback_error_does_not_raise(self):
         from duanxian import plugin_status as ps
         from duanxian.hooks import HookPack, HookRunner, HookRegistry, LoadedPlugin
