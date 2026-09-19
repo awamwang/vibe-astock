@@ -49,6 +49,8 @@ export function TradeBudgetPage() {
   const [addCost, setAddCost] = useState("");
   const [jsonOpen, setJsonOpen] = useState(false);
   const [snapVisibleCount, setSnapVisibleCount] = useState(SNAP_VISIBLE_INITIAL);
+  const [capTotalInput, setCapTotalInput] = useState("");
+  const [capSingleInput, setCapSingleInput] = useState("");
 
   const load = useCallback(async (d?: string) => {
     setBusy(true);
@@ -83,6 +85,18 @@ export function TradeBudgetPage() {
   useEffect(() => { void load(date || undefined); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const budget = guard?.budget;
+  const recPhase = budget?.override_phase || budget?.phase || "";
+  const recRow = phases.find((p) => p.phase === recPhase);
+  const recTotal = budget?.recommended_cap_total ?? recRow?.cap_total ?? null;
+  const recSingle = budget?.recommended_cap_single ?? recRow?.cap_single ?? null;
+
+  useEffect(() => {
+    if (!budget) return;
+    const t = budget.override_cap_total ?? recTotal ?? budget.cap_total;
+    const s = budget.override_cap_single ?? recSingle ?? budget.cap_single;
+    setCapTotalInput(t != null ? String(Math.round(t * 100)) : "");
+    setCapSingleInput(s != null ? String(Math.round(s * 100)) : "");
+  }, [budget, recTotal, recSingle]);
 
   async function saveEquity() {
     const n = Number(equityInput);
@@ -134,6 +148,70 @@ export function TradeBudgetPage() {
       await load(date);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "清除覆盖失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function parseCapPct(raw: string, label: string): number {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`${label} 须为数字`);
+    if (n < 0 || n > 100) throw new Error(`${label} 须在 0%–100%`);
+    return Math.round(n * 100) / 10000;
+  }
+
+  function capDiffWarn(user: number, rec: number | null | undefined, limit: number): number | null {
+    if (rec == null || Number.isNaN(rec)) return null;
+    const diff = Math.abs(user - rec);
+    return diff > limit + 1e-9 ? diff : null;
+  }
+
+  async function saveCaps() {
+    if (!date) return;
+    let total: number;
+    let single: number;
+    try {
+      total = parseCapPct(capTotalInput, "总仓上限");
+      single = parseCapPct(capSingleInput, "单票上限");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "仓位数字不合法");
+      return;
+    }
+    const recT = recTotal;
+    const recS = recSingle;
+    const phase = recPhase || "当前档";
+    const dTotal = capDiffWarn(total, recT, 0.20);
+    const dSingle = capDiffWarn(single, recS, 0.10);
+    if (dTotal != null || dSingle != null) {
+      const lines: string[] = [`与情绪阶段「${phase}」推荐值差异较大：`];
+      if (dTotal != null) {
+        lines.push(`总仓 ${Math.round(total * 100)}% vs 推荐 ${Math.round((recT || 0) * 100)}%，相差 ${Math.round(dTotal * 100)} 个百分点（阈值 20%）`);
+      }
+      if (dSingle != null) {
+        lines.push(`单票 ${Math.round(single * 100)}% vs 推荐 ${Math.round((recS || 0) * 100)}%，相差 ${Math.round(dSingle * 100)} 个百分点（阈值 10%）`);
+      }
+      lines.push("", "确定仍要保存？");
+      if (!window.confirm(lines.join("\n"))) return;
+    }
+    setBusy(true);
+    try {
+      await api.tradeCapOverride(date, total, single);
+      await load(date);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "保存仓位上限失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearCaps() {
+    if (!date) return;
+    setBusy(true);
+    try {
+      await api.tradeCapOverride(date, null, null);
+      await load(date);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "清除仓位上限失败");
     } finally {
       setBusy(false);
     }
@@ -317,79 +395,6 @@ export function TradeBudgetPage() {
         </div>
       </div>
 
-      {snapRows.length > 0 && (
-        <div className="glass rounded-2xl p-5">
-          <h3 className="mb-2 text-sm font-bold">日快照（按日覆盖）</h3>
-          <p className="mb-3 text-[11px] text-muted-foreground">
-            同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。删除会连带清除当日预算落盘。
-            默认展示最近 {SNAP_VISIBLE_INITIAL} 条，更早记录折叠加载。
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[48rem] text-left text-[12px]">
-              <thead className="text-[11px] text-muted-foreground">
-                <tr>
-                  <th className="py-1 pr-2">日期</th>
-                  <th className="pr-2">权益</th>
-                  <th className="pr-2">市值</th>
-                  <th className="pr-2">可用</th>
-                  <th className="pr-2">资金余额</th>
-                  <th className="pr-2">当日盈亏</th>
-                  <th className="pr-2">盈亏比</th>
-                  <th className="pr-2">账户</th>
-                  <th className="pr-2">摘要</th>
-                  <th className="w-10" />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleSnapRows.map((s) => (
-                  <tr key={s.date} className={cn("border-t border-border/50", s.date === date && "bg-primary/5")}>
-                    <td className="py-1.5 pr-2 font-mono tabular-nums">{s.date}</td>
-                    <td className="pr-2 tabular-nums">{money(s.equity)}</td>
-                    <td className="pr-2 tabular-nums">{money(s.market_value ?? s.stock_market_value)}</td>
-                    <td className="pr-2 tabular-nums">{s.available != null ? money2(s.available) : "—"}</td>
-                    <td className="pr-2 tabular-nums">{s.cash_balance != null ? money2(s.cash_balance) : "—"}</td>
-                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl ?? 0) > 0 ? UP_TEXT : "")}>
-                      {s.daily_pnl != null ? money2(s.daily_pnl) : "—"}
-                    </td>
-                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl_pct ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl_pct ?? 0) > 0 ? UP_TEXT : "")}>
-                      {s.daily_pnl_pct != null ? `${s.daily_pnl_pct}%` : "—"}
-                    </td>
-                    <td className="pr-2 max-w-[8rem] truncate" title={s.account_name || s.account_display || ""}>
-                      {s.account_display || s.account_name || "—"}
-                    </td>
-                    <td className="pr-2 max-w-[16rem] truncate text-muted-foreground" title={s.summary || ""}>
-                      {s.summary || "—"}
-                    </td>
-                    <td className="py-1.5">
-                      <button
-                        type="button"
-                        title={`删除 ${s.date} 日快照与当日预算`}
-                        disabled={busy}
-                        onClick={() => void removeSnapshot(s.date)}
-                        className="rounded p-1 text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {hiddenSnapCount > 0 && (
-            <div className="mt-3 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setSnapVisibleCount((n) => n + SNAP_VISIBLE_PAGE)}
-                className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                展开更早快照（剩余 {hiddenSnapCount}，每次 +{SNAP_VISIBLE_PAGE}）
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* 手拨档位 */}
       <div className="glass rounded-2xl p-5">
         <h3 className="mb-2 text-sm font-bold">人手覆盖档位</h3>
@@ -423,6 +428,46 @@ export function TradeBudgetPage() {
             {budget.classify_reasons.map((r) => <li key={r}>{r}</li>)}
           </ul>
         ) : null}
+      </div>
+
+      <div className="glass rounded-2xl p-5">
+        <h3 className="mb-2 text-sm font-bold">手动仓位上限</h3>
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          只改当日总仓 / 单票数字，不改情绪档位。与当前档推荐值相差超过 20 个百分点（总仓）或 10 个百分点（单票）时会先确认，确定后仍可保存。
+        </p>
+        {recTotal != null && (
+          <p className="mb-3 text-[12px]">
+            情绪阶段「{recPhase || "—"}」推荐：
+            总仓 {pct(recTotal)} · 单票 {pct(recSingle)}
+            {(budget?.override_cap_total != null || budget?.override_cap_single != null) && (
+              <span className="ml-2 text-warning">已手拨生效</span>
+            )}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-[12px] text-muted-foreground">
+            总仓 %
+            <input value={capTotalInput} onChange={(e) => setCapTotalInput(e.target.value)}
+              placeholder="如 40"
+              className="ml-1 w-20 rounded-lg border border-border bg-card px-2 py-2 text-sm tabular-nums" />
+          </label>
+          <label className="text-[12px] text-muted-foreground">
+            单票 %
+            <input value={capSingleInput} onChange={(e) => setCapSingleInput(e.target.value)}
+              placeholder="如 20"
+              className="ml-1 w-20 rounded-lg border border-border bg-card px-2 py-2 text-sm tabular-nums" />
+          </label>
+          <button onClick={() => void saveCaps()} disabled={busy || !date}
+            className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+            保存上限
+          </button>
+          <button
+            onClick={() => void clearCaps()}
+            disabled={busy || !date || (budget?.override_cap_total == null && budget?.override_cap_single == null)}
+            className="rounded-lg border border-border px-3 py-2 text-sm disabled:opacity-50">
+            清除手拨上限
+          </button>
+        </div>
       </div>
 
       {/* 闸门 + 现仓 */}
@@ -596,6 +641,79 @@ export function TradeBudgetPage() {
           </table>
         </div>
       </div>
+
+      {snapRows.length > 0 && (
+        <div className="glass rounded-2xl p-5">
+          <h3 className="mb-2 text-sm font-bold">日快照（按日覆盖）</h3>
+          <p className="mb-3 text-[11px] text-muted-foreground">
+            同一交易日再次写入会整行覆盖；含账户名、资金余额、可用、市值、当日盈亏等命名栏位。删除会连带清除当日预算落盘。
+            默认展示最近 {SNAP_VISIBLE_INITIAL} 条，更早记录折叠加载。
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[48rem] text-left text-[12px]">
+              <thead className="text-[11px] text-muted-foreground">
+                <tr>
+                  <th className="py-1 pr-2">日期</th>
+                  <th className="pr-2">权益</th>
+                  <th className="pr-2">市值</th>
+                  <th className="pr-2">可用</th>
+                  <th className="pr-2">资金余额</th>
+                  <th className="pr-2">当日盈亏</th>
+                  <th className="pr-2">盈亏比</th>
+                  <th className="pr-2">账户</th>
+                  <th className="pr-2">摘要</th>
+                  <th className="w-10" />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSnapRows.map((s) => (
+                  <tr key={s.date} className={cn("border-t border-border/50", s.date === date && "bg-primary/5")}>
+                    <td className="py-1.5 pr-2 font-mono tabular-nums">{s.date}</td>
+                    <td className="pr-2 tabular-nums">{money(s.equity)}</td>
+                    <td className="pr-2 tabular-nums">{money(s.market_value ?? s.stock_market_value)}</td>
+                    <td className="pr-2 tabular-nums">{s.available != null ? money2(s.available) : "—"}</td>
+                    <td className="pr-2 tabular-nums">{s.cash_balance != null ? money2(s.cash_balance) : "—"}</td>
+                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl ?? 0) > 0 ? UP_TEXT : "")}>
+                      {s.daily_pnl != null ? money2(s.daily_pnl) : "—"}
+                    </td>
+                    <td className={cn("pr-2 tabular-nums", (s.daily_pnl_pct ?? 0) < 0 ? DOWN_TEXT : (s.daily_pnl_pct ?? 0) > 0 ? UP_TEXT : "")}>
+                      {s.daily_pnl_pct != null ? `${s.daily_pnl_pct}%` : "—"}
+                    </td>
+                    <td className="pr-2 max-w-[8rem] truncate" title={s.account_name || s.account_display || ""}>
+                      {s.account_display || s.account_name || "—"}
+                    </td>
+                    <td className="pr-2 max-w-[16rem] truncate text-muted-foreground" title={s.summary || ""}>
+                      {s.summary || "—"}
+                    </td>
+                    <td className="py-1.5">
+                      <button
+                        type="button"
+                        title={`删除 ${s.date} 日快照与当日预算`}
+                        disabled={busy}
+                        onClick={() => void removeSnapshot(s.date)}
+                        className="rounded p-1 text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {hiddenSnapCount > 0 && (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setSnapVisibleCount((n) => n + SNAP_VISIBLE_PAGE)}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                展开更早快照（剩余 {hiddenSnapCount}，每次 +{SNAP_VISIBLE_PAGE}）
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

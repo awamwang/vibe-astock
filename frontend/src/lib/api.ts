@@ -445,6 +445,10 @@ export interface TradeBudget {
   phase?: string | null;
   cap_total?: number | null;
   cap_single?: number | null;
+  recommended_cap_total?: number | null;
+  recommended_cap_single?: number | null;
+  override_cap_total?: number | null;
+  override_cap_single?: number | null;
   prompt?: string | null;
   allow?: string[];
   forbid?: string[];
@@ -696,6 +700,8 @@ export const api = {
     request<TradeBudget>(`/trade/budget/refresh${date ? `?date=${date}` : ""}`, "POST"),
   tradeOverride: (date: string, phase: string | null, reason = "") =>
     request<TradeBudget>(`/trade/budget/override?date=${date}`, "POST", { phase, reason }),
+  tradeCapOverride: (date: string, cap_total: number | null, cap_single: number | null) =>
+    request<TradeBudget>(`/trade/budget/caps?date=${date}`, "POST", { cap_total, cap_single }),
   tradeAccount: () => get<TradeAccount>("/trade/account"),
   setTradeEquity: (equity: number, note = "") =>
     request<TradeAccount>("/trade/account/equity", "POST", { equity, note }),

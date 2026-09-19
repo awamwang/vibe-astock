@@ -78,11 +78,21 @@ export function TradeBudgetCard({
             </div>
             <div>
               <div className="text-2xl font-extrabold tabular-nums">{pct(b.cap_total)}</div>
-              <div className="text-[11px] text-muted-foreground">总仓上限</div>
+              <div className="text-[11px] text-muted-foreground">
+                总仓上限
+                {b.override_cap_total != null && b.recommended_cap_total != null && (
+                  <span className="ml-1 text-warning">（手拨；推荐 {pct(b.recommended_cap_total)}）</span>
+                )}
+              </div>
             </div>
             <div>
               <div className="text-2xl font-extrabold tabular-nums">{pct(b.cap_single)}</div>
-              <div className="text-[11px] text-muted-foreground">单票上限</div>
+              <div className="text-[11px] text-muted-foreground">
+                单票上限
+                {b.override_cap_single != null && b.recommended_cap_single != null && (
+                  <span className="ml-1 text-warning">（手拨；推荐 {pct(b.recommended_cap_single)}）</span>
+                )}
+              </div>
             </div>
             {b.readings?.s_ok && b.readings.s != null && (
               <div>

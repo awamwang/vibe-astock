@@ -324,14 +324,63 @@ def classify_rule_phase(readings: dict) -> tuple[str, list[str]]:
     return "升温扩张", reasons
 
 
+def _sanitize_day_cap(v: Any) -> Optional[float]:
+    """当日手拨上限：合法则落在 0–1，否则视为未覆盖。"""
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x < 0 or x > 1:
+        return None
+    return round(x, 4)
+
+
+def _cap_fields(
+    *,
+    cap_total: Optional[float] = None,
+    cap_single: Optional[float] = None,
+    recommended_cap_total: Optional[float] = None,
+    recommended_cap_single: Optional[float] = None,
+    override_cap_total: Optional[float] = None,
+    override_cap_single: Optional[float] = None,
+) -> dict[str, Optional[float]]:
+    return {
+        "cap_total": cap_total,
+        "cap_single": cap_single,
+        "recommended_cap_total": recommended_cap_total,
+        "recommended_cap_single": recommended_cap_single,
+        "override_cap_total": override_cap_total,
+        "override_cap_single": override_cap_single,
+    }
+
+
+def _apply_cap_override(
+    recommended_total: float,
+    recommended_single: float,
+    override_cap_total: Optional[float],
+    override_cap_single: Optional[float],
+) -> tuple[float, float, Optional[float], Optional[float]]:
+    ov_t = _sanitize_day_cap(override_cap_total)
+    ov_s = _sanitize_day_cap(override_cap_single)
+    cap_t = recommended_total if ov_t is None else ov_t
+    cap_s = recommended_single if ov_s is None else ov_s
+    return cap_t, cap_s, ov_t, ov_s
+
+
 def build_budget(
     readings: dict,
     *,
     prev_rule_phase: Optional[str] = None,
     override_phase: Optional[str] = None,
     override_reason: Optional[str] = None,
+    override_cap_total: Optional[float] = None,
+    override_cap_single: Optional[float] = None,
 ) -> dict[str, Any]:
     """由读数生成一日预算。`prev_rule_phase` 仅供展示/代理上下文，不自动升档。"""
+    ov_t = _sanitize_day_cap(override_cap_total)
+    ov_s = _sanitize_day_cap(override_cap_single)
     gaps = collect_gap_reasons(readings)
     if gaps:
         return {
@@ -342,8 +391,7 @@ def build_budget(
             "override_phase": override_phase,
             "override_reason": override_reason,
             "phase": None,
-            "cap_total": None,
-            "cap_single": None,
+            **_cap_fields(override_cap_total=ov_t, override_cap_single=ov_s),
             "prompt": None,
             "allow": [],
             "forbid": [],
@@ -386,8 +434,7 @@ def build_budget(
                 "override_phase": override_phase,
                 "override_reason": override_reason,
                 "phase": None,
-                "cap_total": None,
-                "cap_single": None,
+                **_cap_fields(override_cap_total=ov_t, override_cap_single=ov_s),
                 "prompt": None,
                 "allow": [],
                 "forbid": [],
@@ -401,7 +448,8 @@ def build_budget(
             }
         phase = override_phase
 
-    cap_t, cap_s = caps_for(phase)
+    rec_t, rec_s = caps_for(phase)
+    cap_t, cap_s, ov_t, ov_s = _apply_cap_override(rec_t, rec_s, ov_t, ov_s)
     act = actions_for(phase)
     prompt = prompt_for(phase)
     expansion = phase not in _NO_EXPANSION and phase != "冰点观察"
@@ -427,8 +475,14 @@ def build_budget(
         "override_phase": override_phase,
         "override_reason": override_reason,
         "phase": phase,
-        "cap_total": cap_t,
-        "cap_single": cap_s,
+        **_cap_fields(
+            cap_total=cap_t,
+            cap_single=cap_s,
+            recommended_cap_total=rec_t,
+            recommended_cap_single=rec_s,
+            override_cap_total=ov_t,
+            override_cap_single=ov_s,
+        ),
         "prompt": prompt,
         "allow": act["allow"],
         "forbid": act["forbid"],

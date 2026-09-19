@@ -71,6 +71,67 @@ class TestSnapshotOverwrite:
         assert ts.load_account()["snapshots"]["2026-08-19"]["available"] == 3404.15
 
 
+class TestCapOverride:
+    @pytest.fixture(autouse=True)
+    def _isolate_phase_config(self, tmp_path, monkeypatch):
+        from duanxian import trade_phase_config as tpc
+        from duanxian import trade_threshold_config as ttc
+
+        monkeypatch.setattr(tpc, "_CONFIG_PATH", str(tmp_path / "trade_phases.json"))
+        monkeypatch.setattr(tpc, "_TABLE", None)
+        monkeypatch.setattr(ttc, "_CONFIG_PATH", str(tmp_path / "trade_thresholds.json"))
+        monkeypatch.setattr(ttc, "_CACHE", None)
+
+    def test_set_and_refresh_keeps_caps(self, account_home, tmp_path, monkeypatch):
+        trade_dir = tmp_path / "trade"
+        trade_dir.mkdir()
+        monkeypatch.setattr(ts, "_TRADE_DIR", str(trade_dir))
+        readings = {
+            "summary_ok": True,
+            "money_ok": True,
+            "promotion_ok": True,
+            "limit_up": 50,
+            "highest": 4,
+            "highest_hist": [3, 4],
+            "broken_rate": 0.2,
+            "money_median": 0.8,
+            "promotion_1to2": 0.35,
+            "deep_loss_5_rate": 0.1,
+            "market_limit_down": 5,
+            "up": 3000,
+            "down": 2000,
+            "index_pct": -0.5,
+        }
+        monkeypatch.setattr(ts, "gather_readings", lambda _d: readings)
+        monkeypatch.setattr(ts.trade_calendar, "prev_trade_date", lambda _d: None)
+
+        env = ts.set_cap_override("2026-08-19", cap_total=0.85, cap_single=0.45)
+        assert env["phase"] == "升温扩张"
+        assert env["recommended_cap_total"] == 0.60
+        assert env["cap_total"] == 0.85
+        assert env["override_cap_single"] == 0.45
+
+        env2 = ts.refresh("2026-08-19", emit_hooks=False)
+        assert env2["override_cap_total"] == 0.85
+        assert env2["cap_total"] == 0.85
+
+        env3 = ts.set_override("2026-08-19", "冰点观察", "手拨")
+        assert env3["phase"] == "冰点观察"
+        assert env3["override_cap_total"] == 0.85
+        assert env3["recommended_cap_total"] == 0.20
+        assert env3["cap_total"] == 0.85
+
+        env4 = ts.set_cap_override("2026-08-19", cap_total=None, cap_single=None)
+        assert env4["override_cap_total"] is None
+        assert env4["override_phase"] == "冰点观察"
+        assert env4["cap_total"] == 0.20
+
+    def test_invalid_cap_rejected(self, account_home, tmp_path, monkeypatch):
+        monkeypatch.setattr(ts, "_TRADE_DIR", str(tmp_path / "trade"))
+        with pytest.raises(ValueError, match="0%"):
+            ts.set_cap_override("2026-08-19", cap_total=1.5)
+
+
 class TestDeleteSnapshot:
     def test_deletes_snapshot_and_day_budget(self, account_home, tmp_path, monkeypatch):
         trade_dir = tmp_path / "trade"

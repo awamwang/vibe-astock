@@ -29,6 +29,7 @@ def _rebind_paths() -> None:
     _ACCOUNT_FILE = os.path.join(_ACCOUNT_DIR, "trade_account.json")
 _SCHEMA = 1
 _LOCK = threading.Lock()
+_MISSING = object()
 
 # 日快照 / 账户栏位：命名写入；同日覆盖
 _ACCOUNT_FIELD_KEYS = (
@@ -330,18 +331,55 @@ def gather_readings(date: str) -> dict[str, Any]:
     return rs.gather_readings(date)
 
 
+def _as_day_cap(v: Any, label: str) -> float:
+    try:
+        x = float(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 须为数字") from exc
+    if x < 0 or x > 1:
+        raise ValueError(f"{label} 须在 0%–100%")
+    return round(x, 4)
+
+
+def _write_day(env: dict) -> dict:
+    os.makedirs(_TRADE_DIR, exist_ok=True)
+    atomic_write_json(_trade_path(str(env["date"])), env)
+    return env
+
+
 def compute_day(
     date: str,
     *,
-    override_phase: Optional[str] = None,
-    override_reason: Optional[str] = None,
+    override_phase: Any = _MISSING,
+    override_reason: Any = _MISSING,
+    override_cap_total: Any = _MISSING,
+    override_cap_single: Any = _MISSING,
     keep_override: bool = True,
 ) -> dict:
-    """计算并返回日预算信封（未写盘）。"""
-    existing = load_day(date) if keep_override else None
-    if override_phase is None and existing and keep_override:
-        override_phase = existing.get("override_phase")
-        override_reason = existing.get("override_reason")
+    """计算并返回日预算信封（未写盘）。
+
+    档位覆盖与当日仓位上限覆盖彼此独立：未传入的一侧沿用已落盘值。
+    `keep_override=False` 且未传入档位时，清除档位覆盖（上限覆盖仍保留）。
+    """
+    existing = load_day(date)
+    if override_phase is _MISSING:
+        if keep_override and existing:
+            override_phase = existing.get("override_phase")
+            if override_reason is _MISSING:
+                override_reason = existing.get("override_reason")
+        else:
+            override_phase = None
+            if override_reason is _MISSING:
+                override_reason = None
+    elif override_phase is None and override_reason is _MISSING:
+        override_reason = None
+    elif override_reason is _MISSING:
+        override_reason = (existing or {}).get("override_reason")
+
+    if override_cap_total is _MISSING:
+        override_cap_total = (existing or {}).get("override_cap_total")
+    if override_cap_single is _MISSING:
+        override_cap_single = (existing or {}).get("override_cap_single")
 
     prev = trade_calendar.prev_trade_date(date)
     prev_env = load_day(prev) if prev else None
@@ -353,6 +391,8 @@ def compute_day(
         prev_rule_phase=prev_rule,
         override_phase=override_phase,
         override_reason=override_reason,
+        override_cap_total=override_cap_total,
+        override_cap_single=override_cap_single,
     )
     return {
         "schema": _SCHEMA,
@@ -366,9 +406,8 @@ def refresh(date: str, *, force: bool = False, emit_hooks: bool = True) -> dict:
     """写入 `trade/{date}.json`。保留已有手拨覆盖。"""
     date = str(date)
     _ = force  # 接口保留：始终重算读数，覆盖档由 keep_override 保留
-    env = compute_day(date, keep_override=True)
-    os.makedirs(_TRADE_DIR, exist_ok=True)
-    atomic_write_json(_trade_path(date), env)
+    env = compute_day(date)
+    _write_day(env)
     if emit_hooks:
         try:
             from . import hooks
@@ -380,7 +419,7 @@ def refresh(date: str, *, force: bool = False, emit_hooks: bool = True) -> dict:
 
 
 def set_override(date: str, phase: Optional[str], reason: str = "") -> dict:
-    """人手覆盖当日档位；phase=None 清除覆盖。"""
+    """人手覆盖当日档位；phase=None 清除覆盖。当日仓位上限覆盖保留。"""
     date = str(date)
     if phase is not None and phase not in tb.PHASES:
         raise ValueError(f"档位须为 {tb.PHASES} 之一")
@@ -390,9 +429,29 @@ def set_override(date: str, phase: Optional[str], reason: str = "") -> dict:
         override_reason=(reason or None) if phase else None,
         keep_override=False,
     )
-    os.makedirs(_TRADE_DIR, exist_ok=True)
-    atomic_write_json(_trade_path(date), env)
-    return env
+    return _write_day(env)
+
+
+def set_cap_override(
+    date: str,
+    cap_total: Any = _MISSING,
+    cap_single: Any = _MISSING,
+) -> dict:
+    """人手覆盖当日总仓 / 单票上限；传入 None 清除对应项。档位覆盖保留。"""
+    date = str(date)
+    kwargs: dict[str, Any] = {}
+    if cap_total is not _MISSING:
+        kwargs["override_cap_total"] = (
+            None if cap_total is None or cap_total == "" else _as_day_cap(cap_total, "总仓上限")
+        )
+    if cap_single is not _MISSING:
+        kwargs["override_cap_single"] = (
+            None if cap_single is None or cap_single == "" else _as_day_cap(cap_single, "单票上限")
+        )
+    if not kwargs:
+        raise ValueError("须提供 cap_total 或 cap_single")
+    env = compute_day(date, **kwargs)
+    return _write_day(env)
 
 
 def get_or_compute(date: str) -> dict:

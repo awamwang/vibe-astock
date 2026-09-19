@@ -929,6 +929,25 @@ def api_trade_override(request: Request, date: str, body: dict = Body(...)):
         return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
 
 
+@app.post("/api/trade/budget/caps")
+def api_trade_caps(request: Request, date: str, body: dict = Body(...)):
+    """人手覆盖当日总仓 / 单票上限；字段为 null 则清除对应项。"""
+    if not _origin_ok(request):
+        return JSONResponse({"error": "非法来源"}, status_code=403)
+    try:
+        date = validate_trade_date(date)
+        kwargs = {}
+        if "cap_total" in body:
+            kwargs["cap_total"] = body.get("cap_total")
+        if "cap_single" in body:
+            kwargs["cap_single"] = body.get("cap_single")
+        return trade_store.set_cap_override(date, **kwargs)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
 @app.get("/api/trade/account")
 def api_trade_account():
     return trade_store.load_account()

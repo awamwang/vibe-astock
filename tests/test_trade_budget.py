@@ -125,7 +125,48 @@ class TestBuildBudget:
         assert out["rule_phase"] == "冰点观察"
         assert out["phase"] == "修复确认"
         assert out["cap_total"] == 0.40
+        assert out["recommended_cap_total"] == 0.40
         assert out["override_reason"] == "龙头反包确认"
+
+    def test_cap_override_keeps_phase_and_recommended(self):
+        out = tb.build_budget(
+            _base(
+                highest=4, highest_hist=[3, 4], broken_rate=0.2,
+                money_median=0.8, index_pct=-0.5,
+            ),
+            override_cap_total=0.85,
+            override_cap_single=0.45,
+        )
+        assert out["phase"] == "升温扩张"
+        assert out["recommended_cap_total"] == 0.60
+        assert out["recommended_cap_single"] == 0.30
+        assert out["cap_total"] == 0.85
+        assert out["cap_single"] == 0.45
+        assert out["override_cap_total"] == 0.85
+        assert out["override_cap_single"] == 0.45
+
+    def test_cap_override_partial_keeps_other_recommended(self):
+        out = tb.build_budget(
+            _base(
+                highest=4, highest_hist=[3, 4], broken_rate=0.2,
+                money_median=0.8, index_pct=-0.5,
+            ),
+            override_cap_total=0.40,
+        )
+        assert out["cap_total"] == 0.40
+        assert out["cap_single"] == 0.30
+        assert out["override_cap_single"] is None
+
+    def test_invalid_cap_override_ignored(self):
+        out = tb.build_budget(
+            _base(
+                highest=4, highest_hist=[3, 4], broken_rate=0.2,
+                money_median=0.8, index_pct=-0.5,
+            ),
+            override_cap_total=1.5,
+        )
+        assert out["cap_total"] == 0.60
+        assert out["override_cap_total"] is None
 
     def test_repair_proxy_hint_only(self):
         out = tb.build_budget(

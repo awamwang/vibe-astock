@@ -434,9 +434,12 @@ class TestHookPayloads:
             "available": True,
             "phase": "升温扩张",
             "cap_total": 0.6,
+            "recommended_cap_total": 0.6,
+            "override_cap_total": None,
             "readings": {"secret": 1},
         })
         assert out["cap_total_pct"] == 0.6
+        assert out["recommended_cap_total_pct"] == 0.6
         assert "readings" not in out
 
     def test_metrics_payload_has_index(self):
