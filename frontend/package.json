@@ -13,6 +13,7 @@
     "echarts": "^6.0.0",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
+    "react-aria-components": "^1.21.1",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.0",
     "react-router-dom": "^7.1.0",
